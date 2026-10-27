@@ -12,11 +12,11 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 
 > Status: work in progress. The hackathon runs Oct 26 – Nov 4, 2026.
 
-## What is new and what existed before
+## Built from scratch
 
-- **Everything in this repository was written during the hackathon, starting Oct 27, 2026.**
-- **Pre-existing, not in this repository:** Halo, part of ErlanOS, Erlan's own KiCad and ngspice environment for
-  circuit design and simulation. Lunes may use it through its local API. Its code stays outside this repository.
+- **Everything in this repository was written from scratch during the hackathon, starting Oct 27, 2026.**
+- Lunes does not use any earlier project by the author. It depends only on public open-source libraries, listed
+  here as they are added, and on Meta models.
 - The demo video opens by saying the same thing.
 
 ## Meta models (planned)
@@ -31,8 +31,8 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 ## Principles
 
 - **Verifiable, not opinion:** every conclusion links back to the measurements that support it. The fault
-  hypotheses come from a circuit simulation the agent does not control.
-- **The model decides what to measure; geometry decides where.** Probe positions come from the board design and
+  hypotheses come from Lunes's own circuit simulator, written for this project, which the agent does not control.
+- **The model decides what to measure; geometry decides where.** Probe positions come from the board map and
   calibration, never from the language model.
 - **Safety first:** a machine never touches a powered board; powered measurements are done by a person, with a
   current-limited supply.

@@ -24,6 +24,15 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 | Dependency | Used for | License |
 |---|---|---|
 | [pyserial](https://github.com/pyserial/pyserial) | Talking to the motion board from the PC tools | BSD-3-Clause |
+| [OpenCV](https://github.com/opencv/opencv-python) | Microscope capture, focus measure and image-shift calibration | Apache-2.0 / MIT |
+| [NumPy](https://github.com/numpy/numpy) | Image arithmetic | BSD-3-Clause |
+| [openai](https://github.com/openai/openai-python) Python SDK | Calling the Meta Model API, which speaks the same protocol | Apache-2.0 |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with Whisper large-v3-turbo and its Silero voice detector | Lunes' ear: speech to text on the bench PC's GPU | MIT |
+| [Piper](https://github.com/OHF-Voice/piper1-gpl) with the `es_MX-ald-medium` voice | Lunes' spoken voice, local | GPL-3.0 (voice: see its model card) |
+| [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) with the WeSpeaker ResNet34 speaker model | Telling Erlan's voice from other people's, so Lunes only obeys him | Apache-2.0 |
+| [sounddevice](https://github.com/spatialaudio/python-sounddevice) | Microphone and speaker access | MIT |
+| [Ollama](https://github.com/ollama/ollama) | Running Muse Glimmer's open weights on the bench PC | MIT |
+| Kinect for Windows SDK 1.8 (Microsoft) | The Kinect bridge in `kinect/` (colour, depth, tilt) | Microsoft SDK license, free download; not redistributed here |
 | [Arduino AVR core](https://github.com/arduino/ArduinoCore-avr) and [arduino-cli](https://github.com/arduino/arduino-cli) | Building the motion firmware | LGPL-2.1 / GPL-3.0 |
 
 The motion firmware (`firmware/lunes_motion`), its flasher and the PC tools in `tools/` are written for this project.

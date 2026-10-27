@@ -18,6 +18,8 @@ from tkinter import ttk
 import serial
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "machine.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lunes.machine import load_position, save_position  # noqa: E402
 RATE_CAP = 18000         # steps/s, the firmware's ceiling
 JOG_PERIOD_MS = 80       # JV is repeated this often while a key is held (the firmware's deadman is 250 ms)
 STATUS_PERIOD_MS = 120
@@ -110,6 +112,9 @@ class JogWindow:
         self.jogging = False
         self.last_motion = time.time()
         self.pos_steps = [0] * 5
+        # the board restarts at zero; the bench position the last session left is kept here, as in Machine
+        saved = load_position() or {}
+        self.offset_mm = {n: float(saved.get(n, 0.0)) for n in self.axes}
         self.build_ui()
         root.bind("<KeyPress>", self.on_key)
         root.bind("<KeyRelease>", self.on_key_release)
@@ -215,6 +220,15 @@ class JogWindow:
             self.set_enabled(False)
         self.root.after(JOG_PERIOD_MS, self.jog_loop)
 
+    def status_loop_once(self):
+        while True:
+            try:
+                m = self.board.msgs.get_nowait()
+            except queue.Empty:
+                return
+            if "pos" in m:
+                self.pos_steps = m["pos"]
+
     def status_loop(self):
         self.board.write(b"?")
         while True:
@@ -235,9 +249,11 @@ class JogWindow:
             if "err" in m:
                 self.state_var.set(f"la placa respondió error: {m['err']}")
         for name, ax in self.axes.items():
-            steps = self.pos_steps[self.fw_index[ax.socket]]
-            self.pos_vars[name].set(f"{steps / ax.spm:9.3f} mm")
+            self.pos_vars[name].set(f"{self.position_mm()[name]:9.3f} mm")
         self.root.after(STATUS_PERIOD_MS, self.status_loop)
+
+    def position_mm(self):
+        return {n: self.pos_steps[self.fw_index[ax.socket]] / ax.spm + self.offset_mm[n] for n, ax in self.axes.items()}
 
     # Buttons ---------------------------------------------------------------------------------------------------
     def set_enabled(self, on):
@@ -251,8 +267,12 @@ class JogWindow:
         self.set_enabled(not self.enabled)
 
     def zero(self):
+        """Makes this spot the bench origin (Lunes' allowed area in config/machine.json is measured from it)."""
         self.release_all()
         self.board.write("ZERO")
+        self.pos_steps = [0] * 5
+        self.offset_mm = {n: 0.0 for n in self.axes}
+        save_position(self.position_mm(), "jog zero")
 
     def goto(self):
         words = []
@@ -260,7 +280,7 @@ class JogWindow:
             txt = var.get().strip().replace(",", ".")
             if txt:
                 ax = self.axes[name]
-                words.append(f"{ax.socket}{round(float(txt) * ax.spm)}")
+                words.append(f"{ax.socket}{round((float(txt) - self.offset_mm[name]) * ax.spm)}")
         if not words:
             return
         self.release_all()
@@ -271,6 +291,10 @@ class JogWindow:
         self.root.focus_set()
 
     def quit(self):
+        self.board.write(b"?")
+        time.sleep(0.2)
+        self.status_loop_once()
+        save_position(self.position_mm(), "jog")
         self.board.close()
         self.root.destroy()
 

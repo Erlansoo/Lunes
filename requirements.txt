@@ -1,1 +1,11 @@
 pyserial==3.5
+opencv-python==4.12.0.88
+numpy==2.2.6
+openai==3.40.0
+# voice: ear (speech to text on the GPU), Lunes' voice, and telling Erlan's voice apart
+faster-whisper==1.2.1
+nvidia-cublas-cu12==12.9.2.10
+nvidia-cudnn-cu12==9.27.0.42
+sounddevice==0.5.6
+piper-tts==1.8.0
+sherpa-onnx==2.0.1

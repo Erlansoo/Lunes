@@ -145,8 +145,11 @@ def main():
             if txt == "i":
                 invert = not invert
                 ax["invert"] = invert
-                save_config(cfg)
                 b.send(f"CFG {fw} I{1 if invert else 0}")
+                if slave:  # the second motor flips too, or the two would pull against each other
+                    slave["invert"] = not slave.get("invert", False)
+                    b.send(f"CFG {slave['socket']} I{1 if slave['invert'] else 0}")
+                save_config(cfg)
                 print(f"Sentido {'invertido' if invert else 'normal'} (guardado).")
                 continue
             try:

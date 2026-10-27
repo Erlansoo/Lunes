@@ -22,7 +22,63 @@
       "invert": false,
       "speed_mm_s": 10.0,
       "accel_mm_s2": 40.0,
-      "note": "driven from the E0 socket; steps_per_mm from the Mach3 ratio, not yet checked with the caliper"
+      "note": "driven from the E0 socket; Z+ goes up (seen by Erlan); steps_per_mm from the Mach3 ratio, not yet checked with the caliper"
     }
+  },
+  "kinect": {
+    "view": "from behind the machine: X+ moves left in the image and Y+ comes toward the Kinect",
+    "tilt_deg": -17,
+    "image_shift_px_per_mm": {
+      "X": [
+        -0.491,
+        -0.082
+      ],
+      "Y": [
+        -0.278,
+        0.112
+      ]
+    },
+    "depth_change_mm_per_mm": {
+      "Y": -0.4
+    },
+    "measured_by": "tools/axis_direction.py, 20 mm moves, 2026-10-27"
+  },
+  "microscope": {
+    "resolution": [
+      640,
+      480
+    ],
+    "px_per_mm": {
+      "X": 40.873,
+      "Y": 42.661
+    },
+    "image_shift_px_per_mm": {
+      "X": [
+        -0.167,
+        40.873
+      ],
+      "Y": [
+        -42.652,
+        -0.859
+      ]
+    },
+    "x_axis_angle_deg": 90.23,
+    "angle_between_axes_deg": 90.92,
+    "calibrated_at": "2026-10-27T17:40:50"
+  },
+  "workspace_mm": {
+    "X": [
+      -100.0,
+      100.0
+    ],
+    "Y": [
+      -200.0,
+      150.0
+    ],
+    "Z": [
+      -7.0,
+      15.0
+    ],
+    "origin": "bench origin: X and Y are where the machine stood when Erlan measured these travels (2026-10-27, known to about 5 mm), Z = 0 is the focused surface of the board on the bed; the position is kept in runs/machine_position.json"
   }
 }

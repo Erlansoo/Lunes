@@ -20,3 +20,9 @@ runs/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Kinect bridge build output (includes the SDK's Microsoft.Kinect.dll, which is not ours to publish)
+kinect/bin/
+
+# Downloaded models (Piper voices and the like)
+models/

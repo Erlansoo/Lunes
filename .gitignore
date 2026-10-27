@@ -1,0 +1,22 @@
+# Secrets: API keys live in .env, never in the repository
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Captures and run outputs (large, regenerated on the bench)
+captures/
+runs/
+*.log
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

@@ -19,6 +19,15 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
   here as they are added, and on Meta models.
 - The demo video opens by saying the same thing.
 
+## Open-source dependencies
+
+| Dependency | Used for | License |
+|---|---|---|
+| [pyserial](https://github.com/pyserial/pyserial) | Talking to the motion board from the PC tools | BSD-3-Clause |
+| [Arduino AVR core](https://github.com/arduino/ArduinoCore-avr) and [arduino-cli](https://github.com/arduino/arduino-cli) | Building the motion firmware | LGPL-2.1 / GPL-3.0 |
+
+The motion firmware (`firmware/lunes_motion`), its flasher and the PC tools in `tools/` are written for this project.
+
 ## Meta models (planned)
 
 | Model | Role in Lunes |

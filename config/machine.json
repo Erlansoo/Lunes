@@ -1,0 +1,28 @@
+{
+  "axes": {
+    "X": {
+      "steps_per_mm": 1082.6706,
+      "invert": true,
+      "speed_mm_s": 10.0,
+      "accel_mm_s2": 40.0
+    },
+    "Y": {
+      "steps_per_mm": 40.14,
+      "speed_mm_s": 22.5,
+      "accel_mm_s2": 90.0,
+      "slave": {
+        "socket": "Z",
+        "invert": false
+      },
+      "note": "belt axis with two motors; the Mach3 ratio predicted 40.1482 steps/mm and the caliper measured 40.14"
+    },
+    "Z": {
+      "socket": "A",
+      "steps_per_mm": 1274.232,
+      "invert": false,
+      "speed_mm_s": 10.0,
+      "accel_mm_s2": 40.0,
+      "note": "driven from the E0 socket; steps_per_mm from the Mach3 ratio, not yet checked with the caliper"
+    }
+  }
+}

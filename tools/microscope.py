@@ -9,6 +9,7 @@ snapshot, q or Esc quits.
 import argparse
 import math
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -27,27 +28,58 @@ KEY_PGUP, KEY_PGDN = 2162688, 2228224
 
 
 class Camera:
+    """The microscope, read continuously on its own thread. frame() is always the newest picture, so anyone (the
+    dashboard too) can look at any moment; fresh_gray() waits for pictures taken after it was called."""
+
     def __init__(self, index):
-        self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        self._cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         # 640x480 is the MS5's real resolution; its larger modes are the same image stretched.
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        if not self.cap.isOpened():
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        if not self._cap.isOpened():
             raise RuntimeError(f"no camera at index {index}")
+        self.cap = self  # older callers release the camera with cam.cap.release()
+        self._new = threading.Condition()
+        self._latest, self._count, self._alive = None, 0, True
+        self._thread = threading.Thread(target=self._reader, daemon=True)
+        self._thread.start()
+        self._wait_for(1, timeout=5)
+
+    def _reader(self):
+        while self._alive:
+            ok, f = self._cap.read()
+            if not ok:
+                time.sleep(0.01)
+                continue
+            with self._new:
+                self._latest, self._count = f, self._count + 1
+                self._new.notify_all()
+
+    def _wait_for(self, count, timeout=3.0):
+        with self._new:
+            if not self._new.wait_for(lambda: self._count >= count, timeout):
+                raise RuntimeError("the camera stopped sending frames")
+            return self._latest
 
     def frame(self):
-        ok, f = self.cap.read()
-        if not ok:
+        with self._new:
+            f = self._latest
+        if f is None:
             raise RuntimeError("the camera stopped sending frames")
-        return f
+        return f.copy()
 
     def fresh_gray(self, n=3):
-        """Grey frame taken after the machine stops: drops buffered frames, then averages n to cut noise."""
-        for _ in range(4):
-            self.cap.read()
-        frames = [cv2.cvtColor(self.frame(), cv2.COLOR_BGR2GRAY).astype(np.float32) for _ in range(n)]
+        """Grey frame taken after the machine stops: skips the frame being exposed during the call (it may have
+        started while moving), then averages n new ones to cut noise."""
+        start = self._count
+        frames = [cv2.cvtColor(self._wait_for(start + 2 + k), cv2.COLOR_BGR2GRAY).astype(np.float32) for k in range(n)]
         return sum(frames) / n
+
+    def release(self):
+        self._alive = False
+        self._thread.join(timeout=1)
+        self._cap.release()
 
 
 def sharpness(gray):

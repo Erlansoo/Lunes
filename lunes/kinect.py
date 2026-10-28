@@ -14,8 +14,24 @@ PORT = 9601
 
 class Kinect:
     def __init__(self, host="127.0.0.1", port=PORT, timeout=3.0):
-        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.address, self.timeout = (host, port), timeout
+        self._connect()
+
+    def _connect(self):
+        self.sock = socket.create_connection(self.address, timeout=self.timeout)
         self.file = self.sock.makefile("rb")
+
+    def reconnect(self):
+        """After the Kinect's cable was pulled the bridge holds a dead sensor: restart it and connect again."""
+        import subprocess
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+        subprocess.run(["taskkill", "/F", "/IM", "kinect_bridge.exe"], capture_output=True)
+        if not start_bridge():
+            raise RuntimeError("the Kinect is not connected")
+        self._connect()
 
     def _request(self, line):
         self.sock.sendall(line.encode() + b"\n")
@@ -25,6 +41,13 @@ class Kinect:
         return header
 
     def _frame(self, kind):
+        try:
+            return self._frame_once(kind)
+        except (OSError, ValueError, RuntimeError):  # a dropped Kinect or a dead bridge: start over once
+            self.reconnect()
+            return self._frame_once(kind)
+
+    def _frame_once(self, kind):
         h = self._request(kind)
         data = self.file.read(h["bytes"])
         if len(data) != h["bytes"]:
@@ -86,38 +109,6 @@ class KinectSnapshot:
 
     def close(self):
         pass
-
-
-class KinectAudio:
-    """The microphone array as a 16 kHz mono stream, through the SDK (beamforming, gain control, noise suppression).
-
-    Uses its own connection because the bridge streams audio on it until the connection closes."""
-
-    rate = 16000
-
-    def __init__(self, host="127.0.0.1", port=PORT):
-        self.sock = socket.create_connection((host, port), timeout=5.0)
-        self.file = self.sock.makefile("rb")
-        self.sock.sendall(b"AUDIO\n")
-        header = json.loads(self.file.readline())
-        if "err" in header:
-            raise RuntimeError(f"Kinect bridge: {header['err']}")
-
-    def read(self, n):
-        """Next n samples as float32 in [-1, 1]."""
-        data = self.file.read(2 * n)
-        if len(data) != 2 * n:
-            raise IOError("the Kinect audio stream ended")
-        return np.frombuffer(data, "<i2").astype(np.float32) / 32768.0
-
-    def close(self):
-        self.sock.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
 
 
 def depth_colormap(depth_mm, near=800, far=2000):

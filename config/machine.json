@@ -4,7 +4,8 @@
       "steps_per_mm": 1082.6706,
       "invert": true,
       "speed_mm_s": 10.0,
-      "accel_mm_s2": 40.0
+      "accel_mm_s2": 40.0,
+      "backlash_mm": 0.221
     },
     "Y": {
       "steps_per_mm": 40.14,
@@ -14,7 +15,8 @@
         "socket": "Z",
         "invert": false
       },
-      "note": "belt axis with two motors; the Mach3 ratio predicted 40.1482 steps/mm and the caliper measured 40.14"
+      "note": "belt axis with two motors; the Mach3 ratio predicted 40.1482 steps/mm and the caliper measured 40.14",
+      "backlash_mm": 0.039
     },
     "Z": {
       "socket": "A",
@@ -49,22 +51,22 @@
       480
     ],
     "px_per_mm": {
-      "X": 40.873,
-      "Y": 42.661
+      "X": 42.647,
+      "Y": 40.166
     },
     "image_shift_px_per_mm": {
       "X": [
-        -0.167,
-        40.873
+        -0.844,
+        42.639
       ],
       "Y": [
-        -42.652,
-        -0.859
+        -40.163,
+        -0.45
       ]
     },
-    "x_axis_angle_deg": 90.23,
-    "angle_between_axes_deg": 90.92,
-    "calibrated_at": "2026-10-27T17:40:50"
+    "x_axis_angle_deg": 91.13,
+    "angle_between_axes_deg": 89.51,
+    "calibrated_at": "2026-10-28T14:30:15"
   },
   "workspace_mm": {
     "X": [
@@ -80,5 +82,38 @@
       15.0
     ],
     "origin": "bench origin: X and Y are where the machine stood when Erlan measured these travels (2026-10-27, known to about 5 mm), Z = 0 is the focused surface of the board on the bed; the position is kept in runs/machine_position.json"
+  },
+  "como_lo_ve_erlan": {
+    "X": "todav\u00eda no se sabe si +X va hacia la izquierda o hacia la derecha de Erlan",
+    "Y": "+Y va hacia adelante y -Y hacia atr\u00e1s, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atr\u00e1s)",
+    "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
+  },
+  "kinect_head": {
+    "map": [
+      [
+        -1.3589961129548636,
+        -0.8013191365145537,
+        0.04178424487247565
+      ],
+      [
+        -0.3333322540007959,
+        0.6571788186977421,
+        1.307057296521959
+      ],
+      [
+        0.417421939357832,
+        -0.655857389554588,
+        0.31092587415686956
+      ],
+      [
+        154.47450992756754,
+        602.7937288285284,
+        -766.3581248805493
+      ]
+    ],
+    "typical_error_mm": 1.3,
+    "points": 9,
+    "at": "2026-10-28T13:35",
+    "note": "linear map from where the Kinect sees the ring light (column, row, distance mm) to machine mm; made by calibrate_kinect"
   }
 }

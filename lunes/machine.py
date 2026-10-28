@@ -6,6 +6,9 @@ each machine axis, its steps per millimetre, speed, acceleration, direction and 
 The board forgets its position whenever the port opens (it resets), and there are no limit switches. So the last
 position is kept in runs/machine_position.json after every move and taken back on the next start: positions stay
 on the bench's own origin across sessions, as long as nobody moves the machine by hand in between.
+
+Backlash: an axis with backlash_mm in the config gets that much extra travel whenever it turns round, so the
+carriage, not just the motor, ends where it was sent (measured by tools/backlash.py).
 """
 import json
 import time
@@ -19,18 +22,21 @@ FW_AXES = "XYZAB"
 RATE_CAP = 18000  # steps/s, the firmware's ceiling
 
 
-def load_position():
-    """Machine position (mm per axis) saved by the last session, or None."""
+def load_position(key="mm"):
+    """Machine position (mm per axis) saved by the last session, or None; key="dir" gives the direction each
+    axis last moved in."""
     try:
-        return json.loads(POSITION.read_text(encoding="utf-8"))["mm"]
+        return json.loads(POSITION.read_text(encoding="utf-8"))[key]
     except (OSError, ValueError, KeyError):
         return None
 
 
-def save_position(mm, by):
+def save_position(mm, by, direction=None):
     POSITION.parent.mkdir(exist_ok=True)
-    POSITION.write_text(json.dumps({"mm": {k: round(v, 4) for k, v in mm.items()}, "by": by,
-                                    "at": time.strftime("%Y-%m-%d %H:%M:%S")}), encoding="utf-8")
+    state = {"mm": {k: round(v, 4) for k, v in mm.items()}, "by": by, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if direction:
+        state["dir"] = direction
+    POSITION.write_text(json.dumps(state), encoding="utf-8")
 
 
 class Axis:
@@ -42,6 +48,7 @@ class Axis:
         self.accel = cfg.get("accel_mm_s2", 10.0)
         self.invert = cfg.get("invert", False)
         self.slave = cfg.get("slave")
+        self.backlash = float(cfg.get("backlash_mm", 0.0))
 
 
 class Machine:
@@ -70,6 +77,9 @@ class Machine:
         if saved:
             here = self.position()
             self.offset_mm = {n: float(saved.get(n, here[n])) - here[n] for n in self.axes}
+        # which way each axis last moved (+1 / -1, 0 unknown): a reversal takes up the backlash first
+        self.direction = {n: int((load_position("dir") or {}).get(n, 0)) if keep_position else 0 for n in self.axes}
+        self.at_mm = self.position()
 
     def _read(self):
         out = []
@@ -117,10 +127,20 @@ class Machine:
         here = self.position()
         for n, v in mm.items():
             self.offset_mm[n] += float(v) - here[n]
-        save_position(self.position(), "set_position")
+        self.at_mm = self.position()
+        save_position(self.at_mm, "set_position", self.direction)
 
     def move_to(self, timeout=120, **targets_mm):
         """Coordinated move to absolute millimetres; every axis arrives together, each within its own speed."""
+        for n, v in targets_mm.items():
+            delta = v - self.at_mm[n]
+            if abs(delta) < 1e-6:
+                continue
+            sign = 1 if delta > 0 else -1
+            if self.axes[n].backlash and self.direction[n] and sign != self.direction[n]:
+                # turning round: the motor goes the backlash further, which the carriage never sees
+                self.offset_mm[n] -= sign * self.axes[n].backlash
+            self.direction[n] = sign
         words = [f"{self.axes[n].socket}{round((v - self.offset_mm[n]) * self.axes[n].spm)}"
                  for n, v in targets_mm.items()]
         if not words:
@@ -134,7 +154,8 @@ class Machine:
             if not any(m.get("ev") == "done" for m in reply):
                 self.wait_done(timeout)
         finally:  # also after a stopped move: wherever it ended is where the machine is
-            save_position(self.position(), "move")
+            self.at_mm = self.position()
+            save_position(self.at_mm, "move", self.direction)
         self.last_motion = time.time()
 
     def soft_stop(self):

@@ -94,7 +94,8 @@ STEPS = {"measure_board": "mido la placa", "survey_board": "recorro la placa con
          "scope_measure": "mido con el osciloscopio", "scope_selftest": "pruebo el osciloscopio",
          "scope_test_signal": "pongo la señal de prueba", "scope_probe": "anoto la punta",
          "circuit_set": "simulo el circuito", "diagnose_start": "preparo el diagnóstico",
-         "diagnose_measure": "mido y comparo con la simulación",
+         "diagnose_measure": "mido y comparo con la simulación", "circuit_design": "diseño el circuito",
+         "circuit_guide": "repaso mis notas", "system_check": "reviso mis partes", "system_restart": "reinicio una parte",
          "ask_spark": "le pregunto a Muse Spark", "remember": "lo anoto en la memoria", "where": "veo dónde estoy"}
 TOLD_AT_START = {"measure_board", "survey_board", "inspect_component", "look_kinect"}
 
@@ -417,6 +418,11 @@ def main():
     hume = Hume(machine, cam, kinect, show=show, model=args.model, think=think,
                 on_think=lambda t: log("think", "   (pensó) " + " ".join(t.split())[:300]), spark=args.spark,
                 about=about, bench=bench, scope=scope)
+    from lunes import simulator
+    simulator_ok = simulator.selftest()
+    simulator_ok["hanging_runs_ended"] = simulator.kill_strays()
+    print("simulador: ngspice " + (f"listo ({simulator_ok['seconds']} s)" if simulator_ok["ok"] else
+                                   f"CON PROBLEMAS: {simulator_ok.get('problem')}"))
     print("trabajador y conductor: " + ("Muse Spark por la API de Meta (si falla, Muse Glimmer local)"
                                         if hume.brain == "spark"
                                         else f"Muse Glimmer local ({args.model}); a Muse Spark no se le manda nada"))
@@ -512,13 +518,15 @@ def main():
                          "imagen que el Kinect (lo que hay ahora, solo mirando)")
         else:
             parts.append("cámara del banco: no conectada")
-        if scope is None:
+        if hume.scope is None:  # hume's own: system_restart may open it again
             parts.append("osciloscopio: no conectado")
         else:
-            kind = ("SIMULADO, con señales inventadas (no del banco)" if isinstance(scope, SimulatedScope) else
+            kind = ("SIMULADO, con señales inventadas (no del banco)" if isinstance(hume.scope, SimulatedScope) else
                     "Hantek 6022BE conectado")
-            parts.append(f"osciloscopio: {kind}, dos canales, puntas x{scope.probe['CH1']:g} (CH1) y "
-                         f"x{scope.probe['CH2']:g} (CH2); mide voltajes y señales donde Erlan ponga la punta")
+            parts.append(f"osciloscopio: {kind}, dos canales, puntas x{hume.scope.probe['CH1']:g} (CH1) y "
+                         f"x{hume.scope.probe['CH2']:g} (CH2); mide voltajes y señales donde Erlan ponga la punta")
+        parts.append("simulador de circuitos (ngspice): " + ("listo" if simulator_ok["ok"] else
+                                                             f"con problemas ({simulator_ok.get('problem')})"))
         parts.append("Kinect: conectado y apuntando a la CNC de frente y desde arriba; sirve para la profundidad y "
                      "para confirmar la posición" if kinect else "Kinect: no conectado")
         check = hume.last_kinect_check
@@ -566,8 +574,8 @@ def main():
             bench.release()
         if kinect:
             kinect.close()
-        if scope:
-            scope.close()
+        if hume.scope:
+            hume.scope.close()
 
     def watch_close_file():
         while not CLOSE_FILE.exists():

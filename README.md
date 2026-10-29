@@ -56,6 +56,20 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
     1 kHz asked), then found a resistor ten times too big in two measurements.
   - Most faults (a shorted capacitor, a dead MOSFET) look exactly like a good part, so this works from
     measurements, not from pictures.
+- **Design and review, like a senior engineer:**
+  - The model decides what is wanted; the code designs it by formula with standard values (E12 resistors, E6
+    capacitors) and the simulation must meet its goals (`lunes/designs.py`). Templates: an LED, a 555 astable,
+    a transistor switch, a divider, an RC filter, an op-amp amplifier. All twelve test designs meet their goals.
+  - A review before simulating catches nets with no DC path to ground, a shorted supply and parts in one row
+    (`lunes/review.py`). One after simulating catches an LED past 30 mA, a resistor past 1/4 W, a transistor past
+    its rating, and a net outside the supply.
+  - ngspice cannot hang Lunes. Every run has a time limit, and a run that does not converge is retried with more
+    tolerant settings. Its errors come back as sentences in the circuit's own words, and a result from a singular
+    matrix is refused, not trusted.
+  - A guide of what a bench engineer keeps in mind (pinouts, typical faults, limits) is read by Lunes when it needs
+    it (`lunes/knowledge/circuits.md`).
+  - Lunes checks its own parts (`system_check`: a simulator self-test, the scope, the Kinect, the cameras, the
+    CNC's alarm) and restarts the one that fails (`system_restart`), telling Erlan what happened.
 - **Being built:** breadboard assembly guided by a laser pointer on the machine, and the probe held by the machine.
 
 ## Built from scratch

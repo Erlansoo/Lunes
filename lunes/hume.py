@@ -57,6 +57,7 @@ def _workspace():
 
 WORKSPACE = _workspace()
 CIRCUIT = Path(__file__).resolve().parent.parent / "runs" / "circuit.json"  # the circuit on the bench and its simulation
+GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' circuit guide, read by circuit_guide
 LIFT_MM = 3.0
 MAX_ROUNDS = 10
 MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
@@ -123,12 +124,17 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
 - La masa del osciloscopio es la masa de la PC por el USB: nunca le pidas medir la red de 220 V ni algo conectado a
   ella sin transformador de aislamiento. Si no sabes si la punta está en x1 o x10, pregúntale a Erlan o usa
   scope_selftest con la punta en la salida de calibración del osciloscopio.
-- Para trabajar con un circuito (armarlo en la protoboard, comprobarlo o encontrar su falla): primero circuit_set
-  con sus partes, valores y redes, que lo simula; si lo diseñas tú, revisa que la simulación haga lo pedido antes de
-  proponerlo. Para comprobarlo o diagnosticarlo: diagnose_start, y en cada paso dile a Erlan dónde poner la punta en
+- Para trabajar con un circuito (armarlo en la protoboard, comprobarlo o encontrar su falla): si es uno de los
+  usuales (LED, 555, transistor como interruptor, divisor, filtro RC, amplificador), diséñalo con circuit_design: el
+  código calcula los valores con fórmulas y los verifica en la simulación. Si no, escríbelo con circuit_set y dale
+  sus metas (spec). Solo propónselo a Erlan cuando todas las metas pasen y la revisión no avise nada serio; si
+  avisa, corrígelo. Para el criterio (patillajes, fallas típicas, límites) consulta circuit_guide. Si el simulador
+  rechaza un circuito, su mensaje dice por qué: corrige eso, no repitas lo mismo. Para comprobarlo o diagnosticarlo: diagnose_start, y en cada paso dile a Erlan dónde poner la punta en
   palabras de banco ("el pin 3 del 555", "la pata de R2 que va al capacitor") y, cuando diga que está, llama
   diagnose_measure. El motor decide qué medir y qué falla es; tú lo explicas con los números. Solo nombra una falla
   cuando el motor la da como clara; si varias leen igual, pídele mirar esas partes. Nunca inventes una falla.
+- Si una herramienta falla o responde raro (el simulador, el osciloscopio, el Kinect), usa system_check antes de
+  culpar al circuito, y system_restart para la parte que falle; dile a Erlan qué pasó.
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
@@ -320,12 +326,52 @@ TOOLS = [
                        "BC547, 2N3906 or BC557, pins {C, B, E}. NE555: pins {GND, TRIG, OUT, RESET, CTRL, THRES, "
                        "DISCH, VCC}. OPAMP: pins {OUT, IN-, IN+, V+, V-}. V (an extra source): value '3.3' or "
                        "{sine: [offset, amplitude, hz]} or {square: [low, high, hz]}, pins {+, -}. Nets are names; "
-                       "GND is ground and VCC the supply. When you design, check the result before telling "
-                       "Erlan: if it does not do what was asked, change the values and simulate again.",
+                       "GND is ground and VCC the supply. A review checks the wiring first (nets with no DC path "
+                       "to ground, a shorted supply, parts in one row) and the parts after (LED current, resistor "
+                       "power, transistor ratings). Give spec, the goals it must meet, and the simulation says "
+                       "whether each one passes: [{net, frequency_hz | duty | mean_v, tolerance}], [{current_of: "
+                       "ref, target_a, tolerance}], [{net, of: other net, ratio_vpp, tolerance}]. For the usual "
+                       "circuits prefer circuit_design, which computes the values by formula.",
         "parameters": {"type": "object", "properties": {"circuit": {"type": "object", "properties": {
             "name": {"type": "string"}, "supply_v": {"type": "number"},
-            "parts": {"type": "array", "items": {"type": "object"}}}, "required": ["parts"]}},
+            "parts": {"type": "array", "items": {"type": "object"}}}, "required": ["parts"]},
+            "spec": {"type": "array", "items": {"type": "object"}}},
             "required": ["circuit"]}}},
+    {"type": "function", "function": {
+        "name": "circuit_design",
+        "description": "Design a usual circuit by formula, with standard values (E12 resistors, E6 capacitors), "
+                       "simulate it and check it meets its goals; it becomes the circuit on the bench, as with "
+                       "circuit_set. Templates and their params: led_resistor {supply_v, color, current_ma}; "
+                       "astable_555 {frequency_hz, duty (0.51 to 0.95), supply_v, led_color}; npn_switch "
+                       "{load_current_ma, supply_v, logic_v, input_hz, color, model}; divider {vout, supply_v, "
+                       "current_ma}; rc_filter {cutoff_hz, kind lowpass|highpass, supply_v}; opamp_noninverting "
+                       "{gain, supply_v, input_offset_v, input_amplitude_v, input_hz}. Returns the parts, the "
+                       "formulas used, each goal with what the simulation gave, and the review.",
+        "parameters": {"type": "object", "properties": {
+            "template": {"type": "string", "enum": ["led_resistor", "astable_555", "npn_switch", "divider",
+                                                    "rc_filter", "opamp_noninverting"]},
+            "params": {"type": "object"}}, "required": ["template"]}}},
+    {"type": "function", "function": {
+        "name": "circuit_guide",
+        "description": "Read a section of Lunes' circuit guide, what a senior bench engineer keeps in mind: method, "
+                       "555, led, transistor, opamp, rc, divider, diodes, supply, breadboard, simulation, diagnosis, "
+                       "measurement, arduino. For judgement (pinouts, typical faults, limits), not for arithmetic.",
+        "parameters": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]}}},
+    {"type": "function", "function": {
+        "name": "system_check",
+        "description": "How Lunes' own parts are doing: the simulator (a self-test on two known circuits, and any "
+                       "ngspice left hanging), the oscilloscope, the Kinect, the cameras and the CNC (its alarm). "
+                       "Use it when something fails or answers oddly, before blaming the circuit.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "system_restart",
+        "description": "Restart one of Lunes' parts after system_check found it failing: simulator (ends hanging "
+                       "ngspice runs and tests it again), scope (closes and opens the oscilloscope again, loading "
+                       "its firmware), kinect (opens it again), cnc_alarm (clears the motion board's alarm once "
+                       "Erlan knows why it stopped; it never moves the machine).",
+        "parameters": {"type": "object", "properties": {
+            "part": {"type": "string", "enum": ["simulator", "scope", "kinect", "cnc_alarm"]}},
+            "required": ["part"]}}},
     {"type": "function", "function": {
         "name": "diagnose_start",
         "description": "Start checking the circuit set with circuit_set, to confirm one just built works or to find "
@@ -757,16 +803,26 @@ class Hume:
                 "probe_factor_believed": factor, "problems": problems}, view
 
     # The circuit on the bench: simulation and diagnosis -------------------------------------------------------------
-    def _circuit_set(self, circuit):
+    def _circuit_set(self, circuit, spec=None):
+        from lunes import review
         from lunes.circuit import check
-        from lunes.simulator import expected, fault_dictionary
+        from lunes.designs import as_spec, verify
+        from lunes.simulator import SimulationError, expected, fault_dictionary
         problems = check(circuit)
         if problems:
-            return {"ok": False, "problems": problems}, None
+            return {"ok": False, "problems": problems, "note": "fix these and call again"}, None
+        errors, warnings = review.before(circuit)
+        if errors:
+            return {"ok": False, "wiring_errors": errors, "warnings": warnings,
+                    "note": "simulating this would give meaningless numbers: fix the wiring first"}, None
         try:
             sim = expected(circuit)
-        except RuntimeError as e:
-            return {"ok": False, "error": str(e)}, None
+        except SimulationError as e:
+            return {"ok": False, "simulation_problems": e.problems, "warnings": warnings}, None
+        except (RuntimeError, OSError) as e:
+            return {"ok": False, "error": f"the simulator itself failed ({e}): use system_check"}, None
+        warnings += review.after(circuit, sim) + sim["warnings"]
+        goals = verify(sim, as_spec(spec)) if spec else []
         self.circuit, self.expected, self.diagnosis, self.fault_table = circuit, sim, None, None
         CIRCUIT.parent.mkdir(exist_ok=True)
         CIRCUIT.write_text(json.dumps({"circuit": circuit, "expected": sim}, ensure_ascii=False, indent=1),
@@ -779,9 +835,121 @@ class Hume:
                 self.fault_table = None
         self._table_thread = threading.Thread(target=table, daemon=True)
         self._table_thread.start()
-        return {"ok": True, "name": circuit.get("name"), "supply_v": circuit.get("supply_v", 5),
-                "expected_by_net": sim["nets"],
-                "note": "simulated with ngspice; what the scope should read at each net"}, None
+        out = {"ok": True, "name": circuit.get("name"), "supply_v": circuit.get("supply_v", 5),
+               "expected_by_net": sim["nets"], "currents": sim["currents"], "review": warnings,
+               "note": "simulated with ngspice; what the scope should read at each net"}
+        if goals:
+            out["goals"] = goals
+            out["all_goals_met"] = all(g["ok"] for g in goals)
+        return out, None
+
+    def _circuit_design(self, template, params):
+        from lunes.designs import TEMPLATES
+        if template not in TEMPLATES:
+            return {"ok": False, "error": f"template must be one of {sorted(TEMPLATES)}"}, None
+        try:
+            circuit, spec, notes = TEMPLATES[template](**(params or {}))
+        except (TypeError, ValueError) as e:
+            return {"ok": False, "error": f"cannot design it: {e}"}, None
+        result, view = self._circuit_set(circuit, spec)
+        result["design_notes"] = notes
+        result["parts"] = [{k: v for k, v in part.items() if k in ("ref", "kind", "value", "model", "color", "pins")}
+                           for part in circuit["parts"]]
+        return result, view
+
+    def _circuit_guide(self, topic):
+        text = GUIDE.read_text(encoding="utf-8")
+        sections = {}
+        for block in text.split("\n## ")[1:]:
+            name, _, body = block.partition("\n")
+            sections[name.strip().lower()] = body.strip()
+        key = str(topic).strip().lower()
+        if key not in sections:
+            return {"ok": False, "error": f"topics: {sorted(sections)}"}, None
+        return {"ok": True, "topic": key, "guide": sections[key]}, None
+
+    def _system_check(self):
+        from lunes import simulator
+        out = {"simulator": simulator.selftest()}
+        out["simulator"]["hanging_runs_ended"] = simulator.kill_strays()
+        if self.scope is None:
+            out["scope"] = {"ok": False, "state": "not connected"}
+        else:
+            try:
+                cap = self.scope.capture(2000)
+                out["scope"] = {"ok": True, "state": "answering", "info": self.scope.info(),
+                                "samples": cap.samples}
+            except Exception as e:  # a pulled cable shows up as any USB error
+                out["scope"] = {"ok": False, "state": f"not answering ({e})"}
+        if self.kinect is None:
+            out["kinect"] = {"ok": False, "state": "not connected"}
+        else:
+            try:
+                self.kinect.color()
+                out["kinect"] = {"ok": True, "state": "sending pictures", **self.kinect.info()}
+            except RuntimeError as e:
+                out["kinect"] = {"ok": False, "state": str(e)}
+        try:
+            st = self.m.status()
+            out["cnc"] = {"ok": not st.get("alarm"), "state": st.get("st"), "alarm": st.get("alarm") or None}
+        except Exception as e:
+            out["cnc"] = {"ok": False, "state": f"not answering ({e})"}
+        for name, cam in (("microscope", self.cam), ("bench_camera", self.bench)):
+            if cam is None:
+                out[name] = {"ok": False, "state": "not connected"}
+                continue
+            try:
+                frame = cam.frame()
+                out[name] = {"ok": frame is not None and float(frame.std()) > 2, "state":
+                             "giving pictures" if frame is not None and float(frame.std()) > 2 else "black picture"}
+            except Exception as e:
+                out[name] = {"ok": False, "state": str(e)}
+        out["all_ok"] = all(v.get("ok") for v in out.values() if isinstance(v, dict))
+        return out, None
+
+    def _system_restart(self, part):
+        from lunes import simulator
+        if part == "simulator":
+            ended = simulator.kill_strays()
+            return {"ok": True, "hanging_runs_ended": ended, "selftest": simulator.selftest()}, None
+        if part == "scope":
+            from lunes.hantek import Scope, SimulatedScope
+            if isinstance(self.scope, SimulatedScope):
+                return {"ok": True, "note": "the simulated scope needs no restart"}, None
+            probe = dict(self.scope.probe) if self.scope else self.m.config.get("scope", {}).get("probe", {})
+            try:
+                if self.scope is not None:
+                    self.scope.close()
+            except Exception:
+                pass
+            try:
+                self.scope = Scope(probe=probe)
+                return {"ok": True, "state": "open again", "info": self.scope.info()}, None
+            except RuntimeError as e:
+                self.scope = None
+                return {"ok": False, "error": str(e)}, None
+        if part == "kinect":
+            if self.kinect is None:
+                from lunes.kinect import Kinect
+                try:
+                    self.kinect = Kinect()
+                except RuntimeError as e:
+                    return {"ok": False, "error": str(e)}, None
+            else:
+                try:
+                    self.kinect.reconnect()
+                except RuntimeError as e:
+                    return {"ok": False, "error": str(e)}, None
+            return {"ok": True, "state": "open again", **self.kinect.info()}, None
+        if part == "cnc_alarm":
+            try:
+                self.m.reset_alarm()
+                return {"ok": True, "state": "alarm cleared; the machine did not move",
+                        "position_doubtful": True,
+                        "note": "after an alarm the position may be off: check_position before fine work"}, None
+            except Exception as e:
+                return {"ok": False, "error": str(e)}, None
+        return {"ok": False, "error": "part must be simulator, scope, kinect or cnc_alarm"}, None
 
     def _diagnose_start(self):
         from lunes.diagnosis import Diagnosis
@@ -792,7 +960,13 @@ class Hume:
         if self.fault_table is None:
             return {"ok": False, "error": "the simulator could not work out the faults of this circuit"}, None
         self.diagnosis = Diagnosis(self.circuit, self.fault_table)
-        return {"ok": True, "hypotheses": len(self.fault_table), **self.diagnosis.state()}, None
+        out = {"ok": True, "hypotheses": len(self.fault_table), **self.diagnosis.state()}
+        blind = {h: e.get("problem", "") for h, e in self.fault_table.items() if e.get("nets") is None}
+        if blind:
+            out["not_predicted"] = {h: f"{self.fault_table[h]['says']}: {why}" for h, why in blind.items()}
+            out["not_predicted_note"] = ("the simulator could not work these faults out, so the engine cannot "
+                                         "confirm or rule them out by measuring")
+        return out, None
 
     def _diagnose_measure(self, net, source="scope", mean_v=None):
         if self.diagnosis is None:
@@ -1368,7 +1542,15 @@ class Hume:
         if name == "scope_probe":
             return self._scope_probe(str(args.get("channel", "")), args.get("factor", 0))
         if name == "circuit_set":
-            return self._circuit_set(args.get("circuit") or {})
+            return self._circuit_set(args.get("circuit") or {}, args.get("spec"))
+        if name == "circuit_design":
+            return self._circuit_design(str(args.get("template", "")), args.get("params") or {})
+        if name == "circuit_guide":
+            return self._circuit_guide(args.get("topic", ""))
+        if name == "system_check":
+            return self._system_check()
+        if name == "system_restart":
+            return self._system_restart(str(args.get("part", "")))
         if name == "diagnose_start":
             return self._diagnose_start()
         if name == "diagnose_measure":

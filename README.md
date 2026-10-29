@@ -26,18 +26,43 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
     with its own USB driver, written for this project.
   - **Research:** it looks up datasheets on the web, with sources.
   - **Conversation:** you talk to it like a call: it answers at once, works in the background and tells the result.
-- **Being built:** the diagnosis itself.
-  - Lunes asks for measurements at points it shows you.
-  - It compares each reading with what the circuit should give.
-  - It picks the next most informative measurement until the faulty part is found.
-  - Most faults (a shorted capacitor, a dead MOSFET) look exactly like a good part, so this step works from
+- **Ready, first test on the real scope on Oct 30:** the oscilloscope.
+  - Lunes drives a Hantek 6022BE (two channels, 20 MHz) with its own USB driver (`lunes/hantek.py`).
+  - Like the Auto button of a bench scope, the code picks the range and the sample rate, then measures levels,
+    frequency, duty cycle, rise time, the signal's shape and, for serial data, the likely baud rate
+    (`lunes/signals.py`).
+  - Notes say how far to trust each reading (it clips, too few samples per period, 0 V and flat, mains hum), and a
+    picture of the screen goes to the model with the numbers.
+  - The model judges the circuit from those numbers. It never reads a value off a picture.
+  - A self-test on the scope's own calibration output catches a probe set to x1 while Lunes counts x10, or the
+    other way round.
+  - Tested so far on a simulated scope with the same interface (`--osciloscopio simulado`).
+- **Working on the simulated bench, first test on a real breadboard on Oct 30:** diagnosis by measurement.
+  - **The circuit as data:** Lunes keeps the circuit on the bench as parts, values and nets (`lunes/circuit.py`),
+    one Erlan describes or one Lunes designs.
+  - **Simulation:** ngspice simulates it, and each net is read with the same measurements the scope uses
+    (`lunes/simulator.py`), so a bench reading and a simulated one compare number to number.
+  - **Own part models:** the 555 (analogue comparators and a digital latch) and the op-amp are behavioural models
+    written for Lunes (`lunes/spice/models.lib`).
+  - **Fault dictionary:** the simulator also runs every typical fault of every part, as parts fail on a bench: open,
+    shorted, ten times the value (a colour code read wrong), backwards, a dead chip.
+  - **Choosing what to measure:** the engine (`lunes/diagnosis.py`) weighs each reading against every hypothesis
+    with Bayes' rule, then picks the net whose reading separates the remaining ones best.
+  - **The verdict:** it names a fault only at 90 %. Faults that read the same everywhere are reported together, to
+    be told apart by a look. A "none of these" hypothesis keeps it from naming the nearest wrong fault.
+  - **Tested on all 24 faults of a 555 blinker:** 20 found, 4 left honestly undecided, none wrong, 2.6
+    measurements on average.
+  - **Muse Spark end to end, on the simulated bench:** it designed the blinker itself (977 Hz simulated for the
+    1 kHz asked), then found a resistor ten times too big in two measurements.
+  - Most faults (a shorted capacitor, a dead MOSFET) look exactly like a good part, so this works from
     measurements, not from pictures.
+- **Being built:** breadboard assembly guided by a laser pointer on the machine, and the probe held by the machine.
 
 ## Built from scratch
 
-- **Everything in this repository was written from scratch during the hackathon, starting Oct 27, 2026.**
-- Lunes does not use any earlier project by the author. It depends only on public open-source libraries, listed
-  here as they are added, and on Meta models.
+- **Everything in this repository was written from scratch during the hackathon, starting Oct 27, 2026,** except the
+  Hantek 6022BE's firmware in `firmware/hantek6022be`, which is the OpenHantek6022 project's, shipped unchanged.
+- Lunes does not use any earlier project by the author. It depends on the libraries listed below and on Meta models.
 - The demo video opens by saying the same thing.
 
 ## Open-source dependencies
@@ -54,6 +79,8 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 | [sounddevice](https://github.com/spatialaudio/python-sounddevice) | Microphone and speaker access | MIT |
 | [Ollama](https://github.com/ollama/ollama) | Running Muse Glimmer's open weights on the bench PC | MIT |
 | [python-libusb1](https://github.com/vpelletier/python-libusb1), with [libusb](https://github.com/libusb/libusb) inside | USB access for Lunes' own Kinect driver (`lunes/kinect.py`) | LGPL-2.1-or-later |
+| Open firmware for the Hantek 6022BE, from [OpenHantek6022](https://github.com/OpenHantek/OpenHantek6022) / [Hantek6022API](https://github.com/Ho-Ro/Hantek6022API) (`firmware/hantek6022be`) | The program Lunes loads into the scope at every plug-in (the scope keeps none) | GPL-3.0, shipped unchanged with its source named |
+| [ngspice](https://ngspice.sourceforge.io) 41 | Simulating the circuit on the bench and each of its faults | BSD-3-Clause (downloaded into `ngspice/`, not shipped here) |
 | [Arduino AVR core](https://github.com/arduino/ArduinoCore-avr) and [arduino-cli](https://github.com/arduino/arduino-cli) | Building the motion firmware | LGPL-2.1 / GPL-3.0 |
 
 The motion firmware (`firmware/lunes_motion`), its flasher, the Kinect driver and the PC tools in `tools/` are
@@ -75,6 +102,27 @@ needed. Device Manager will not put a generic driver on a device it knows, so th
 
 `python tools/kinect_view.py` then shows colour and depth. To undo it, uninstall that device in Device Manager and
 plug the Kinect in again.
+
+### Installing ngspice (once per PC)
+
+Lunes runs ngspice's console build from `ngspice/bin/ngspice_con.exe`. Either unpack the official Windows build from
+[ngspice.sourceforge.io](https://ngspice.sourceforge.io/download.html) there, or take conda-forge's build of the
+same program: from [ngspice-exe](https://anaconda.org/conda-forge/ngspice-exe), unpack the `Library` folder of the
+win-64 package into `ngspice/`. Its XSPICE code models (`ngspice/lib/ngspice/*.cm`) are needed for the 555 model.
+
+### Setting up the Hantek 6022BE (once per PC)
+
+The scope talks to Lunes through WinUSB too, and it has two USB identities: empty when plugged in (USB ID 04B4 6022),
+and with Lunes' firmware loaded a second later (04B5 6022). Each needs WinUSB once, with Zadig:
+
+1. Plug the scope in → Zadig → Options → List All Devices → the Hantek with USB ID 04B4 6022 → WinUSB → Replace
+   Driver.
+2. Run `python tools/scope_view.py`. Lunes loads the firmware and the scope comes back as 04B5 6022. If it says
+   the scope did not come back, do step 1 again for 04B5 6022, then run it again.
+3. Tell Lunes what each probe's switch is set to (x1 or x10), or run its self-test: the probe tip on the scope's
+   calibration pin, the ground clip on the ground pin beside it.
+
+The scope's ground is the PC's ground through the USB: never clip it to anything tied to the mains.
 
 ## Meta models
 

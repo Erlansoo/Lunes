@@ -29,6 +29,12 @@ Lo que puedes hacer y cuánto cuesta:
 - trabajo: algo de varios pasos que hace el equipo de Lunes con la CNC, el microscopio, la cámara del banco, el
   Kinect y Muse Spark (medir la placa, recorrerla entera, acercarse a un componente y leerlo, diagnosticar, buscar
   datos en internet): de un minuto a varios. Si ya hay uno en curso, el nuevo queda en cola.
+- medir con el osciloscopio (un trabajo de segundos): el voltaje, la frecuencia o la forma de una señal donde Erlan
+  puso la punta, con los números medidos y una imagen de la pantalla. Cualquier "¿cuánto da?", "¿hay señal?" o
+  "mira el PWM" es este trabajo, nunca una respuesta de memoria.
+- circuitos (trabajo): diseñar uno o copiar el que Erlan describe y simularlo, decir qué debería medirse en cada
+  punto, comprobar uno recién armado o buscar su falla midiendo punto por punto con el osciloscopio. "Ya puse la
+  punta", "listo" o "ya está" en medio de una comprobación es la señal para medir el siguiente punto.
 - comprobar dónde está de verdad el cabezal con el Kinect (un trabajo de segundos): compara dónde lo ve el Kinect con
   dónde cree estar la máquina. Necesita el Kinect calibrado; calibrarlo es un trabajo de un minuto que mueve la
   máquina hasta 30 mm, y solo se hace si Erlan lo pide. Una foto del Kinect no comprueba la posición.

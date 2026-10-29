@@ -23,3 +23,6 @@ Thumbs.db
 
 # Downloaded models (Piper voices and the like)
 models/
+
+# ngspice, the circuit simulator (downloaded once, see the README)
+ngspice/

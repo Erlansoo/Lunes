@@ -37,6 +37,7 @@ from lunes.conductor import Conductor  # noqa: E402
 from lunes.cameras import cameras, find_camera  # noqa: E402
 from lunes.dashboard import Dashboard  # noqa: E402
 from lunes.hume import MODEL, THINK, Hume  # noqa: E402
+from lunes.hantek import Scope, SimulatedScope, sine, square  # noqa: E402
 from lunes.kinect import Kinect  # noqa: E402
 from lunes.machine import Machine  # noqa: E402
 from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, local_transcriber  # noqa: E402
@@ -90,6 +91,10 @@ STEPS = {"measure_board": "mido la placa", "survey_board": "recorro la placa con
          "kinect_distance": "mido con el Kinect", "autofocus": "enfoco el microscopio",
          "look_microscope": "miro por el microscopio", "look_survey": "reviso el mosaico",
          "go_to_mosaic_point": "voy a un punto del mosaico", "move_to": "muevo la máquina", "move_by": "muevo la máquina",
+         "scope_measure": "mido con el osciloscopio", "scope_selftest": "pruebo el osciloscopio",
+         "scope_test_signal": "pongo la señal de prueba", "scope_probe": "anoto la punta",
+         "circuit_set": "simulo el circuito", "diagnose_start": "preparo el diagnóstico",
+         "diagnose_measure": "mido y comparo con la simulación",
          "ask_spark": "le pregunto a Muse Spark", "remember": "lo anoto en la memoria", "where": "veo dónde estoy"}
 TOLD_AT_START = {"measure_board", "survey_board", "inspect_component", "look_kinect"}
 
@@ -354,6 +359,9 @@ def main():
                     help="the microscope: its number, or part of its name or USB id (the MS5 is vid_1224&pid_2825)")
     ap.add_argument("--banco", default=BENCH_CAMERA,
                     help="the camera that sees the whole work area, by name or number ('no' to go without it)")
+    ap.add_argument("--osciloscopio", default="hantek",
+                    help="'hantek' (the 6022BE on the USB), 'simulado' (made-up signals, to try Lunes without it) "
+                         "or 'no'")
     ap.add_argument("--text", action="store_true", help="type instead of talking")
     ap.add_argument("--no-wake", action="store_true", help="answer everything, not only sentences with 'Lunes'")
     ap.add_argument("--model", default=MODEL, help="Ollama model for the conductor and the local worker")
@@ -390,6 +398,16 @@ def main():
     except RuntimeError as e:
         kinect = None
         print(f"(sin Kinect: {e})")
+    scope, probe = None, machine.config.get("scope", {}).get("probe", {})
+    if args.osciloscopio.lower() == "simulado":  # a 1 kHz square on CH1 and a 10 kHz sine on CH2
+        scope = SimulatedScope({"CH1": square(1000, 0.0, 2.0), "CH2": sine(10e3, 1.0, 2.5)}, probe=probe)
+        print("osciloscopio: SIMULADO (señales inventadas, no del banco)")
+    elif args.osciloscopio.lower() != "no":
+        try:
+            scope = Scope(probe=probe)
+            print(f"osciloscopio: Hantek 6022BE, firmware {scope.firmware_version:#06x}, puntas {scope.probe}")
+        except RuntimeError as e:
+            print(f"(sin osciloscopio: {e})")
     think = False if args.think.lower() in ("false", "no", "0") else args.think
     brain = ("Muse Spark por la API de Meta (Muse Glimmer en esta PC si no hay internet)" if args.spark
              else "Muse Glimmer en esta PC")
@@ -398,7 +416,7 @@ def main():
              f"observaste.")
     hume = Hume(machine, cam, kinect, show=show, model=args.model, think=think,
                 on_think=lambda t: log("think", "   (pensó) " + " ".join(t.split())[:300]), spark=args.spark,
-                about=about, bench=bench)
+                about=about, bench=bench, scope=scope)
     print("trabajador y conductor: " + ("Muse Spark por la API de Meta (si falla, Muse Glimmer local)"
                                         if hume.brain == "spark"
                                         else f"Muse Glimmer local ({args.model}); a Muse Spark no se le manda nada"))
@@ -494,6 +512,13 @@ def main():
                          "imagen que el Kinect (lo que hay ahora, solo mirando)")
         else:
             parts.append("cámara del banco: no conectada")
+        if scope is None:
+            parts.append("osciloscopio: no conectado")
+        else:
+            kind = ("SIMULADO, con señales inventadas (no del banco)" if isinstance(scope, SimulatedScope) else
+                    "Hantek 6022BE conectado")
+            parts.append(f"osciloscopio: {kind}, dos canales, puntas x{scope.probe['CH1']:g} (CH1) y "
+                         f"x{scope.probe['CH2']:g} (CH2); mide voltajes y señales donde Erlan ponga la punta")
         parts.append("Kinect: conectado y apuntando a la CNC de frente y desde arriba; sirve para la profundidad y "
                      "para confirmar la posición" if kinect else "Kinect: no conectado")
         check = hume.last_kinect_check
@@ -541,6 +566,8 @@ def main():
             bench.release()
         if kinect:
             kinect.close()
+        if scope:
+            scope.close()
 
     def watch_close_file():
         while not CLOSE_FILE.exists():

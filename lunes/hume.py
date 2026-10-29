@@ -56,6 +56,7 @@ def _workspace():
 
 
 WORKSPACE = _workspace()
+CIRCUIT = Path(__file__).resolve().parent.parent / "runs" / "circuit.json"  # the circuit on the bench and its simulation
 LIFT_MM = 3.0
 MAX_ROUNDS = 10
 MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
@@ -114,6 +115,20 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   esquina de la placa: center_on_corner. Nunca calcules milímetros a ojo con move_by: la geometría la hace el código.
 - Para medir en la foto del microscopio: measure_hole para un agujero (y su anillo de cobre), measure_distance entre
   dos puntos. No des medidas a ojo; si no puedes medir con una herramienta, di que no lo sabes.
+- Tienes un osciloscopio USB (Hantek 6022BE, dos canales, 20 MHz): para cualquier voltaje o señal, mide con
+  scope_measure; nunca des valores de una señal sin medirla. Deja que el código elija rango y velocidad (auto). Antes,
+  Erlan pone el clip de masa en la masa del circuito y la punta en el punto. Las notas de scope_measure dicen cuánto
+  confiar en la medición: léelas antes de juzgar el circuito. Juzga comparando con lo que el circuito debería dar (una
+  fuente de 3.3 V, un cristal de 16 MHz, un PWM al 50 %) y dilo con los números medidos.
+- La masa del osciloscopio es la masa de la PC por el USB: nunca le pidas medir la red de 220 V ni algo conectado a
+  ella sin transformador de aislamiento. Si no sabes si la punta está en x1 o x10, pregúntale a Erlan o usa
+  scope_selftest con la punta en la salida de calibración del osciloscopio.
+- Para trabajar con un circuito (armarlo en la protoboard, comprobarlo o encontrar su falla): primero circuit_set
+  con sus partes, valores y redes, que lo simula; si lo diseñas tú, revisa que la simulación haga lo pedido antes de
+  proponerlo. Para comprobarlo o diagnosticarlo: diagnose_start, y en cada paso dile a Erlan dónde poner la punta en
+  palabras de banco ("el pin 3 del 555", "la pata de R2 que va al capacitor") y, cuando diga que está, llama
+  diagnose_measure. El motor decide qué medir y qué falla es; tú lo explicas con los números. Solo nombra una falla
+  cuando el motor la da como clara; si varias leen igual, pídele mirar esas partes. Nunca inventes una falla.
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
@@ -269,6 +284,72 @@ TOOLS = [
             "x1": {"type": "number"}, "y1": {"type": "number"}, "x2": {"type": "number"}, "y2": {"type": "number"}},
             "required": ["x1", "y1", "x2", "y2"]}}},
     {"type": "function", "function": {
+        "name": "scope_measure",
+        "description": "Measure with the oscilloscope (a Hantek 6022BE, two channels) what is on its probe(s) now. By "
+                       "default the code picks the range and the sample rate itself (auto) and measures: min, max, "
+                       "peak to peak, mean, frequency, duty cycle, rise time, the low and high levels, the shape (dc, "
+                       "sine, square, pwm, digital, ...), and for serial data the shortest pulse and the likely baud "
+                       "rate. Returns the numbers, notes on how far to trust them, and a picture of the screen. "
+                       "Give range_v (volts at the tip, either way of 0) and rate (samples per second) only to "
+                       "repeat a setting on purpose.",
+        "parameters": {"type": "object", "properties": {
+            "channel": {"type": "string", "enum": ["CH1", "CH2", "both"]},
+            "auto": {"type": "boolean"}, "range_v": {"type": "number"}, "rate": {"type": "number"}}}}},
+    {"type": "function", "function": {
+        "name": "scope_selftest",
+        "description": "Check the oscilloscope and a probe on the scope's own calibration output (a 1 kHz, about 2 V "
+                       "square wave): first ask Erlan to put that channel's tip on the calibration pin and its "
+                       "ground clip on the ground pin beside it. It finds out whether the probe's x1/x10 switch "
+                       "matches what Lunes believes.",
+        "parameters": {"type": "object", "properties": {"channel": {"type": "string", "enum": ["CH1", "CH2"]}}}}},
+    {"type": "function", "function": {
+        "name": "scope_probe",
+        "description": "Note the factor on a probe's switch (1 or 10) after Erlan says it or the self-test shows it. "
+                       "Every volt the scope reports depends on it.",
+        "parameters": {"type": "object", "properties": {
+            "channel": {"type": "string", "enum": ["CH1", "CH2"]}, "factor": {"type": "number", "enum": [1, 10]}},
+            "required": ["channel", "factor"]}}},
+    {"type": "function", "function": {
+        "name": "circuit_set",
+        "description": "Set the circuit on the bench (one Erlan describes, or one you design) and simulate it with "
+                       "ngspice: returns what the scope should read at each net (DC volts, or frequency, peak to "
+                       "peak and duty for nets that move) and which pins and parts touch each net. Format: {name, "
+                       "supply_v, parts: [{ref, kind, value or model or color, pins}]}. kind R, C or L: value "
+                       "('10k', '68n', '4k7'), pins [netA, netB]. D: model 1N4148, 1N4007 or 1N5819, pins {A, K}. "
+                       "LED: color red/yellow/green/blue/white, pins {A, K}. NPN or PNP: model 2N2222, 2N3904, "
+                       "BC547, 2N3906 or BC557, pins {C, B, E}. NE555: pins {GND, TRIG, OUT, RESET, CTRL, THRES, "
+                       "DISCH, VCC}. OPAMP: pins {OUT, IN-, IN+, V+, V-}. V (an extra source): value '3.3' or "
+                       "{sine: [offset, amplitude, hz]} or {square: [low, high, hz]}, pins {+, -}. Nets are names; "
+                       "GND is ground and VCC the supply. When you design, check the result before telling "
+                       "Erlan: if it does not do what was asked, change the values and simulate again.",
+        "parameters": {"type": "object", "properties": {"circuit": {"type": "object", "properties": {
+            "name": {"type": "string"}, "supply_v": {"type": "number"},
+            "parts": {"type": "array", "items": {"type": "object"}}}, "required": ["parts"]}},
+            "required": ["circuit"]}}},
+    {"type": "function", "function": {
+        "name": "diagnose_start",
+        "description": "Start checking the circuit set with circuit_set, to confirm one just built works or to find "
+                       "the fault in one that does not. The simulator works out what every typical fault of every "
+                       "part would read (about half a minute the first time), and the engine says which net to "
+                       "measure first. Then, for each step: tell Erlan where to put the probe (the pins and parts "
+                       "that touch that net), and when he says it is there, diagnose_measure.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "diagnose_measure",
+        "description": "Measure the net where Erlan put the CH1 probe now, with the scope, and update the diagnosis: "
+                       "returns the reading, the likeliest explanations with their probability, and the next net "
+                       "to measure, or the verdict once one explanation is clear (90 %). If Erlan measured with "
+                       "his multimeter instead, give mean_v and source 'multimeter'.",
+        "parameters": {"type": "object", "properties": {
+            "net": {"type": "string"}, "source": {"type": "string", "enum": ["scope", "multimeter"]},
+            "mean_v": {"type": "number"}}, "required": ["net"]}}},
+    {"type": "function", "function": {
+        "name": "scope_test_signal",
+        "description": "Put a square wave of about 2 V on the scope's calibration pin, from 32 Hz to 100 kHz, to feed "
+                       "a circuit a known signal (an RC filter, an amplifier's input) and measure what comes out. "
+                       "Returns the frequency it really puts out.",
+        "parameters": {"type": "object", "properties": {"hz": {"type": "number"}}, "required": ["hz"]}}},
+    {"type": "function", "function": {
         "name": "look_bench",
         "description": "Take a picture of the whole work area with the bench camera: wider than the microscope and "
                        "much sharper than the Kinect. For what is on the bench and where the board is; not for "
@@ -417,12 +498,17 @@ def with_cross(frame, mark=None):
 
 class Hume:
     def __init__(self, machine, microscope, kinect=None, show=None, model=MODEL, think=THINK, on_think=None,
-                 spark=False, about="", bench=None):
+                 spark=False, about="", bench=None, scope=None):
         """think: False, "low", "medium" or "high", how much Glimmer reasons before it answers (it is not spoken).
         on_think(text) gets the reasoning of each step, for the session log. spark=True lets Lunes send pictures
         to Muse Spark over the internet (with free credits Meta may use them), so only when Erlan allows it.
-        bench: the camera that sees the whole work area (the Sony), if it is plugged in."""
-        self.m, self.cam, self.kinect, self.bench = machine, microscope, kinect, bench
+        bench: the camera that sees the whole work area (the Sony), if it is plugged in; scope: the oscilloscope
+        (lunes.hantek), if it is plugged in."""
+        self.m, self.cam, self.kinect, self.bench, self.scope = machine, microscope, kinect, bench, scope
+        self.last_scope = None  # {"at", "result"} of the last scope_measure
+        self.circuit = self.expected = self.diagnosis = None  # the circuit on the bench, its simulation, a diagnosis
+        self.fault_table = None  # the circuit's fault dictionary, simulated in the background after circuit_set
+        self._table_thread = None
         self.show = show or (lambda frame, text: None)
         self.model, self.think, self.on_think = model, think, on_think
         self.on_image = None  # on_image(picture, what) for each picture shown to the brain (the dashboard)
@@ -604,6 +690,151 @@ class Hume:
         cv2.line(view, tuple(int(v) for v in p1), tuple(int(v) for v in p2), (0, 255, 255), 1)
         return {"ok": True, "distance_mm": round(d, 3), "along_X_mm": round(dx, 3), "along_Y_mm": round(dy, 3),
                 "note": "as exact as where the two points were put; at the board's surface"}, view
+
+    # The oscilloscope ---------------------------------------------------------------------------------------------
+    def _scope_measure(self, channel="CH1", auto=True, range_v=None, rate=None):
+        """Measure what is on the probe(s): the code sets the scope up (auto) or uses the given setting."""
+        from lunes.hantek import ranges
+        from lunes.signals import autoset, fit_range, measure, notes, picture, step_v
+        if self.scope is None:
+            return {"ok": False, "error": "the oscilloscope is not connected"}, None
+        names = ["CH1", "CH2"] if channel == "both" else [channel]
+        try:
+            if auto:
+                cap, _, _ = autoset(self.scope, names[0], alone=channel == "CH1")
+                if len(names) == 2:  # CH2 gets its own range at the sample rate CH1 needs
+                    fit_range(self.scope, "CH2")
+                    cap = self.scope.capture(20000)
+            else:
+                given = {names[0]: float(range_v)} if range_v else None
+                self.scope.configure(rate=float(rate) if rate else None, range_v=given,
+                                     channels=2 if "CH2" in names else None)
+                cap = self.scope.capture(20000)
+        except (RuntimeError, ValueError) as e:
+            return {"ok": False, "error": str(e)}, None
+        result, shown = {"ok": True, "sample_rate": cap.rate, "probe": dict(self.scope.probe)}, {}
+        for ch in cap.volts:
+            m = measure(cap.volts[ch], cap.rate, step_v(cap.range_v[ch]))
+            shown[ch] = m
+            if ch in names:
+                allowed = ranges(self.scope.probe[ch])
+                result[ch] = dict(m, range_v=cap.range_v[ch],
+                                  notes=notes(m, cap.range_v[ch], cap.clipped[ch], allowed[0], allowed[-1]))
+        if getattr(self.scope, "signals", None) is not None:
+            result["simulated"] = "made-up signals from the simulated scope, not the bench: say so if you report them"
+        self.last_scope = {"at": time.time(), "result": result}
+        return result, picture(cap, shown, title=" + ".join(names))
+
+    def _scope_selftest(self, channel="CH1"):
+        """The probe on the scope's 1 kHz calibration output: frequency, shape and amplitude, and what a wrong x1/x10
+        belief looks like."""
+        if self.scope is None:
+            return {"ok": False, "error": "the oscilloscope is not connected"}, None
+        hz = self.scope.calibration_output(1000)
+        result, view = self._scope_measure(channel)
+        if not result.get("ok"):
+            return result, view
+        m = result[channel]
+        amp = m.get("amplitude_v") or m["vpp_v"]
+        factor = self.scope.probe[channel]
+        problems = []
+        if m["shape"] not in ("square", "pwm"):
+            problems.append(f"it sees {m['shape']}, not a square wave: is the tip on the calibration pin and the "
+                            f"ground clip on its ground?")
+        else:
+            if abs((m.get("frequency_hz") or 0) / hz - 1) > 0.03:
+                problems.append(f"frequency {m.get('frequency_hz')} Hz instead of {hz:g} Hz")
+            if 0.12 < amp < 0.3:
+                problems.append(f"amplitude {amp:g} V, ten times too small: the probe is probably at x10 while Lunes "
+                                f"counts x{factor:g}; use scope_probe {channel} 10 once Erlan confirms")
+            elif 12 < amp < 30:
+                problems.append(f"amplitude {amp:g} V, ten times too big: the probe is probably at x1 while Lunes "
+                                f"counts x{factor:g}; use scope_probe {channel} 1 once Erlan confirms")
+            elif not 1.4 < amp < 2.6:
+                problems.append(f"amplitude {amp:g} V, expected about 2 V")
+        return {"ok": not problems, "channel": channel, "expected": f"square {hz:g} Hz, about 2 V",
+                "measured": {k: m.get(k) for k in ("shape", "frequency_hz", "amplitude_v", "vpp_v", "duty")},
+                "probe_factor_believed": factor, "problems": problems}, view
+
+    # The circuit on the bench: simulation and diagnosis -------------------------------------------------------------
+    def _circuit_set(self, circuit):
+        from lunes.circuit import check
+        from lunes.simulator import expected, fault_dictionary
+        problems = check(circuit)
+        if problems:
+            return {"ok": False, "problems": problems}, None
+        try:
+            sim = expected(circuit)
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}, None
+        self.circuit, self.expected, self.diagnosis, self.fault_table = circuit, sim, None, None
+        CIRCUIT.parent.mkdir(exist_ok=True)
+        CIRCUIT.write_text(json.dumps({"circuit": circuit, "expected": sim}, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
+
+        def table():  # ready by the time Erlan has built it or picked up the probe
+            try:
+                self.fault_table = fault_dictionary(circuit)
+            except RuntimeError:
+                self.fault_table = None
+        self._table_thread = threading.Thread(target=table, daemon=True)
+        self._table_thread.start()
+        return {"ok": True, "name": circuit.get("name"), "supply_v": circuit.get("supply_v", 5),
+                "expected_by_net": sim["nets"],
+                "note": "simulated with ngspice; what the scope should read at each net"}, None
+
+    def _diagnose_start(self):
+        from lunes.diagnosis import Diagnosis
+        if self.circuit is None:
+            return {"ok": False, "error": "no circuit yet: circuit_set first"}, None
+        if self._table_thread is not None:
+            self._table_thread.join()
+        if self.fault_table is None:
+            return {"ok": False, "error": "the simulator could not work out the faults of this circuit"}, None
+        self.diagnosis = Diagnosis(self.circuit, self.fault_table)
+        return {"ok": True, "hypotheses": len(self.fault_table), **self.diagnosis.state()}, None
+
+    def _diagnose_measure(self, net, source="scope", mean_v=None):
+        if self.diagnosis is None:
+            return {"ok": False, "error": "no diagnosis running: diagnose_start first"}, None
+        view = None
+        if source == "multimeter":
+            if mean_v is None:
+                return {"ok": False, "error": "give mean_v, the volts the multimeter shows"}, None
+            reading = {"mean_v": float(mean_v)}
+        else:
+            result, view = self._scope_measure("CH1")
+            if not result.get("ok"):
+                return result, view
+            m = result["CH1"]
+            reading = {"mean_v": m["mean_v"], "vpp_v": m["vpp_v"], "frequency_hz": m.get("frequency_hz"),
+                       "duty": m.get("duty")}
+            if m.get("notes"):
+                reading["scope_notes"] = m["notes"]
+        notes = reading.pop("scope_notes", None)
+        try:
+            self.diagnosis.update(net, reading)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, view
+        out = {"ok": True, "net": net, "reading": reading, **self.diagnosis.state()}
+        if notes:
+            out["scope_notes"] = notes
+        if getattr(self.scope, "signals", None) is not None and source == "scope":
+            out["simulated"] = "the reading came from the simulated scope, not the bench"
+        return out, view
+
+    def _scope_probe(self, channel, factor):
+        """What Erlan set on a probe's switch, kept in config/machine.json for the next session."""
+        from lunes.hantek import ranges
+        if self.scope is None:
+            return {"ok": False, "error": "the oscilloscope is not connected"}, None
+        if channel not in ("CH1", "CH2") or float(factor) not in (1.0, 10.0):
+            return {"ok": False, "error": "channel CH1 or CH2, factor 1 or 10"}, None
+        self.scope.probe[channel] = float(factor)
+        self.scope.range_v[channel] = ranges(float(factor))[0]
+        self.m.config.setdefault("scope", {}).setdefault("probe", {})[channel] = float(factor)
+        self.m.config_path.write_text(json.dumps(self.m.config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"ok": True, "probe": dict(self.scope.probe)}, None
 
     def _center_on_corner(self, x_side=None, y_side=None, tolerance_mm=0.05, tries=4):
         """Puts one corner of the board in the middle of the microscope's view. The corner is found by the code
@@ -1129,6 +1360,28 @@ class Hume:
             return self._measure_hole(float(args.get("x", -1)), float(args.get("y", -1)))
         if name == "measure_distance":
             return self._measure_distance(*(float(args.get(k, -1)) for k in ("x1", "y1", "x2", "y2")))
+        if name == "scope_measure":
+            return self._scope_measure(str(args.get("channel", "CH1")), bool(args.get("auto", True)),
+                                       args.get("range_v"), args.get("rate"))
+        if name == "scope_selftest":
+            return self._scope_selftest(str(args.get("channel", "CH1")))
+        if name == "scope_probe":
+            return self._scope_probe(str(args.get("channel", "")), args.get("factor", 0))
+        if name == "circuit_set":
+            return self._circuit_set(args.get("circuit") or {})
+        if name == "diagnose_start":
+            return self._diagnose_start()
+        if name == "diagnose_measure":
+            return self._diagnose_measure(str(args.get("net", "")), str(args.get("source", "scope")),
+                                          args.get("mean_v"))
+        if name == "scope_test_signal":
+            if self.scope is None:
+                return {"ok": False, "error": "the oscilloscope is not connected"}, None
+            try:
+                return {"ok": True, "hz": self.scope.calibration_output(float(args.get("hz", 1000))),
+                        "note": "a square wave of about 2 V on the scope's calibration pin"}, None
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}, None
         if name in ("center_on_point", "center_on_corner"):
             if name == "center_on_point":
                 result, picture = self._center_on_point(float(args.get("x", -1)), float(args.get("y", -1)))

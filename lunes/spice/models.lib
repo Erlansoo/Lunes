@@ -1,0 +1,89 @@
+* Lunes' component models for ngspice.
+*
+* The 555 and the op-amp are behavioural models written for Lunes: they reproduce what a bench measurement sees
+* (thresholds, levels, timing), not the transistors inside. The diodes and transistors use the SPICE parameters their
+* manufacturers publish. The LEDs are fitted to the typical forward voltage of each colour at 10 to 20 mA.
+
+* ---- diodes --------------------------------------------------------------------------------------------------------
+.model 1N4148 D(Is=2.52n Rs=0.568 N=1.752 Cjo=4p M=0.4 Tt=20n Bv=100 Ibv=100u)
+.model 1N4007 D(Is=7.03n Rs=0.034 N=1.808 Cjo=10p M=0.3 Tt=4.32u Bv=1000 Ibv=5u)
+.model 1N5819 D(Is=31.7u Rs=0.051 N=1.373 Cjo=110p M=0.35 Bv=40 Ibv=1m)
+.model LED_RED D(Is=1e-19 N=1.8 Rs=2 Cjo=15p Bv=5 Ibv=10u)
+.model LED_YELLOW D(Is=1e-19 N=1.9 Rs=2 Cjo=15p Bv=5 Ibv=10u)
+.model LED_GREEN D(Is=1e-20 N=2.0 Rs=2 Cjo=15p Bv=5 Ibv=10u)
+.model LED_BLUE D(Is=1e-24 N=2.5 Rs=3 Cjo=15p Bv=5 Ibv=10u)
+.model LED_WHITE D(Is=1e-24 N=2.5 Rs=3 Cjo=15p Bv=5 Ibv=10u)
+
+* ---- bipolar transistors ---------------------------------------------------------------------------------------------
+.model 2N2222 NPN(Is=14.34f Xti=3 Eg=1.11 Vaf=74.03 Bf=255.9 Ne=1.307 Ise=14.34f Ikf=0.2847 Xtb=1.5 Br=6.092
++ Nc=2 Isc=0 Ikr=0 Rc=1 Cjc=7.306p Mjc=0.3416 Vjc=0.75 Fc=0.5 Cje=22.01p Mje=0.377 Vje=0.75 Tr=46.91n Tf=411.1p
++ Itf=0.6 Vtf=1.7 Xtf=3 Rb=10)
+.model 2N3904 NPN(Is=6.734f Xti=3 Eg=1.11 Vaf=74.03 Bf=416.4 Ne=1.259 Ise=6.734f Ikf=66.78m Xtb=1.5 Br=0.7371
++ Nc=2 Isc=0 Ikr=0 Rc=1 Cjc=3.638p Mjc=0.3085 Vjc=0.75 Fc=0.5 Cje=4.493p Mje=0.2593 Vje=0.75 Tr=239.5n Tf=301.2p
++ Itf=0.4 Vtf=4 Xtf=2 Rb=10)
+.model 2N3906 PNP(Is=1.41f Xti=3 Eg=1.11 Vaf=18.7 Bf=180.7 Ne=1.5 Ise=0 Ikf=80m Xtb=1.5 Br=4.977 Nc=2 Isc=0
++ Ikr=0 Rc=2.5 Cjc=9.728p Mjc=0.5776 Vjc=0.75 Fc=0.5 Cje=8.063p Mje=0.3677 Vje=0.75 Tr=33.42n Tf=179.3p Itf=0.4
++ Vtf=4 Xtf=6 Rb=10)
+.model BC547 NPN(Is=7.049f Xti=3 Eg=1.11 Vaf=62.79 Bf=377.5 Ne=1.554 Ise=63.69f Ikf=0.1 Xtb=1.5 Br=2.18 Nc=2
++ Isc=0 Ikr=0 Rc=1.287 Cjc=4.62p Mjc=0.3241 Vjc=0.75 Fc=0.5 Cje=11.5p Mje=0.3333 Vje=0.75 Tr=10n Tf=455.6p
++ Itf=0.7 Vtf=4 Xtf=8 Rb=10)
+.model BC557 PNP(Is=10.27f Xti=3 Eg=1.11 Vaf=48.1 Bf=284.5 Ne=1.562 Ise=79.51f Ikf=0.1 Xtb=1.5 Br=3.784 Nc=2
++ Isc=0 Ikr=0 Rc=1.27 Cjc=10p Mjc=0.3333 Vjc=0.75 Fc=0.5 Cje=13p Mje=0.3333 Vje=0.75 Tr=10n Tf=475.4p Itf=0.6
++ Vtf=4 Xtf=8 Rb=10)
+
+* ---- NE555 timer, behavioural --------------------------------------------------------------------------------------
+* Pins in datasheet order: 1 GND, 2 TRIG, 3 OUT, 4 RESET, 5 CTRL, 6 THRES, 7 DISCH, 8 VCC.
+* The divider sets CTRL at 2/3 VCC and LO at 1/3. Two analogue comparators feed a digital SR latch (XSPICE), as in
+* the chip: TRIG below LO sets it, THRES above CTRL resets it, TRIG wins over THRES, and RESET low clears it whatever
+* the rest. A digital latch has no state in between, so the model cannot hang half set. The output (1.5 V below VCC
+* when high) and the discharge switch follow the latch.
+.func lunes_step(x, k) {0.5*(1 + tanh(k*x))}
+.model lunes_adc adc_bridge(in_low=0.5 in_high=0.5)
+.model lunes_dac dac_bridge(out_low=0 out_high=1 t_rise=20n t_fall=20n)
+.model lunes_inv d_inverter(rise_delay=5n fall_delay=5n)
+.model lunes_and d_and(rise_delay=5n fall_delay=5n)
+.model lunes_latch d_srlatch(sr_delay=10n enable_delay=10n set_delay=10n reset_delay=10n ic=0)
+.model lunes_high d_pullup(load=1p)
+.model lunes_low d_pulldown(load=1p)
+.subckt NE555 gnd trig out reset ctrl thres disch vcc
+Ra vcc ctrl 5k
+Rb ctrl lo 5k
+Rc lo gnd 5k
+Rsupply vcc gnd 1.5k
+Bs sa gnd V = lunes_step(v(lo,gnd) - v(trig,gnd), 200)
+Br ra gnd V = lunes_step(v(thres,gnd) - v(ctrl,gnd), 200)
+Bn na gnd V = lunes_step(0.9 - v(reset,gnd), 100)
+Aadc [sa ra na] [s r n] lunes_adc
+Ainv s ns lunes_inv
+Aand [r ns] r2 lunes_and
+Ahigh en lunes_high
+Alow nos lunes_low
+Alatch s r2 en nos n q nq lunes_latch
+Adac [q] [qa] lunes_dac
+Bo drive gnd V = v(qa,gnd) * max(v(vcc,gnd) - 1.5, 0) + (1 - v(qa,gnd)) * 0.1
+Ro drive out 10
+Bd disch gnd I = v(disch,gnd) * (1 - v(qa,gnd)) / 10 + v(disch,gnd) * 1n
+.ends NE555
+
+* A 555 that no longer works: output stuck low, discharge always on (a dead chip, or one put in backwards and burnt).
+.subckt NE555_DEAD gnd trig out reset ctrl thres disch vcc
+Ra vcc ctrl 5k
+Rb ctrl gnd 10k
+Ro out gnd 10
+Rd disch gnd 10
+.ends NE555_DEAD
+
+* ---- op-amp, behavioural (LM358-like: single supply, inputs and output reach ground, output tops out 1.5 V below
+* the supply) --------------------------------------------------------------------------------------------------------
+* Pins: out, in-, in+, v+, v-. Open-loop gain 100 dB, one pole at 10 Hz for a 1 MHz gain-bandwidth. The internal
+* node x stops charging at the rails, so a saturated op-amp (a comparator) recovers at once, as a real one does.
+.subckt OPAMP out inn inp vp vn
+Rin inp inn 10Meg
+Bg vn x I = 1e-5 * v(inp,inn) * (v(inp,inn) > 0 ? 0.5*(1 - tanh(10*(v(x,vn) - v(vp,vn) + 1.4))) :
++ 0.5*(1 + tanh(10*v(x,vn))))
+Rx x vn 1e10
+Cx x vn 1.59p
+Bo drive vn V = min(max(v(x,vn), 0.02), max(v(vp,vn) - 1.5, 0.02))
+Ro drive out 50
+Rsupply vp vn 2k
+.ends OPAMP

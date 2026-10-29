@@ -5,9 +5,13 @@
 // millimetres. Text commands in, one JSON object per line out.
 //
 // Safety lives here, where the agent cannot skip it: motors start disabled, rates and accelerations are capped,
-// soft limits are checked before a move starts, and a move stops by itself if the host goes silent.
+// soft limits are checked before a move starts, a move stops by itself if the host goes silent, an axis never runs
+// into its endstop, and the laser pointer switches itself off.
+//
+// Also on the board: a laser pointer (LASER), an MPU6050 motion sensor on I2C (IMU) and the switches (SW).
 
 #include <Arduino.h>
+#include <Wire.h>
 #include <util/atomic.h>
 
 const uint8_t N_AXES = 5;
@@ -17,6 +21,13 @@ const uint8_t STEP_PIN[N_AXES] = {54, 60, 46, 26, 36};
 const uint8_t DIR_PIN[N_AXES] = {55, 61, 48, 28, 34};
 const uint8_t EN_PIN[N_AXES] = {38, 56, 62, 24, 30};
 const uint8_t PROBE_PIN = 18;  // Z_MIN header, active low with the internal pull-up
+const uint8_t NO_PIN = 255;
+// Endstops at each socket's minimum: X_MIN and Y_MIN headers, closing to ground (active low with pull-ups). One that
+// is not wired reads open, so it never stops anything.
+const uint8_t ENDSTOP_PIN[N_AXES] = {3, 14, NO_PIN, NO_PIN, NO_PIN};
+const uint8_t LASER_PIN = 6;            // servo header; switches the laser module through a transistor (PWM)
+const uint32_t LASER_MAX_MS = 60000;    // the laser goes off by itself a minute after the host last set it
+const uint8_t MPU_ADDR = 0x68;          // MPU6050 with AD0 low, on SDA 20 / SCL 21
 
 const uint32_t ISR_HZ = 20000;          // step timer rate; one step per axis per tick at most
 const float RATE_CAP = 18000.0;         // steps/s, hard ceiling for any axis
@@ -41,11 +52,15 @@ enum State : uint8_t { IDLE, ACCEL, CRUISE, DECEL, JOG };
 const uint32_t JOG_DEADMAN_MS = 250;  // jog velocities fall to zero unless the host repeats JV this often
 const char* alarm_reason = "";
 
+// What ends a TOUCH-like move early: nothing, the probe closing (TOUCH), or the moving axis's endstop (SEEK).
+enum Touch : uint8_t { TOUCH_NONE, TOUCH_PROBE, TOUCH_ENDSTOP };
+
 // Shared with the step interrupt.
 volatile State state = IDLE;
 volatile int32_t pos[N_AXES];
-volatile bool move_done = false, move_stopped = false, touch_hit = false;
-volatile bool stop_req = false, finishing = false, touch_mode = false;
+volatile bool move_done = false, move_stopped = false, touch_hit = false, endstop_alarm = false;
+volatile bool stop_req = false, finishing = false;
+volatile Touch touch_mode = TOUCH_NONE;
 volatile uint8_t pending = 0;  // axes to pulse at the next tick
 volatile uint32_t v_q24;
 
@@ -66,8 +81,23 @@ volatile uint8_t* dir_port[N_AXES];
 uint8_t dir_mask[N_AXES];
 volatile uint8_t* probe_reg;
 uint8_t probe_mask;
+volatile uint8_t* endstop_reg[N_AXES];  // nullptr for a socket without an endstop
+uint8_t endstop_mask[N_AXES];
 
 uint32_t last_rx_ms = 0, last_jog_ms = 0;
+uint8_t laser_level = 0;
+uint32_t laser_on_ms = 0;
+bool imu_ready = false;
+
+inline bool endstop_closed(uint8_t i) { return endstop_reg[i] && !(*endstop_reg[i] & endstop_mask[i]); }
+
+// True when an axis of the current move is heading for its minimum and its endstop has closed.
+inline bool endstop_ahead() {
+  for (uint8_t i = 0; i < N_AXES; i++) {
+    if (mv_steps[i] && mv_sign[i] < 0 && endstop_closed(i)) return true;
+  }
+  return false;
+}
 
 // Direction pin write that is safe and fast inside the step interrupt.
 inline void set_dir(uint8_t i, int8_t sign) {
@@ -116,6 +146,7 @@ inline void jog_tick() {
       if (limit_on[k] && ((mv_sign[k] > 0 && pos[k] >= limit_max[k]) || (mv_sign[k] < 0 && pos[k] <= limit_min[k]))) {
         continue;
       }
+      if (mv_sign[k] < 0 && endstop_closed(k)) continue;  // against its endstop: no further
       m |= 1 << k;
     }
   }
@@ -157,9 +188,16 @@ ISR(TIMER1_COMPA_vect) {
   if (state == JOG) {
     jog_tick();
   } else if (state != IDLE) {
-    if (touch_mode && !(*probe_reg & probe_mask)) {
+    bool probe = touch_mode == TOUCH_PROBE && !(*probe_reg & probe_mask);
+    bool endstop = endstop_ahead();
+    if (probe || endstop) {
       state = IDLE;
-      touch_hit = true;
+      if (probe || touch_mode == TOUCH_ENDSTOP) {
+        touch_hit = true;
+      } else {  // a plain move ran into an endstop: the host's idea of the position was wrong
+        move_stopped = true;
+        endstop_alarm = true;
+      }
       move_done = true;
     } else {
       phase += v_q24;
@@ -264,11 +302,65 @@ void report_status() {
   Serial.print(enabled ? 1 : 0);
   Serial.print(F(",\"dry\":"));
   Serial.print(dry_run ? 1 : 0);
+  Serial.print(F(",\"laser\":"));
+  Serial.print(laser_level);
   Serial.print(F(",\"rate\":"));
   Serial.print(s == IDLE ? 0 : (uint32_t)((float)v * ISR_HZ / ONE_Q24));
   Serial.print(',');
   print_pos();
   Serial.println('}');
+}
+
+void set_laser(uint8_t level) {
+  laser_level = level;
+  laser_on_ms = millis();
+  analogWrite(LASER_PIN, level);
+}
+
+// Wakes the MPU6050 and sets its ranges: +-2 g, +-250 deg/s, 44 Hz low-pass. False if nothing answers.
+bool imu_begin() {
+  static const uint8_t SETUP[][2] = {{0x6B, 0x01}, {0x1C, 0x00}, {0x1B, 0x00}, {0x1A, 0x03}};
+  for (uint8_t k = 0; k < 4; k++) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(SETUP[k][0]);
+    Wire.write(SETUP[k][1]);
+    if (Wire.endTransmission() != 0) return false;
+  }
+  return true;
+}
+
+// {"imu":{"a":[x,y,z],"g":[x,y,z],"t":c}}: raw accelerometer (16384 per g) and gyro (131 per deg/s) counts, and the
+// chip's temperature in hundredths of a degree.
+void report_imu() {
+  if (!imu_ready) imu_ready = imu_begin();
+  int16_t v[7];
+  bool got = false;
+  if (imu_ready) {
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x3B);
+    got = Wire.endTransmission(false) == 0 && Wire.requestFrom(MPU_ADDR, (uint8_t)14) == 14;
+    for (uint8_t k = 0; got && k < 7; k++) {
+      uint8_t hi = Wire.read();
+      v[k] = (int16_t)((hi << 8) | Wire.read());
+    }
+  }
+  if (!got) {
+    imu_ready = false;
+    return reply_err("imu");
+  }
+  Serial.print(F("{\"imu\":{\"a\":["));
+  for (uint8_t k = 0; k < 3; k++) {
+    if (k) Serial.print(',');
+    Serial.print(v[k]);
+  }
+  Serial.print(F("],\"g\":["));
+  for (uint8_t k = 4; k < 7; k++) {
+    if (k > 4) Serial.print(',');
+    Serial.print(v[k]);
+  }
+  Serial.print(F("],\"t\":"));
+  Serial.print((int32_t)v[3] * 100 / 340 + 3653);
+  Serial.println(F("}}"));
 }
 
 void set_enabled(bool on) {
@@ -289,6 +381,7 @@ void hard_stop() {
       move_done = true;
     }
   }
+  set_laser(0);
   alarm_reason = "hard_stop";
 }
 
@@ -301,7 +394,7 @@ int axis_index(char c) {
 
 // Starts a move to target (absolute steps). Rate and acceleration are for the dominant axis and get reduced so no
 // axis exceeds its own limits.
-bool start_move(const int32_t* target, float rate, bool touch) {
+bool start_move(const int32_t* target, float rate, Touch touch) {
   if (state != IDLE || finishing) return reply_err("busy"), false;
   if (alarm_reason[0]) return reply_err("alarm"), false;
   if (!enabled && !dry_run) return reply_err("disabled"), false;
@@ -354,7 +447,7 @@ bool start_move(const int32_t* target, float rate, bool touch) {
   v_max_q24 = (uint32_t)(r * (ONE_Q24 / (float)ISR_HZ));
   a_q24 = max((uint32_t)1, (uint32_t)(a * (ONE_Q24 / ((float)ISR_HZ * ISR_HZ))));
   if (v_min_q24 < 1) v_min_q24 = 1;
-  reply_ok(touch ? "TOUCH" : "MOVE");
+  reply_ok(touch == TOUCH_PROBE ? "TOUCH" : touch == TOUCH_ENDSTOP ? "SEEK" : "MOVE");
   ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
     v_q24 = v_min_q24;
     stop_req = false;
@@ -400,15 +493,28 @@ void handle_line(char* s) {
   else args = s + strlen(s);
 
   if (!strcmp(s, "INFO")) {
-    Serial.print(F("{\"fw\":\"lunes-motion\",\"ver\":\"0.1\",\"axes\":\"XYZAB\",\"isr_hz\":"));
+    Serial.print(F("{\"fw\":\"lunes-motion\",\"ver\":\"0.2\",\"axes\":\"XYZAB\",\"isr_hz\":"));
     Serial.print(ISR_HZ);
     Serial.println('}');
-  } else if (!strcmp(s, "MOVE") || !strcmp(s, "REL") || !strcmp(s, "TOUCH")) {
+  } else if (!strcmp(s, "MOVE") || !strcmp(s, "REL") || !strcmp(s, "TOUCH") || !strcmp(s, "SEEK")) {
+    // TOUCH stops when the probe closes; SEEK X-40000 F600 stops when the endstop of the axis it drives closes
     int32_t target[N_AXES];
     float rate;
     bool relative = strcmp(s, "MOVE") != 0;
+    Touch touch = !strcmp(s, "TOUCH") ? TOUCH_PROBE : !strcmp(s, "SEEK") ? TOUCH_ENDSTOP : TOUCH_NONE;
     if (!parse_axes(args, target, relative, &rate)) return reply_err("syntax");
-    start_move(target, rate, !strcmp(s, "TOUCH"));
+    if (touch == TOUCH_ENDSTOP) {
+      int32_t cur[N_AXES];
+      ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        for (uint8_t i = 0; i < N_AXES; i++) cur[i] = pos[i];
+      }
+      for (uint8_t i = 0; i < N_AXES; i++) {
+        if (slave_of[i] >= 0 || target[i] == cur[i]) continue;
+        if (!endstop_reg[i]) return reply_err("no_endstop");
+        if (target[i] > cur[i]) return reply_err("endstops_are_at_min");
+      }
+    }
+    start_move(target, rate, touch);
   } else if (!strcmp(s, "EN")) {
     if (state != IDLE) return reply_err("busy");
     set_enabled(atoi(args) != 0);
@@ -423,11 +529,38 @@ void handle_line(char* s) {
     dry_run = atoi(args) != 0;
     reply_ok("DRY");
   } else if (!strcmp(s, "ZERO")) {
+    // ZERO zeroes every axis; ZERO X zeroes X and the axes slaved to it
     if (state != IDLE) return reply_err("busy");
+    for (char* p = args; *p; p++) {
+      if (*p != ' ' && axis_index(*p) < 0) return reply_err("axis");
+    }
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-      for (uint8_t i = 0; i < N_AXES; i++) pos[i] = 0;
+      for (uint8_t i = 0; i < N_AXES; i++) {
+        int8_t m = slave_of[i] >= 0 ? slave_of[i] : i;
+        if (!args[0] || strchr(args, AXIS_NAMES[m])) pos[i] = 0;
+      }
     }
     reply_ok("ZERO");
+  } else if (!strcmp(s, "SW")) {
+    // {"sw":{"probe":0,"X":1,"Y":0}}: 1 = closed
+    Serial.print(F("{\"sw\":{\"probe\":"));
+    Serial.print(*probe_reg & probe_mask ? 0 : 1);
+    for (uint8_t i = 0; i < N_AXES; i++) {
+      if (!endstop_reg[i]) continue;
+      Serial.print(F(",\""));
+      Serial.print(AXIS_NAMES[i]);
+      Serial.print(F("\":"));
+      Serial.print(endstop_closed(i) ? 1 : 0);
+    }
+    Serial.println(F("}}"));
+  } else if (!strcmp(s, "LASER")) {
+    // LASER <0-255>: brightness; it goes out by itself LASER_MAX_MS after the last LASER
+    long level = strtol(args, nullptr, 10);
+    if (level < 0 || level > 255) return reply_err("laser");
+    set_laser((uint8_t)level);
+    reply_ok("LASER");
+  } else if (!strcmp(s, "IMU")) {
+    report_imu();
   } else if (!strcmp(s, "CFG")) {
     // CFG X R<rate> A<accel> I<0|1>
     if (state != IDLE) return reply_err("busy");
@@ -569,6 +702,18 @@ void setup() {
   pinMode(PROBE_PIN, INPUT_PULLUP);
   probe_reg = portInputRegister(digitalPinToPort(PROBE_PIN));
   probe_mask = digitalPinToBitMask(PROBE_PIN);
+  for (uint8_t i = 0; i < N_AXES; i++) {
+    endstop_reg[i] = nullptr;
+    if (ENDSTOP_PIN[i] == NO_PIN) continue;
+    pinMode(ENDSTOP_PIN[i], INPUT_PULLUP);
+    endstop_reg[i] = portInputRegister(digitalPinToPort(ENDSTOP_PIN[i]));
+    endstop_mask[i] = digitalPinToBitMask(ENDSTOP_PIN[i]);
+  }
+  pinMode(LASER_PIN, OUTPUT);
+  set_laser(0);
+  Wire.begin();
+  Wire.setClock(400000);
+  Wire.setWireTimeout(3000, true);  // a missing or stuck sensor must never hang the motion loop
 
   noInterrupts();
   TCCR1A = 0;
@@ -578,7 +723,7 @@ void setup() {
   interrupts();
 
   Serial.begin(115200);
-  Serial.println(F("{\"ev\":\"boot\",\"fw\":\"lunes-motion\",\"ver\":\"0.1\"}"));
+  Serial.println(F("{\"ev\":\"boot\",\"fw\":\"lunes-motion\",\"ver\":\"0.2\"}"));
 }
 
 void loop() {
@@ -608,6 +753,15 @@ void loop() {
   } else if (state != IDLE && !stop_req && millis() - last_rx_ms > HOST_TIMEOUT_MS) {
     stop_req = true;
     alarm_reason = "host_lost";
+  }
+
+  if (endstop_alarm) {
+    endstop_alarm = false;
+    alarm_reason = "endstop";
+  }
+  if (laser_level && millis() - laser_on_ms > LASER_MAX_MS) {
+    set_laser(0);
+    Serial.println(F("{\"ev\":\"laser_off\"}"));
   }
 
   if (move_done) {

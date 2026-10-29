@@ -3,9 +3,10 @@
 The firmware counts steps on its five driver sockets (X, Y, Z, A, B). config/machine.json says which socket drives
 each machine axis, its steps per millimetre, speed, acceleration, direction and any slaved second motor.
 
-The board forgets its position whenever the port opens (it resets), and there are no limit switches. So the last
-position is kept in runs/machine_position.json after every move and taken back on the next start: positions stay
-on the bench's own origin across sessions, as long as nobody moves the machine by hand in between.
+The board forgets its position whenever the port opens (it resets). So the last position is kept in
+runs/machine_position.json after every move and taken back on the next start: positions stay on the bench's own
+origin across sessions, as long as nobody moves the machine by hand in between. An axis with an endstop can also be
+homed (home), which puts it back on that origin whatever happened.
 
 Backlash: an axis with backlash_mm in the config gets that much extra travel whenever it turns round, so the
 carriage, not just the motor, ends where it was sent (measured by tools/backlash.py).
@@ -177,6 +178,73 @@ class Machine:
                     return m
             time.sleep(0.05)
         raise TimeoutError("the move did not finish")
+
+    def _ask(self, cmd, key, timeout=1.0):
+        """Sends cmd and returns the firmware's reply that carries key."""
+        self.s.write(cmd.encode() + b"\n")
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            for m in self._read():
+                if "err" in m:
+                    raise RuntimeError(f"the motion board refused {cmd.split()[0]}: {m['err']}")
+                if key in m:
+                    return m[key]
+        raise TimeoutError("the motion board did not answer")
+
+    def laser(self, level=255):
+        """Laser pointer brightness, 0 (off) to 255. The firmware puts it out a minute after the last call."""
+        self._ask(f"LASER {int(level)}", "ok")
+
+    def imu(self):
+        """The MPU6050 on the machine: acceleration in g, rotation in degrees per second, temperature in degC."""
+        m = self._ask("IMU", "imu")
+        return {"accel_g": [round(v / 16384, 4) for v in m["a"]], "gyro_dps": [round(v / 131, 2) for v in m["g"]],
+                "temp_c": m["t"] / 100}
+
+    def switches(self):
+        """Which switches are closed: {"probe": bool, and one per endstop by machine axis}."""
+        sw = self._ask("SW", "sw")
+        out = {"probe": bool(sw["probe"])}
+        out.update({n: bool(sw[a.socket]) for n, a in self.axes.items() if a.socket in sw})
+        return out
+
+    def reset_alarm(self):
+        """Clears a firmware alarm (host_lost, endstop, hard_stop) once the cause is understood."""
+        self._ask("RESET", "ok")
+
+    def home(self, axis, travel_mm=300.0, fast_mm_s=5.0, slow_mm_s=0.5):
+        """Drives axis toward its minimum until its endstop closes, backs off 2 mm and comes back slowly. There the
+        machine is at the axis's home_mm in config/machine.json; the first homing records it from where Lunes believes
+        it is, so the bench's own origin stays where it was. Returns where Lunes believed it was and the correction."""
+        ax = self.axes[axis]
+        self.enable(True)
+
+        def seek(mm, speed):
+            reply = self.send(f"SEEK {ax.socket}{-round(mm * ax.spm)} F{speed * ax.spm:.0f}")
+            errors = [m["err"] for m in reply if "err" in m]
+            if errors:
+                raise RuntimeError(f"the motion board refused to home {axis}: {errors[0]}")
+            done = next((m for m in reply if m.get("ev") == "done"), None) or self.wait_done(travel_mm / speed + 10)
+            if not done.get("touch"):
+                raise RuntimeError(f"{axis} went {mm} mm toward its minimum without closing its endstop")
+
+        try:
+            seek(travel_mm, fast_mm_s)
+            self.send(f"REL {ax.socket}{round(2.0 * ax.spm)} F{fast_mm_s * ax.spm:.0f}")
+            self.wait_done(10)
+            seek(3.0, slow_mm_s)
+        finally:
+            self.at_mm = self.position()
+            self.direction[axis] = -1
+            self.last_motion = time.time()
+        believed = self.at_mm[axis]
+        cfg = self.config["axes"][axis]
+        if "home_mm" not in cfg:
+            cfg["home_mm"] = round(believed, 3)
+            self.save_config()
+        self.set_position(**{axis: cfg["home_mm"]})
+        return {"believed_mm": round(believed, 3), "home_mm": cfg["home_mm"],
+                "correction_mm": round(cfg["home_mm"] - believed, 3)}
 
     def save_config(self):
         self.config_path.write_text(json.dumps(self.config, indent=2) + "\n", encoding="utf-8")

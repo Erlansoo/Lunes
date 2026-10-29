@@ -417,8 +417,8 @@ def main():
     ear = None
     if not args.text:
         print("cargando los oídos (Omnilingual ASR de Meta, en esta PC)...")
-        fast = local_transcriber(FAST_EAR, threads=4)  # every utterance
-        precise = local_transcriber(threads=4)  # the 1B model, for the words of a job; both fit the 8 CPU threads
+        fast = local_transcriber(FAST_EAR, provider="cuda", threads=2)  # every utterance
+        precise = local_transcriber()  # the 1B model, for the words of a job
         precise_pool = ThreadPoolExecutor(1)
         while True:  # a microphone unplugged at start is waited for, not a crash
             try:

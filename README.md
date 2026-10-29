@@ -49,6 +49,7 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 | [NumPy](https://github.com/numpy/numpy) | Image arithmetic | BSD-3-Clause |
 | [openai](https://github.com/openai/openai-python) Python SDK | Calling the Meta Model API, which speaks the same protocol | Apache-2.0 |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Running Meta's Omnilingual ASR ear and MMS-TTS Spanish voice on the bench PC | Apache-2.0 |
+| NVIDIA CUDA runtime wheels (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`, `nvidia-cufft-cu12`, `nvidia-curand-cu12`, `nvidia-cuda-runtime-cu12`) | The CUDA libraries sherpa-onnx needs to run the fast ear on the GPU | NVIDIA software license, free, closed source; installed by pip, not redistributed here |
 | [comtypes](https://github.com/enthought/comtypes) | Listing the cameras by name (Windows DirectShow), so the microscope and the bench camera never swap | MIT |
 | [sounddevice](https://github.com/spatialaudio/python-sounddevice) | Microphone and speaker access | MIT |
 | [Ollama](https://github.com/ollama/ollama) | Running Muse Glimmer's open weights on the bench PC | MIT |
@@ -56,9 +57,10 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 | [Arduino AVR core](https://github.com/arduino/ArduinoCore-avr) and [arduino-cli](https://github.com/arduino/arduino-cli) | Building the motion firmware | LGPL-2.1 / GPL-3.0 |
 
 The motion firmware (`firmware/lunes_motion`), its flasher, the Kinect driver and the PC tools in `tools/` are
-written for this project. Every library Lunes installs is open source. The only closed software it runs on is the
-PC's own: Windows and its device drivers, plus NVIDIA's graphics driver and the CUDA runtime that Ollama ships to
-run Glimmer on the graphics card. The ears run on the CPU. The Kinect protocol follows what the
+written for this project. Every library Lunes installs is open source except NVIDIA's CUDA runtime, which runs the
+fast ear on the graphics card (the organizers confirmed that closed libraries are fine when their licenses are
+followed; the rule is that every model is a Meta model). The rest of the closed software is the PC's own: Windows,
+its device drivers and NVIDIA's graphics driver. The Kinect protocol follows what the
 [OpenKinect](https://github.com/OpenKinect/libfreenect) project documented.
 
 ### Setting up the Kinect (Xbox 360, once per PC)
@@ -88,7 +90,7 @@ The design is in [docs/diseno-conversacion.md](docs/diseno-conversacion.md).
 |---|---|---|
 | Muse Spark | The conductor, at minimal reasoning: Lunes' side of the conversation, deciding by judgment what Erlan wants and whether to answer, look or start a job. And the worker: the bench agent that plans, uses the machine, reads chips and boards, and searches the web for datasheets | in use |
 | Muse Glimmer (open weights) | The same conductor and worker on the bench PC (RTX 3090), when there is no internet and in private mode | in use |
-| Omnilingual ASR 300M and 1B (open weights, Apache-2.0) | Lunes' ears, on the bench PC's CPU: the 300M hears everything at once, the 1B gets a job's exact words (part numbers) | in use |
+| Omnilingual ASR 300M and 1B (open weights, Apache-2.0) | Lunes' ears, on the bench PC: the 300M on the GPU hears everything at once, the 1B on the CPU gets a job's exact words (part numbers) | in use |
 | MMS-TTS Spanish (open weights, [`facebook/mms-tts-spa`](https://huggingface.co/facebook/mms-tts-spa), CC-BY-NC-4.0) | Lunes' spoken voice, on the bench PC | in use |
 | Muse Voice Transcribe | A second ear through the API, for noisy rooms and bench names | available, not used by default |
 | SAM 3.1 | Finds components by name on the board mosaic and in the bench camera's and the Kinect's views, and tracks them in recorded video | in use |

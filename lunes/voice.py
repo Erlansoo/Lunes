@@ -26,9 +26,9 @@ import sounddevice as sd
 
 ROOT = Path(__file__).resolve().parent.parent
 MMS_VOICE = ROOT / "models" / "mms" / "vits-mms-spa"  # Meta's open MMS-TTS Spanish voice
-# Meta's open Omnilingual ASR, exported for sherpa-onnx (lowercase text, no punctuation). Both run on the CPU, so the
-# ear needs no closed GPU libraries: the 300M model in full precision takes 0.2 s for "Lunes, para" and 0.9 s for a
-# 6 s phrase; the 1B int8 one hears names and part numbers better but takes about twice as long.
+# Meta's open Omnilingual ASR, exported for sherpa-onnx (lowercase text, no punctuation). The 300M model in full
+# precision runs on the GPU in 0.03 to 0.1 s for any phrase; the 1B int8 one hears names and part numbers better but
+# needs 0.5 to 2 s on the CPU.
 FAST_EAR = ROOT / "models" / "omnilingual" / "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-v2-2026-02-05"
 LOCAL_EAR =ROOT / "models" / "omnilingual" / "sherpa-onnx-omnilingual-asr-1600-languages-1B-ctc-v2-int8-2026-02-05"
 PACE = 1.1  # a little slower than the model's own pace, to be understood easily
@@ -61,14 +61,26 @@ def plain(word):
     return unicodedata.normalize("NFD", word).encode("ascii", "ignore").decode()
 
 
-def local_transcriber(model_dir=LOCAL_EAR, threads=8):
-    """Speech to text on the PC's CPU with Meta's Omnilingual ASR: a function from float32 16 kHz audio to text.
-    Nothing leaves the PC."""
+def _cuda_dlls():
+    """No CUDA toolkit on this PC: the CUDA and cuDNN DLLs come in the nvidia-* wheels; make them findable for ONNX
+    Runtime's CUDA provider inside sherpa-onnx."""
+    site = Path(sys.executable).resolve().parent.parent / "Lib" / "site-packages" / "nvidia"
+    for bin_dir in site.glob("*/bin"):
+        os.add_dll_directory(str(bin_dir))
+        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+
+
+def local_transcriber(model_dir=LOCAL_EAR, threads=8, provider="cpu"):
+    """Speech to text on the PC with Meta's Omnilingual ASR: a function from float32 16 kHz audio to text. Nothing
+    leaves the PC. provider="cuda" runs it on the GPU, which only pays with a full-precision model: the int8 model's
+    quantised layers stay on the CPU and it came out slower (4.4 s instead of 3 s for a 7 s phrase)."""
     import sherpa_onnx
+    if provider == "cuda":
+        _cuda_dlls()
     model_dir = Path(model_dir)
     recognizer = sherpa_onnx.OfflineRecognizer.from_omnilingual_asr_ctc(
         model=str(next(model_dir.glob("*.onnx"))), tokens=str(model_dir / "tokens.txt"), num_threads=threads,
-        provider="cpu")
+        provider=provider)
 
     def transcribe(audio):
         stream = recognizer.create_stream()

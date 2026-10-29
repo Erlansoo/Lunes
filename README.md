@@ -70,7 +70,35 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
     it (`lunes/knowledge/circuits.md`).
   - Lunes checks its own parts (`system_check`: a simulator self-test, the scope, the Kinect, the cameras, the
     CNC's alarm) and restarts the one that fails (`system_restart`), telling Erlan what happened.
-- **Being built:** breadboard assembly guided by a laser pointer on the machine, and the probe held by the machine.
+  - A verifier checks every answer before it is said (`lunes/verifier.py`):
+    - The code first: each number, in figures or in words, must appear in what Erlan said, what the tools returned
+      or the memory, allowing for rounding and units (0.0147 A said as 14.7 mA).
+    - Only when one is missing, or the answer claims to have seen or measured something with no tool run, Muse
+      Spark (or Glimmer offline) fixes just that: an invented board size becomes the measured one, an unmeasured
+      "the LED is on" becomes "I did not measure it".
+    - Answers backed by their tools pass in milliseconds.
+- **Laser pointer, working on the real bench:** Lunes points at things for Erlan with a red dot (`lunes/laser.py`).
+  - A 5 mW laser sits on the carriage, not on Z, driven by the motion board's PWM on D6 at 31 kHz.
+  - It calibrates itself with the microscope. The dot is found against a picture with the laser off. The brightness
+    steps down past the levels that glow over the whole board, and stops just above where the diode starts to lase:
+    PWM 29 of 255, a 0.4 mm dot.
+  - The beam is slanted, 23.6 degrees on this bench, so where it lands depends on the height of the surface.
+    Calibrated on two surfaces (the table, and a 4 mm block measured with a caliper), Lunes knows the slant, and it
+    works both ways:
+    - `laser_point` puts the dot on what Lunes means: a point of a microscope picture, of the board's mosaic, or in
+      mm. The microscope then checks where the dot really landed, and the head moves again for the height of what
+      it hit.
+    - `laser_height` tells how high the surface under the dot is, with no focusing and no fourth axis. It measured
+      the 4 mm block as 4.02 mm.
+  - Measured error on a board: 0.12 mm.
+  - `tools/laser_aim.py` is a live microscope view with a cross, for aiming the laser by hand.
+- **Being built: Arduino in the simulation** (`lunes/mcu.py`).
+  - An Uno, a Nano or a Blue Pill is a part of the circuit, with a program for its pins. The same program is
+    simulated with the circuit, written as a sketch and built with arduino-cli. The board's readings come back
+    over USB serial, to compare with the simulation.
+  - Design templates: a blinking LED, PWM into an RC filter, a transistor switch, reading a divider.
+  - Not yet a tool Lunes calls on its own. Flashing refuses the CNC's port.
+- **Being built:** the probe held by the machine.
 
 ## Built from scratch
 
@@ -84,7 +112,7 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 | Dependency | Used for | License |
 |---|---|---|
 | [pyserial](https://github.com/pyserial/pyserial) | Talking to the motion board from the PC tools | BSD-3-Clause |
-| [OpenCV](https://github.com/opencv/opencv-python) | Microscope capture, focus measure and image-shift calibration | Apache-2.0 / MIT |
+| [OpenCV](https://github.com/opencv/opencv-python) | Microscope capture, focus measure, image-shift calibration and finding the laser dot | Apache-2.0 / MIT |
 | [NumPy](https://github.com/numpy/numpy) | Image arithmetic | BSD-3-Clause |
 | [openai](https://github.com/openai/openai-python) Python SDK | Calling the Meta Model API, which speaks the same protocol | Apache-2.0 |
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | Running Meta's Omnilingual ASR ear and MMS-TTS Spanish voice on the bench PC | Apache-2.0 |
@@ -95,7 +123,7 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 | [python-libusb1](https://github.com/vpelletier/python-libusb1), with [libusb](https://github.com/libusb/libusb) inside | USB access for Lunes' own Kinect driver (`lunes/kinect.py`) | LGPL-2.1-or-later |
 | Open firmware for the Hantek 6022BE, from [OpenHantek6022](https://github.com/OpenHantek/OpenHantek6022) / [Hantek6022API](https://github.com/Ho-Ro/Hantek6022API) (`firmware/hantek6022be`) | The program Lunes loads into the scope at every plug-in (the scope keeps none) | GPL-3.0, shipped unchanged with its source named |
 | [ngspice](https://ngspice.sourceforge.io) 41 | Simulating the circuit on the bench and each of its faults | BSD-3-Clause (downloaded into `ngspice/`, not shipped here) |
-| [Arduino AVR core](https://github.com/arduino/ArduinoCore-avr) and [arduino-cli](https://github.com/arduino/arduino-cli) | Building the motion firmware | LGPL-2.1 / GPL-3.0 |
+| [Arduino AVR core](https://github.com/arduino/ArduinoCore-avr) and [arduino-cli](https://github.com/arduino/arduino-cli) | Building the motion firmware, and the sketches for an Arduino in the circuit | LGPL-2.1 / GPL-3.0 |
 
 The motion firmware (`firmware/lunes_motion`), its flasher, the Kinect driver and the PC tools in `tools/` are
 written for this project. Every library Lunes installs is open source except NVIDIA's CUDA runtime, which runs the

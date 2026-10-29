@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
+from lunes import mcu
 from lunes.circuit import _net, faults, netlist, nets_of, value, with_fault
 from lunes.signals import measure
 
@@ -37,11 +38,14 @@ NGSPICE = ROOT / "ngspice" / "bin" / "ngspice_con.exe"
 MODELS = Path(__file__).resolve().parent / "spice" / "models.lib"
 CACHE = ROOT / "runs" / "fault_dictionaries"
 POINTS = 40000  # samples per run: plenty for the measurements, quick for ngspice
-VERSION = "2"  # of how a simulation is read; a change makes the cached fault dictionaries be simulated again
+VERSION = "7"  # of how a simulation is read; a change makes the cached fault dictionaries be simulated again
+# every node also leaks 1 GOhm to ground, as a breadboard does: it changes nothing a scope can see, and it keeps a
+# node that is cut off from everything (a collector whose transistor and LED are both off) from drifting to nonsense
+# over long time steps
 SETTINGS = [  # tried in order until a run converges
-    ("normal", ".options reltol=1e-3 abstol=1e-10 vntol=1e-5 method=gear itl4=50"),
-    ("relaxed", ".options reltol=1e-2 abstol=1e-9 vntol=1e-4 method=gear itl4=200 gmin=1e-10"),
-    ("trapezoidal", ".options reltol=5e-3 abstol=1e-9 vntol=1e-4 method=trap itl4=500 gmin=1e-9"),
+    ("normal", ".options reltol=1e-3 abstol=1e-10 vntol=1e-5 method=gear itl4=50 rshunt=1e9"),
+    ("relaxed", ".options reltol=1e-2 abstol=1e-9 vntol=1e-4 method=gear itl4=200 gmin=1e-10 rshunt=1e9"),
+    ("trapezoidal", ".options reltol=5e-3 abstol=1e-9 vntol=1e-4 method=trap itl4=500 gmin=1e-9 rshunt=1e9"),
 ]
 
 
@@ -126,6 +130,10 @@ def _devices(lines, circuit):
     for line in lines:
         name = line.split()[0] if line.strip() and not line.startswith("*") else ""
         letter, ref = name[:1], name[1:]
+        m = re.fullmatch(r"RMCU_(\w+?)_([A-Z]+\d+)", name)  # a board's output pin, behind its own resistance
+        if m and m.group(1) in refs:
+            out[f"{m.group(1)}.{m.group(2)}"] = f"@{name.lower()}[i]"
+            continue
         if ref in refs:
             if letter == "R" and refs[ref] == "R":
                 out[ref] = f"@r{ref.lower()}[i]"
@@ -148,6 +156,34 @@ def operating_point(circuit):
     return {n: float(values[0][names.index(f"v({n})")]) for n in nodes if f"v({n})" in names}
 
 
+def rails(circuit):
+    """(lowest, highest) voltage any source in the circuit puts out: with no coil to kick, no net goes far beyond."""
+    low, top = 0.0, value(circuit.get("supply_v", 5))
+    for p in circuit["parts"]:
+        v = p.get("value")
+        if p["kind"] == "V" and isinstance(v, dict) and "sine" in v:
+            off, amp = value(v["sine"][0]), abs(value(v["sine"][1]))
+            low, top = min(low, off - amp), max(top, off + amp)
+        elif p["kind"] == "V" and isinstance(v, dict):
+            a, b = value(v["square"][0]), value(v["square"][1])
+            low, top = min(low, a, b), max(top, a, b)
+        elif p["kind"] == "V":
+            low, top = min(low, value(v)), max(top, value(v))
+        if p["kind"] in mcu.BOARDS:
+            top = max(top, mcu.BOARDS[p["kind"]]["vcc"])
+    return low, top
+
+
+def _impossible(circuit, data):
+    """A run whose nets go well past every source, in a circuit with no coil: the solver took too big a step over a
+    switching edge (a transistor turning off), not physics."""
+    if any(p["kind"] == "L" for p in circuit["parts"]):
+        return False
+    low, top = rails(circuit)
+    return any(float(v.max()) > top + 1.0 or float(v.min()) < low - 1.0
+               for k, v in data.items() if not k.startswith("@"))
+
+
 def transient(circuit, stop_s, nodes, timeout=15):
     """(rate, {spice node or "@" + part ref: array}, settings used, warnings) for a run of stop_s seconds on an even
     time grid. Raises SimulationError when no setting gives a result ngspice itself trusts."""
@@ -159,13 +195,22 @@ def transient(circuit, stop_s, nodes, timeout=15):
         for stop in (stop_s, stop_s / 10):  # a run that is too slow (racing at megahertz) is tried shorter
             step = stop / POINTS
             vectors = [f"v({n})" for n in nodes] + list(devices.values())
+            finer = None
             try:
                 # from zero, as when the supply is switched on: every capacitor empty. Started from its DC operating
                 # point instead, an oscillator can sit at the balance point between its two states and never start.
-                text, log = _run(lines, lambda out: [
-                    "set wr_singlescale", "set wr_vecnames", "save all " + " ".join(devices.values()),
-                    f"tran {step:g} {stop:g} 0 {step:g} uic", "linearize", f"wrdata {out} " + " ".join(vectors)],
-                    timeout=timeout, options=options)
+                for tmax in (step, min(step, 2e-5), min(step, 2e-6)):  # finer only if the result is impossible
+                    text, log = _run(lines, lambda out: [
+                        "set wr_singlescale", "set wr_vecnames", "save all " + " ".join(devices.values()),
+                        f"tran {step:g} {stop:g} 0 {tmax:g} uic", "linearize", f"wrdata {out} " + " ".join(vectors)],
+                        timeout=timeout, options=options)
+                    if not text or problems(log, circuit)[0]:
+                        break
+                    names, values = _table(text)
+                    if not _impossible(circuit, {n: values[:, names.index(f"v({n})")] for n in nodes
+                                                 if f"v({n})" in names}):
+                        break
+                    finer = tmax
             except subprocess.TimeoutExpired:
                 last = ["the simulation took too long (something racing at megahertz?)"]
                 timed_out += 1
@@ -190,21 +235,60 @@ def transient(circuit, stop_s, nodes, timeout=15):
                             f"numbers a little less")
             if stop != stop_s:
                 warn.append(f"simulated only {stop:g} s instead of {stop_s:g} s: the full run took too long")
+            if finer is not None and _impossible(circuit, {k: v for k, v in data.items()}):
+                warn.append("some net went past every source even with fine time steps: a numerical artefact, the "
+                            "peaks of that net are not to be trusted")
+            elif finer is not None:
+                warn.append("the first run went past the supply at a switching edge (too big a time step); it was "
+                            "simulated again with finer steps")
             return 1 / step, data, label, warn
         if timed_out == 2:
             break  # more tolerant settings make a racing circuit no faster
     raise SimulationError(last or ["ngspice could not simulate this circuit"])
 
 
+def slowest_hz(circuit):
+    """The lowest frequency a source or a board pin puts into the circuit, or None: the run must show it a few
+    times over."""
+    found = _frequencies(circuit)
+    return min(found) if found else None
+
+
+def longest_run(circuit):
+    """The longest run that still samples the fastest source ten times a period (a 31 kHz PWM: 0.13 s), up to
+    ten seconds."""
+    found = _frequencies(circuit)
+    return min(10.0, POINTS / (10 * max(found))) if found else 10.0
+
+
+def _frequencies(circuit):
+    found = []
+    for p in circuit["parts"]:
+        v = p.get("value")
+        if p["kind"] == "V" and isinstance(v, dict):
+            found.append(value((v.get("sine") or v.get("square"))[2]))
+        if p["kind"] in mcu.BOARDS:
+            for pin, entry in (p.get("program") or {}).items():
+                mode, args = mcu.mode_of(entry)
+                if mode == "square":
+                    found.append(float(args.get("square", args.get("blink"))))
+                elif mode == "pwm":
+                    found.append(mcu.BOARDS[p["kind"]]["pwm"].get(pin, 490))
+    return found
+
+
 def expected(circuit, stop_s=0.02):
     """{"nets": {net: what the scope should read there}, "currents": {part: peak, mean, power}, "warnings": [...],
     "simulated_s"}: the healthy circuit's simulation, read like a measurement."""
+    slow, longest = slowest_hz(circuit), longest_run(circuit)
+    if slow:  # five periods of the slowest source after the first third, as long as the fastest allows
+        stop_s = min(max(stop_s, 7.5 / slow), longest)
+    stop_s = min(stop_s, longest)
     nets = nets_of(circuit)
     nodes = {net: _net(net) for net in nets if _net(net) != "0"}
     # the DC operating point is the settled state only when every source is steady; with a square or sine source it
     # is just the instant before the first edge
-    steady_sources = not any(p["kind"] == "V" and isinstance(p.get("value"), dict) for p in circuit["parts"])
-    dc = operating_point(circuit) if steady_sources else {}
+    dc = operating_point(circuit) if slow is None else {}  # nothing varies in time: no wave, no pin toggling
     while True:
         rate, waves, label, warn = transient(circuit, stop_s, sorted(set(nodes.values())))
         out, moving_unsettled = {}, False
@@ -221,9 +305,12 @@ def expected(circuit, stop_s=0.02):
             elif not swing and node in dc:
                 out[net].update(mean_v=round(dc[node], 4), vpp_v=0.0, shape="dc", min_v=round(dc[node], 4),
                                 max_v=round(dc[node], 4))
-        if not moving_unsettled or stop_s >= 10:
+        if not moving_unsettled or stop_s >= longest:
             break
-        stop_s *= 10
+        stop_s = min(stop_s * 10, longest)
+    if moving_unsettled:
+        warn.append(f"some net was still settling at the end of the {stop_s:g} s run (a slow RC next to a fast "
+                    f"source): its mean is where it got to, not where it ends")
     currents = {}
     resistors = {p["ref"]: value(p["value"]) for p in circuit["parts"] if p["kind"] == "R" and "value" in p}
     for key, i in waves.items():
@@ -234,7 +321,11 @@ def expected(circuit, stop_s=0.02):
                 currents[ref]["power_w"] = float(f"{float(np.mean(i * i)) * resistors[ref]:.4g}")
     out["GND"] = {"touches": nets.get("GND", []), "mean_v": 0.0, "vpp_v": 0.0, "shape": "dc", "min_v": 0.0,
                   "max_v": 0.0}
-    return {"nets": out, "currents": currents, "warnings": warn, "settings": label, "simulated_s": stop_s}
+    boards = {p["ref"]: mcu.expectations(p, out) for p in circuit["parts"] if p["kind"] in mcu.BOARDS}
+    result = {"nets": out, "currents": currents, "warnings": warn, "settings": label, "simulated_s": stop_s}
+    if boards:
+        result["boards"] = boards  # what each board's inputs should read: analogRead counts, digitalRead levels
+    return result
 
 
 def fault_dictionary(circuit, stop_s=None, workers=6):

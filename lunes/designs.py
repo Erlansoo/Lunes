@@ -212,6 +212,12 @@ def verify(sim, spec):
             out.append({"goal": f"{goal['current_of']} carries {goal['target_a'] * 1e3:.1f} mA (±{tol:.0%})",
                         "measured": got and f"{got * 1e3:.2f} mA", "ok": ok})
             continue
+        if "board_read" in goal:
+            got = sim.get("boards", {}).get(goal["board_read"], {}).get(goal["pin"], {}).get("analogRead")
+            ok = got is not None and abs(got - goal["analogRead"]) <= max(2, tol * goal["analogRead"])
+            out.append({"goal": f"{goal['board_read']} {goal['pin']} reads about {goal['analogRead']} "
+                                f"(analogRead, ±{tol:.0%})", "measured": got, "ok": ok})
+            continue
         m = nets.get(goal["net"], {})
         if "min_v_below" in goal:
             got = m.get("min_v")
@@ -239,8 +245,105 @@ def as_spec(goals):
     out = []
     for g in goals or []:
         g = dict(g)
-        for k in ("frequency_hz", "duty", "mean_v", "target_a", "ratio_vpp", "tolerance", "min_v_below"):
+        for k in ("frequency_hz", "duty", "mean_v", "target_a", "ratio_vpp", "tolerance", "min_v_below",
+                  "analogRead"):
             if k in g:
                 g[k] = value(g[k]) if isinstance(g[k], str) else float(g[k])
         out.append(g)
     return out
+
+
+# ---- with a microcontroller board ---------------------------------------------------------------------------------
+def _board(kind, ref="U1"):
+    from lunes.mcu import BOARDS
+    if kind not in BOARDS:
+        raise ValueError(f"board must be one of {sorted(BOARDS)}")
+    b = BOARDS[kind]
+    power = {"5V": "VCC"} if b["vcc"] == 5.0 else {"3V3": "VCC"}
+    return b, {"ref": ref, "kind": kind, "pins": {"GND": "GND", **power}, "program": {}}
+
+
+def arduino_blink(pin="D8", hz=1.0, color="red", current_ma=10.0, board="ARDUINO_UNO"):
+    """An LED blinking on a board pin: R = (Vpin - Vf) / I minus the pin's own resistance, rounded up."""
+    b, mcu_part = _board(board)
+    vf = LED_VF[color]
+    current_ma = min(float(current_ma), 0.75 * b["rec_pin_a"] * 1000)  # well inside what a pin of this board gives
+    r = nearest((b["vcc"] - vf) / (current_ma / 1000) - b["pin_r"], mode="up")
+    mcu_part["pins"][pin] = "PIN"
+    mcu_part["program"][pin] = {"square": hz, "duty": 0.5}
+    parts = [mcu_part, {"ref": "R1", "kind": "R", "value": text(r), "pins": ["PIN", "LED_A"]},
+             {"ref": "D1", "kind": "LED", "color": color, "pins": {"A": "LED_A", "K": "GND"}}]
+    i = (b["vcc"] - vf) / (r + b["pin_r"])
+    notes = [f"R1 = ({b['vcc']:g} V - {vf:g} V) / {current_ma:g} mA - {b['pin_r']:g} ohm of the pin, rounded up to "
+             f"{text(r)}: {i * 1000:.1f} mA, inside the {b['rec_pin_a'] * 1000:g} mA a pin should give",
+             f"the sketch toggles {pin} at {hz:g} Hz"]
+    return {"name": f"{b['name']} blinking a {color} LED on {pin} at {hz:g} Hz", "supply_v": b["vcc"],
+            "parts": parts}, [{"current_of": "D1", "target_a": i, "tolerance": 0.3},
+                              {"net": "PIN", "frequency_hz": hz, "tolerance": 0.05}], notes
+
+
+def arduino_pwm_rc(pin="D9", duty=0.3, adc="A0", board="ARDUINO_UNO"):
+    """PWM from a pin through an RC low-pass (10 k, 10 µF, fc 1.6 Hz) into an analogue input: the mean is duty x
+    VCC, so the board measures its own output. A self-test of the board and of the simulation at once."""
+    b, mcu_part = _board(board)
+    mcu_part["pins"].update({pin: "PWM", adc: "FILT"})
+    mcu_part["program"].update({pin: {"pwm": float(duty)}, adc: "analog_in"})
+    parts = [mcu_part, {"ref": "R1", "kind": "R", "value": "10k", "pins": ["PWM", "FILT"]},
+             {"ref": "C1", "kind": "C", "value": "10u", "pins": ["FILT", "GND"]}]
+    v = b["vcc"] * float(duty)
+    counts = round(float(duty) * (2 ** b["adc_bits"] - 1))
+    hz = b["pwm"].get(pin, 490)
+    ripple = b["vcc"] * float(duty) * (1 - float(duty)) / (hz * 0.1)
+    notes = [f"{pin} at {float(duty):.0%} PWM ({hz} Hz); R1 C1 = 0.1 s smooths it to its mean, "
+             f"{b['vcc']:g} V x {float(duty):.0%} = {v:.2f} V, with about {ripple * 1000:.0f} mV of ripple",
+             f"{adc} should read about {counts} of {2 ** b['adc_bits'] - 1}; it settles in half a second (5 RC)",
+             "C1 of 10 µF is an electrolytic: its minus to GND"]
+    return {"name": f"{b['name']} PWM {float(duty):.0%} on {pin} read back on {adc}", "supply_v": b["vcc"],
+            "parts": parts}, [{"net": "FILT", "mean_v": v, "tolerance": 0.05},
+                              {"board_read": "U1", "pin": adc, "analogRead": counts, "tolerance": 0.05}], notes
+
+
+def arduino_transistor(pin="D7", load_current_ma=20.0, hz=1.0, color="red", model="2N2222", board="ARDUINO_UNO"):
+    """A load switched by an NPN from a board pin: the pin only gives the base current (a tenth of the load's), so
+    the same circuit drives what a pin cannot (a relay, a lamp, many LEDs); here the load is an LED."""
+    circuit, spec, notes = npn_switch(load_current_ma, 5.0, BOARDS_VCC(board), hz, color, model)
+    b, mcu_part = _board(board)
+    mcu_part["pins"][pin] = "IN"
+    mcu_part["program"][pin] = {"square": hz, "duty": 0.5}
+    circuit["parts"] = [mcu_part] + [p for p in circuit["parts"] if p["ref"] != "V1"]
+    circuit["name"] = f"{b['name']} {pin} switching {circuit['name'].split(' switching ')[1]}"
+    circuit["supply_v"] = 5.0
+    notes = [n for n in notes if not n.startswith("V1")] + [f"{pin} drives the base; the load's current never "
+                                                            f"goes through the board"]
+    return circuit, spec, notes
+
+
+def BOARDS_VCC(board):
+    from lunes.mcu import BOARDS
+    return BOARDS[board]["vcc"]
+
+
+def arduino_read_divider(vin=12.0, adc="A0", board="ARDUINO_UNO"):
+    """Measuring a voltage above the board's supply (a 12 V battery) on an analogue input, through a divider that
+    keeps the pin below its supply at the highest input."""
+    b, mcu_part = _board(board)
+    ratio = b["vcc"] * 0.95 / vin
+    r2 = 10e3
+    r1 = nearest(r2 * (1 - ratio) / ratio, mode="up")
+    v = vin * r2 / (r1 + r2)
+    counts = round(v / b["vcc"] * (2 ** b["adc_bits"] - 1))
+    mcu_part["pins"][adc] = "SENSE"
+    mcu_part["program"][adc] = "analog_in"
+    parts = [{"ref": "V1", "kind": "V", "value": f"{vin:g}", "pins": {"+": "VIN", "-": "GND"}}, mcu_part,
+             {"ref": "R1", "kind": "R", "value": text(r1), "pins": ["VIN", "SENSE"]},
+             {"ref": "R2", "kind": "R", "value": "10k", "pins": ["SENSE", "GND"]}]
+    notes = [f"{adc} sees {vin:g} V x 10k / ({text(r1)} + 10k) = {v:.2f} V, under the {b['vcc']:g} V of the board",
+             f"it should read {counts}; the sketch turns it back with volts = reading x {b['vcc']:g} / "
+             f"{2 ** b['adc_bits'] - 1} x {(r1 + r2) / r2:.3g}"]
+    return {"name": f"{b['name']} reading {vin:g} V on {adc}", "supply_v": b["vcc"], "parts": parts}, \
+        [{"net": "SENSE", "mean_v": v, "tolerance": 0.03},
+         {"board_read": "U1", "pin": adc, "analogRead": counts, "tolerance": 0.03}], notes
+
+
+TEMPLATES.update({"arduino_blink": arduino_blink, "arduino_pwm_rc": arduino_pwm_rc,
+                  "arduino_transistor": arduino_transistor, "arduino_read_divider": arduino_read_divider})

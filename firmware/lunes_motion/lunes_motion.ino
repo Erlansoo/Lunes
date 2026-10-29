@@ -25,7 +25,7 @@ const uint8_t NO_PIN = 255;
 // Endstops at each socket's minimum: X_MIN and Y_MIN headers, closing to ground (active low with pull-ups). One that
 // is not wired reads open, so it never stops anything.
 const uint8_t ENDSTOP_PIN[N_AXES] = {3, 14, NO_PIN, NO_PIN, NO_PIN};
-const uint8_t LASER_PIN = 6;            // servo header; switches the laser module through a transistor (PWM)
+const uint8_t LASER_PIN = 6;            // servo header; the laser's brightness as PWM at 31 kHz (see setup)
 const uint32_t LASER_MAX_MS = 60000;    // the laser goes off by itself a minute after the host last set it
 const uint8_t MPU_ADDR = 0x68;          // MPU6050 with AD0 low, on SDA 20 / SCL 21
 
@@ -710,6 +710,9 @@ void setup() {
     endstop_mask[i] = digitalPinToBitMask(ENDSTOP_PIN[i]);
   }
   pinMode(LASER_PIN, OUTPUT);
+  // Timer4 (D6, D7, D8) without its prescaler: the laser's PWM at 31 kHz instead of 490 Hz, so the microscope and the
+  // cameras see a steady dot, not stripes, and an RC filter on D6 smooths it into a clean voltage
+  TCCR4B = (TCCR4B & 0b11111000) | 0x01;
   set_laser(0);
   Wire.begin();
   Wire.setClock(400000);

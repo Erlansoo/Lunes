@@ -20,11 +20,11 @@
     },
     "Z": {
       "socket": "A",
-      "steps_per_mm": 1274.232,
-      "invert": false,
+      "steps_per_mm": 1346.1,
+      "invert": true,
       "speed_mm_s": 10.0,
       "accel_mm_s2": 40.0,
-      "note": "driven from the E0 socket; Z+ goes up (seen by Erlan); steps_per_mm from the Mach3 ratio, not yet checked with the caliper"
+      "note": "driven from the E0 socket; Z+ goes up. 2026-10-29: Erlan saw -Z raise the microscope (the Z motor's plug is probably reversed), so the axis is inverted; steps_per_mm from 11213 steps = 8.33 mm measured by Erlan with the caliper (one measurement), not the Mach3 ratio 1274.232"
     }
   },
   "kinect": {
@@ -78,10 +78,11 @@
       150.0
     ],
     "Z": [
-      -7.0,
-      15.0
+      -9.7,
+      50.3
     ],
-    "origin": "bench origin: X and Y are where the machine stood when Erlan measured these travels (2026-10-27, known to about 5 mm), Z = 0 is the focused surface of the board on the bed; the position is kept in runs/machine_position.json"
+    "origin": "bench origin: X and Y are where the machine stood when Erlan measured these travels (2026-10-27, known to about 5 mm), Z = 0 is the focused surface of the board on the bed; the position is kept in runs/machine_position.json",
+    "z_note": "2026-10-29, Erlan from Z 0.3: the axis travels 70 mm up and 30 mm down, of which 50 up and 10 down are safe; these limits are the safe ones (the table, level zero, focuses at -5.68)"
   },
   "como_lo_ve_erlan": {
     "X": "todavía no se sabe si +X va hacia la izquierda o hacia la derecha de Erlan",
@@ -93,27 +94,60 @@
       [
         -1.3274949801671025,
         -0.9037723304470302,
-        0.004942898847935825
+        -0.004678998502936604
       ],
       [
         -0.7711899096041163,
         1.1806291203549208,
-        1.218558049301383
+        -1.1534994876141444
       ],
       [
         0.3340325027927381,
         -0.5581249944371671,
-        0.2789279937656758
+        -0.2640360859906579
       ],
       [
         471.8928571830284,
         404.4416395813843,
-        -616.2296519232343
+        583.3292785301588
       ]
     ],
     "typical_error_mm": 0.8,
     "points": 9,
     "at": "2026-10-29T11:26",
-    "note": "linear map from where the Kinect sees the ring light (column, row, distance mm) to machine mm; made by calibrate_kinect"
+    "note": "linear map from where the Kinect sees the ring light (column, row, distance mm) to machine mm; made by calibrate_kinect",
+    "z_flipped": "2026-10-29: Z column turned to the inverted and rescaled Z axis (new = -0.9466 old)"
+  },
+  "laser": {
+    "pwm": 29,
+    "at": "2026-10-29T18:11",
+    "surfaces": [
+      {
+        "z": -1.68,
+        "pwm": 29,
+        "dot_mm": 0.516,
+        "offset_mm": {
+          "X": 0.804,
+          "Y": 0.187
+        },
+        "at": "2026-10-29T18:11",
+        "surface": "bloque 4 mm"
+      },
+      {
+        "z": -5.68,
+        "pwm": 29,
+        "dot_mm": 0.402,
+        "offset_mm": {
+          "X": -0.539,
+          "Y": 1.301
+        },
+        "at": "2026-10-29T18:06",
+        "surface": "mesa"
+      }
+    ],
+    "slant_mm_per_mm": {
+      "X": 0.3358,
+      "Y": -0.2785
+    }
   }
 }

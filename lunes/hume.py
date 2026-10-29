@@ -129,12 +129,22 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   código calcula los valores con fórmulas y los verifica en la simulación. Si no, escríbelo con circuit_set y dale
   sus metas (spec). Solo propónselo a Erlan cuando todas las metas pasen y la revisión no avise nada serio; si
   avisa, corrígelo. Para el criterio (patillajes, fallas típicas, límites) consulta circuit_guide. Si el simulador
-  rechaza un circuito, su mensaje dice por qué: corrige eso, no repitas lo mismo. Para comprobarlo o diagnosticarlo: diagnose_start, y en cada paso dile a Erlan dónde poner la punta en
+  rechaza un circuito, su mensaje dice por qué: corrige eso, no repitas lo mismo. Hasta un valor suelto (la
+  resistencia de un LED) se calcula con circuit_design, nunca a mano: antes de que hables, un verificador quita todo
+  número que no venga de una herramienta. Para comprobarlo o diagnosticarlo: diagnose_start, y en cada paso dile a Erlan dónde poner la punta en
   palabras de banco ("el pin 3 del 555", "la pata de R2 que va al capacitor") y, cuando diga que está, llama
   diagnose_measure. El motor decide qué medir y qué falla es; tú lo explicas con los números. Solo nombra una falla
   cuando el motor la da como clara; si varias leen igual, pídele mirar esas partes. Nunca inventes una falla.
 - Si una herramienta falla o responde raro (el simulador, el osciloscopio, el Kinect), usa system_check antes de
   culpar al circuito, y system_restart para la parte que falle; dile a Erlan qué pasó.
+- El láser del cabezal es tu dedo para señalarle cosas a Erlan: el punto rojo es lo que él ve, así que apunta a la
+  cosa misma con laser_point (un punto de la foto del microscopio con picture_x/picture_y, del mosaico con
+  mosaic_x/mosaic_y, o en mm) y dile qué le señalas. El láser va en el carro, no en el Z, y su haz va inclinado: el
+  punto cae corrido del centro del microscopio, y más corrido cuanto más alta es la superficie. El código corrige las
+  dos cosas y mide la altura con el propio punto; tú no calcules distancias. laser_height dice qué tan alta está la
+  superficie bajo el punto (la placa sobre la mesa, la protoboard), sin cuarto eje. laser_calibrate se hace con el
+  microscopio enfocado en cada superficie (surface: mesa, placa, protoboard), al menos dos a distinta altura; si
+  Erlan movió el láser, con fresh=true. Nunca apuntes el láser a una persona ni hacia las cámaras.
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
@@ -390,6 +400,46 @@ TOOLS = [
             "net": {"type": "string"}, "source": {"type": "string", "enum": ["scope", "multimeter"]},
             "mean_v": {"type": "number"}}, "required": ["net"]}}},
     {"type": "function", "function": {
+        "name": "laser",
+        "description": "Switch the laser pointer on the head on at a brightness (level 1 to 255; 0 is off), or on at "
+                       "its calibrated brightness (level omitted). It goes off by itself a minute later.",
+        "parameters": {"type": "object", "properties": {"level": {"type": "number"}}}}},
+    {"type": "function", "function": {
+        "name": "laser_calibrate",
+        "description": "Calibrate the laser pointer by itself with the microscope: focuses finely on the surface under "
+                       "the head (Z only, a few tenths of a mm), finds the dot, picks the brightness that gives the "
+                       "finest clear dot (too bright makes a red glow), and measures where the dot lands relative to "
+                       "the microscope. The beam is slanted, so the landing depends on the surface's height: "
+                       "calibrated on two surfaces at different heights (the board, then a breadboard's top), it "
+                       "works on any. About twenty seconds. fresh=true after the laser was moved, to forget the "
+                       "surfaces measured before; surface names what is under the head (mesa, placa, protoboard); "
+                       "height_mm, when Erlan measured the surface's height above the table with the caliper, is "
+                       "used instead of focusing (more exact on plain surfaces; the table itself is 0).",
+        "parameters": {"type": "object", "properties": {"fresh": {"type": "boolean"}, "surface": {"type": "string"},
+                                                        "height_mm": {"type": "number"}}}}},
+    {"type": "function", "function": {
+        "name": "laser_height",
+        "description": "How high the surface under the laser dot is, from where the dot lands: the beam is slanted, "
+                       "so the higher the surface, the further the dot slides (laser triangulation). No focusing and "
+                       "no moving. Gives the height as a Z (where the head would focus on it) and above each "
+                       "calibrated surface (the bed, the board). Needs the laser calibrated on two surfaces at "
+                       "different heights.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "laser_point",
+        "description": "Put the laser dot exactly on a point to show it to Erlan (the red dot is what he sees, so "
+                       "point at the thing itself): picture_x, picture_y for a point of the last microscope picture, "
+                       "mosaic_x, mosaic_y for a point of the last survey mosaic (fractions, 0 to 1, like "
+                       "center_on_point and go_to_mosaic_point), x, y in machine mm, or here=true for the middle of "
+                       "the microscope's view. The machine moves so the dot, not the microscope, lands there: the code "
+                       "corrects the distance between the laser and the microscope and, with the laser calibrated on "
+                       "two heights, the height of what is pointed at, measured with the dot itself. The laser comes "
+                       "on at its calibrated brightness. Needs laser_calibrate.",
+        "parameters": {"type": "object", "properties": {
+            "picture_x": {"type": "number"}, "picture_y": {"type": "number"},
+            "mosaic_x": {"type": "number"}, "mosaic_y": {"type": "number"},
+            "x": {"type": "number"}, "y": {"type": "number"}, "here": {"type": "boolean"}}}}},
+    {"type": "function", "function": {
         "name": "scope_test_signal",
         "description": "Put a square wave of about 2 V on the scope's calibration pin, from 32 Hz to 100 kHz, to feed "
                        "a circuit a known signal (an RC filter, an amplifier's input) and measure what comes out. "
@@ -555,6 +605,7 @@ class Hume:
         self.circuit = self.expected = self.diagnosis = None  # the circuit on the bench, its simulation, a diagnosis
         self.fault_table = None  # the circuit's fault dictionary, simulated in the background after circuit_set
         self._table_thread = None
+        self.last_verification = None  # the verifier's report on the last answer
         self.show = show or (lambda frame, text: None)
         self.model, self.think, self.on_think = model, think, on_think
         self.on_image = None  # on_image(picture, what) for each picture shown to the brain (the dashboard)
@@ -643,7 +694,13 @@ class Hume:
 
     # Moves -------------------------------------------------------------------------------------------------
     def _z_floor(self):
-        return self.focus_z if self.focus_z is not None else 0.0
+        """The lowest the microscope's focus may go: the board's surface once focused there, else the table's
+        (level zero, the bed) if the laser was calibrated on it, else Z 0."""
+        if self.focus_z is not None:
+            return self.focus_z
+        table = next((s for s in (self.m.config.get("laser") or {}).get("surfaces", []) if s.get("surface") == "mesa"),
+                     None)
+        return table["z"] if table else 0.0
 
     def _check(self, target):
         for axis, v in target.items():
@@ -996,6 +1053,210 @@ class Hume:
         if getattr(self.scope, "signals", None) is not None and source == "scope":
             out["simulated"] = "the reading came from the simulated scope, not the bench"
         return out, view
+
+    # The laser pointer -------------------------------------------------------------------------------------------
+    def _frames(self, n=3):
+        """The mean of n fresh microscope pictures, steadier than one."""
+        shots = []
+        for _ in range(n):
+            self.cam.fresh_gray(1)
+            shots.append(self.cam.frame().astype(np.float32))
+        return np.mean(shots, axis=0).astype(np.uint8)
+
+    def _laser_dot(self, level, off=None, noise=None):
+        """(dot or None, picture with the laser on, whether it was too bright for a dot) at a brightness."""
+        from lunes.laser import NOISE, find_dot, too_bright
+        ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
+        if off is None:
+            self.m.laser(0)
+            time.sleep(0.3)
+            off = self._frames()
+        self.m.laser(level)
+        time.sleep(0.35)  # the camera hands over a picture taken after the laser settled
+        on = self._frames()
+        return find_dot(off, on, ppm, noise or NOISE), on, too_bright(off, on, ppm)
+
+    def _laser_offset(self, level):
+        """Where the dot lands now relative to the microscope's centre (X, Y mm), or None if it is not seen."""
+        dot, _, _ = self._laser_dot(level)
+        if not dot:
+            return None
+        at = self.m.position()
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        x, y = pixels_to_mm(at, vx, vy, [dot["x"]], [dot["y"]])
+        return float(x[0]) - at["X"], float(y[0]) - at["Y"]
+
+    def _laser_height(self):
+        from lunes.laser import height_from, slant
+        cal = self.m.config.get("laser") or {}
+        if not cal.get("surfaces") or slant(cal) is None:
+            return {"ok": False, "error": "measuring heights needs the laser calibrated on two surfaces at different "
+                                          "heights: laser_calibrate on each, in focus"}, None
+        try:  # the brightness that made a fine dot on some calibrated surface; the surface here may want another
+            offset = None
+            for level in sorted({v["pwm"] for v in cal["surfaces"]}):
+                offset = self._laser_offset(level)
+                if offset:
+                    break
+        finally:
+            self.m.laser(0)
+        if offset is None:
+            return {"ok": False, "error": "no laser dot in the view: the surface under it may be much lower (a "
+                                          "hole, off the edge) or shiny enough to glow"}, None
+        z, off_line = height_from(cal, offset)
+        at = self.m.position()
+        out = {"ok": True, "surface_z_mm": round(z, 2),
+               "measured_at_mm": {"X": round(at["X"] + offset[0], 2), "Y": round(at["Y"] + offset[1], 2)},
+               "above_mm": {v.get("surface") or f"Z {v['z']:.2f}": round(z - v["z"], 2) for v in cal["surfaces"]},
+               "note": "the height of the surface where the dot is, from how far the slanted beam slid; good to "
+                       "about a tenth of a mm near the calibrated heights"}
+        if off_line > 0.3:
+            out["warning"] = (f"the dot is {off_line:.2f} mm from where any height would put it: a wrong dot, or the "
+                              "laser moved (laser_calibrate with fresh=true)")
+        return out, None
+
+    def _laser_calibrate(self, fresh=False, name=None, height_mm=None):
+        from lunes.laser import LEVELS, NOISE, choose, lit, mark, remember, residuals, slant
+        if not hasattr(self.m, "laser"):
+            return {"ok": False, "error": "this machine has no laser"}, None
+        if height_mm is None:
+            # the surface's height is the head's Z with it in focus: a fine search a few tenths around here (Z only;
+            # the laser is on the carriage and does not move)
+            here = self.m.position()["Z"]
+            top, bottom = min(here + 0.4, WORKSPACE["Z"][1]), max(self._z_floor(), here - 0.4)
+            z, s = self._scan_focus(top, bottom)
+            if s < 50:  # bare MDF: no texture to focus on, and its laser dot looks the same at any height
+                return {"ok": False, "error": "the surface under the head has no texture to focus on (bare MDF, a "
+                                              "plain sheet): Erlan can lay a printed sheet of paper on it, or give "
+                                              "its height measured with the caliper (height_mm)"}, None
+            if (z >= top - 0.05 and top < WORKSPACE["Z"][1]) or (z <= bottom + 0.05 and bottom > self._z_floor() + 1e-6):
+                return {"ok": False, "error": f"the surface under the head is not in focus near Z {here:.2f}: "
+                                              f"autofocus first (with up_mm for a surface higher up), then calibrate"}, None
+        elif float(height_mm) != 0:
+            # a height Erlan measured with the caliper, above the table (level zero): more exact than focusing on a
+            # plain surface. The head goes up or down by it from the table's height, so the surface sits where the
+            # table did in the picture (the microscope's scale holds there)
+            table = next((v for v in (self.m.config.get("laser") or {}).get("surfaces", [])
+                          if v.get("surface") == "mesa"), None)
+            if fresh or table is None:
+                return {"ok": False, "error": "height_mm is measured from the table: calibrate on the table first "
+                                              "(surface mesa, height_mm 0)"}, None
+            moved = self._move(None, None, table["z"] + float(height_mm))
+            if not moved.get("ok"):
+                return moved, None
+        start = self.m.position()
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
+        try:
+            self.m.laser(0)
+            time.sleep(0.3)
+            off = self._frames()
+            noise = max(NOISE, int(lit(off, self._frames()).max()))  # two dark pictures differ this much
+            rows, missed = [], 0
+            for level in LEVELS:
+                if self.stop.is_set():
+                    raise Interrupted()
+                dot, on, bright = self._laser_dot(level, off, noise)
+                rows.append({"level": level, "dot": dot, "on": on, "too_bright": bright})
+                missed = 0 if dot or bright else missed + 1
+                if missed == 2 and any(r["dot"] for r in rows):
+                    break  # it stopped lasing: fainter levels show nothing
+        finally:
+            self.m.laser(0)
+        sweep = [{"level": r["level"], "seen": bool(r["dot"]), **({"too_bright": True} if r["too_bright"] else {}),
+                  **({"size_mm": r["dot"]["size_mm"], "peak": r["dot"]["peak"]} if r["dot"] else {})} for r in rows]
+        best = choose(rows)
+        if best is None:
+            return {"ok": False, "error": "no laser dot in the microscope's view at any brightness: is it on D6, "
+                                          "powered, and pointing into the view? Erlan can aim it with "
+                                          "tools/laser_aim.py", "sweep": sweep}, None
+        x0, y0 = pixels_to_mm(start, vx, vy, [best["dot"]["x"]], [best["dot"]["y"]])
+        at = datetime.now().isoformat(timespec="minutes")
+        surface = {"z": round(start["Z"], 3), "pwm": best["level"], "dot_mm": best["dot"]["size_mm"],
+                   "offset_mm": {"X": round(float(x0[0]) - start["X"], 3), "Y": round(float(y0[0]) - start["Y"], 3)},
+                   "at": at, **({"surface": name} if name else {})}
+        cal = {"pwm": best["level"], "at": at, "surfaces": remember(self.m.config.get("laser"), surface, fresh)}
+        k, warning = slant(cal), None
+        if k and (math.hypot(*k) > 2 or max(residuals(cal)) > 0.25):  # the laser moved since an earlier surface
+            cal["surfaces"], k = cal["surfaces"][:1], None
+            warning = ("the earlier surfaces disagree with this one (the laser was probably moved): kept only this "
+                       "one; calibrate again on another height")
+        if k:
+            cal["slant_mm_per_mm"] = {"X": round(k[0], 4), "Y": round(k[1], 4)}
+        self.m.config["laser"] = cal
+        self.m.config_path.write_text(json.dumps(self.m.config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        view = mark(best["on"], best["dot"], f"laser {best['level']}: dot {best['dot']['size_mm']:.2f} mm")
+        out = {"ok": True, "calibration": cal, "sweep": sweep, "noise": noise}
+        if k:
+            out["beam_degrees_from_vertical"] = round(math.degrees(math.atan(math.hypot(*k))), 1)
+            out["note"] = ("surfaces measured at Z " + ", ".join(f"{s['z']:.2f}" for s in cal["surfaces"]) +
+                           ": the slant is known, so laser_point puts the dot on a surface at any height and "
+                           "laser_height tells how high the surface under the dot is")
+        else:
+            out["note"] = (f"one surface measured, at Z {surface['z']:.2f}: on a surface at another height the slanted "
+                           "beam lands elsewhere until a second one is calibrated (a breadboard's top, a block), 1 mm "
+                           "or more higher or lower")
+        if warning:
+            out["warning"] = warning
+        return out, view
+
+    def _laser_point(self, args):
+        from lunes.laser import height_from, offset_at, slant
+        cal = self.m.config.get("laser")
+        if not cal or not cal.get("surfaces"):
+            return {"ok": False, "error": "the laser is not calibrated: laser_calibrate first"}, None
+        at = self.m.position()  # its Z, with the surface in focus, is the surface's height until the dot says
+        if args.get("picture_x") is not None and args.get("picture_y") is not None:
+            got, problem = self._last_picture_point(float(args["picture_x"]), float(args["picture_y"]))
+            if problem:
+                return {"ok": False, "error": problem}, None
+            taken, _, ((u, v),) = got
+            vx, vy, _, _ = geometry(self.m.config["microscope"])
+            x, y = (float(w[0]) for w in pixels_to_mm(taken, vx, vy, [u], [v]))
+        elif args.get("mosaic_x") is not None and args.get("mosaic_y") is not None:
+            if self.last_survey is None:
+                return {"ok": False, "error": "survey_board first, then give a point of its mosaic"}, None
+            x, y = mosaic_point_to_mm(self.last_survey, float(args["mosaic_x"]), float(args["mosaic_y"]))
+        elif args.get("x") is not None and args.get("y") is not None and not args.get("here"):
+            x, y = float(args["x"]), float(args["y"])
+        else:
+            x, y = at["X"], at["Y"]
+        dx, dy = offset_at(cal, at["Z"])
+        moved = self._move(x - dx, y - dy, at["Z"])
+        if not moved.get("ok"):
+            return moved, None
+        nearest = min(cal["surfaces"], key=lambda s: abs(s["z"] - at["Z"]))
+        # the microscope sees where the dot really landed (on a part's top, on the bed through a gap: the slanted
+        # beam lands further the higher the surface), so the head moves again by what is left, until it fits
+        seen, corrected = None, 0
+        for _ in range(3):
+            offset = self._laser_offset(nearest["pwm"])
+            seen = offset is not None
+            if not seen or math.hypot(offset[0] - dx, offset[1] - dy) > 6:  # none, or not this laser's dot
+                break
+            if math.hypot(offset[0] - dx, offset[1] - dy) < 0.04:
+                break
+            dx, dy = offset
+            moved = self._move(x - dx, y - dy, at["Z"])
+            if not moved.get("ok"):
+                return moved, None
+            corrected += 1
+        self.m.laser(nearest["pwm"])  # the brightness that made the finest dot on the surface nearest in height
+        out = {"ok": True, "dot_at_mm": {"X": round(x, 2), "Y": round(y, 2)},
+               "head_at_mm": moved["position_mm"], "level": nearest["pwm"],
+               "note": "the dot is on the point, checked with the microscope" + (
+                   f" and moved {corrected} time(s) for the height of what it landed on" if corrected else "") +
+                       "; it goes off by itself in a minute"}
+        known = height_from(cal, (dx, dy)) if slant(cal) is not None else None
+        if seen and known and known[1] <= 0.3:
+            out["surface_z_mm"] = round(known[0], 2)  # the height of what the dot is on, from where it landed
+        if not seen:
+            out["warning"] = "the dot was not seen after the move (over a hole, off a surface, or too shiny): it " \
+                             "points where the calibration says, unchecked"
+            if slant(cal) is None and abs(at["Z"] - nearest["z"]) >= 0.3:
+                out["warning"] += (f"; calibrated only on a surface at Z {nearest['z']:.2f} and the head is at Z "
+                                   f"{at['Z']:.2f}, so the slanted beam may land off")
+        return out, None
 
     def _scope_probe(self, channel, factor):
         """What Erlan set on a probe's switch, kept in config/machine.json for the next session."""
@@ -1556,6 +1817,19 @@ class Hume:
         if name == "diagnose_measure":
             return self._diagnose_measure(str(args.get("net", "")), str(args.get("source", "scope")),
                                           args.get("mean_v"))
+        if name == "laser":
+            if not hasattr(self.m, "laser"):
+                return {"ok": False, "error": "this machine has no laser"}, None
+            level = args.get("level")
+            level = (self.m.config.get("laser") or {}).get("pwm", 30) if level is None else int(level)
+            self.m.laser(max(0, min(255, level)))
+            return {"ok": True, "level": max(0, min(255, level)), "note": "off by itself in a minute"}, None
+        if name == "laser_calibrate":
+            return self._laser_calibrate(bool(args.get("fresh")), args.get("surface"), args.get("height_mm"))
+        if name == "laser_height":
+            return self._laser_height()
+        if name == "laser_point":
+            return self._laser_point(args)
         if name == "scope_test_signal":
             if self.scope is None:
                 return {"ok": False, "error": "the oscilloscope is not connected"}, None
@@ -1780,6 +2054,23 @@ class Hume:
                 seen_image = True
         self.messages = head + tail
 
+    def _verified(self, answer, request, used_tools, turn_start):
+        """The answer checked against the evidence before it is said (lunes.verifier)."""
+        from lunes.verifier import verify
+        if not answer:
+            return answer
+        # evidence is what Erlan said, what the tools returned and the memory; not the rules in the system prompt,
+        # whose own numbers ("the 220 V mains") would vouch for anything
+        evidence = [m["content"] for m in self.messages if isinstance(m.get("content"), str)
+                    and m.get("role") in ("tool", "user")] + [self._memory_text()]
+        recent = [m["content"] for m in self.messages[turn_start:] if m.get("role") == "tool"]
+        said, report = verify(answer, request, evidence, used_tools, spark=self.spark, glimmer=self.model,
+                              recent=recent)
+        self.last_verification = report
+        if said != answer and self.on_think:
+            self.on_think(f"verificador: {'; '.join(report.get('fixed', [])) or 'corrigió la respuesta'}")
+        return said
+
     def handle(self, text, on_tool=None, on_text=None):
         """One request from Erlan; runs tools until there is an answer, and returns the whole answer text.
         Setting self.stop (Erlan said "para") ends it at the next step."""
@@ -1791,6 +2082,7 @@ class Hume:
         self.messages.append({"role": "user", "content": text + (f"\n(Hacia dónde va cada eje, visto desde Erlan: "
                                                                   f"{sides}.)" if sides else "")})
         used_tools, nudged, tiny_moves, said = False, set(), 0, []
+        turn_start = len(self.messages)  # this turn's tool results start here, for the verifier
         speak = (lambda t: (said.append(t), on_text(t))) if on_text else None
         for _ in range(MAX_ROUNDS):
             if self.stop.is_set():
@@ -1810,7 +2102,9 @@ class Hume:
                     self.messages.append({"role": "user", "content": "(Sistema: no anuncies lo que vas a hacer. "
                                           "Llama ahora la herramienta que corresponde y responde con lo que veas.)"})
                     continue
-                return " ".join(said) if on_text else answer
+                if on_text:
+                    return " ".join(said)
+                return self._verified(answer, text, used_tools, turn_start)
             used_tools = True
             for n, call in enumerate(calls):
                 call.setdefault("id", f"call_{len(self.messages)}_{n}")

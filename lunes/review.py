@@ -7,6 +7,7 @@ the simulator then solves nonsense), the supply must not be shorted, a part with
 milliamp, a resistor past a quarter watt, a transistor past its rating, a supply asked for more than a USB port
 gives, a net beyond the supply rails.
 """
+from lunes import mcu
 from lunes.circuit import PINS, _net, nets_of, value
 
 # which pins of a part conduct DC between them (inputs of chips do not)
@@ -38,6 +39,10 @@ def before(circuit):
     link("VCC", "GND")  # the supply
     for p in circuit["parts"]:
         pins, kind = _pins(p), p["kind"]
+        if kind in mcu.BOARDS:  # every pin of a board is driven or loaded to its ground
+            for net in pins.values():
+                link(net, "GND")
+            continue
         if kind in ("R", "L", "D", "LED", "V"):
             a, b = list(pins.values())
             link(a, b)
@@ -80,7 +85,16 @@ def after(circuit, sim):
     """Warnings from what the simulation says the parts go through (sim from lunes.simulator.expected)."""
     warnings = []
     supply = value(circuit.get("supply_v", 5))
+    for p in circuit["parts"]:  # an extra source (a 12 V battery being measured) widens what is normal
+        v = p.get("value")
+        if p["kind"] == "V":
+            top = (value(v) if not isinstance(v, dict) else
+                   sum(abs(value(x)) for x in (v.get("sine") or v.get("square"))[:2]))
+            supply = max(supply, top)
     currents = sim.get("currents", {})
+    for p in circuit["parts"]:
+        if p["kind"] in mcu.BOARDS:
+            warnings += mcu.review(p, sim)
     for p in circuit["parts"]:
         c = currents.get(p["ref"])
         if not c:

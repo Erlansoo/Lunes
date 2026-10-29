@@ -11,10 +11,12 @@ fills it in and the code checks it:
        {"ref": "C1", "kind": "C", "value": "68n", "pins": ["TH", "GND"]},
        {"ref": "D1", "kind": "LED", "color": "red", "pins": {"A": "LED", "K": "GND"}}]}
 
-Nets are names; GND is ground and VCC the supply (supply_v volts, from a bench supply or a battery). Kinds: R, C,
+Nets are names; GND is ground and VCC the supply (supply_v volts, from a bench supply or a battery). A
+microcontroller board (ARDUINO_UNO, ARDUINO_NANO, BLUEPILL) comes with the program of its pins; see lunes.mcu. Kinds: R, C,
 L, D (model 1N4148, 1N4007, 1N5819), LED (color red, yellow, green, blue, white), NPN and PNP (model 2N2222,
 2N3904, 2N3906, BC547, BC557; pins C, B, E), NE555, OPAMP (pins OUT, IN-, IN+, V+, V-), and V for an extra source
-(pins +, -; value "3.3", or a wave: {"sine": [offset, amplitude, hz]} or {"square": [low, high, hz]}).
+(pins +, -; value "3.3", or a wave: {"sine": [offset, amplitude, hz]} or {"square": [low, high, hz]}, with an
+optional fourth number for the duty: a PWM).
 
 with_fault() gives the same circuit with one thing broken, the way parts break on a bench: open, shorted, the
 wrong value (a colour code read wrong: ten times too much or too little), a diode or transistor the wrong way round,
@@ -23,9 +25,11 @@ a dead chip.
 import copy
 import re
 
+from lunes import mcu
+
 UNITS = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "m": 1e-3, "k": 1e3, "K": 1e3, "M": 1e6,
          "G": 1e9, "R": 1.0}
-KINDS = {"R", "C", "L", "D", "LED", "NPN", "PNP", "NE555", "OPAMP", "V"}
+KINDS = {"R", "C", "L", "D", "LED", "NPN", "PNP", "NE555", "OPAMP", "V"} | set(mcu.BOARDS)
 PINS = {"D": ("A", "K"), "LED": ("A", "K"), "NPN": ("C", "B", "E"), "PNP": ("C", "B", "E"),
         "NE555": ("GND", "TRIG", "OUT", "RESET", "CTRL", "THRES", "DISCH", "VCC"),
         "OPAMP": ("OUT", "IN-", "IN+", "V+", "V-"), "V": ("+", "-")}
@@ -77,6 +81,12 @@ def check(circuit):
             problems.append(f"{ref}: kind {kind!r} is not one of {sorted(KINDS)}")
             continue
         pins = p.get("pins")
+        if kind in mcu.BOARDS:
+            if not isinstance(pins, dict) or not pins:
+                problems.append(f"{ref}: pins must map the board's pins to nets, like {{\"D9\": \"OUT\"}}")
+            else:
+                problems += mcu.check(p)
+            continue
         if kind in ("R", "C", "L"):
             if not (isinstance(pins, list) and len(pins) == 2):
                 problems.append(f"{ref}: give its two nets as pins: [net, net]")
@@ -109,6 +119,8 @@ def nets_of(circuit):
         for pin, net in items:
             if isinstance(pins, list):
                 where = p["ref"]
+            elif p["kind"] in mcu.BOARDS:
+                where = f"{p['ref']} pin {pin}"
             elif p["kind"] in PIN_NUMBER:
                 where = f"{p['ref']} pin {PIN_NUMBER[p['kind']][pin]} ({pin})"
             else:
@@ -122,10 +134,12 @@ def _source(text_or_wave):
         off, amp, hz = (value(x) for x in text_or_wave["sine"])
         return f"SIN({off:g} {amp:g} {hz:g})"
     if isinstance(text_or_wave, dict) and "square" in text_or_wave:
-        lo, hi, hz = (value(x) for x in text_or_wave["square"])
+        args = [value(x) for x in text_or_wave["square"]]
+        lo, hi, hz = args[:3]
+        duty = args[3] if len(args) > 3 else 0.5  # a fourth number is the duty cycle: a PWM
         period = 1 / hz
         edge = period / 1000
-        return f"PULSE({lo:g} {hi:g} 0 {edge:g} {edge:g} {period / 2 - edge:g} {period:g})"
+        return f"PULSE({lo:g} {hi:g} 0 {edge:g} {edge:g} {duty * period - edge:g} {period:g})"
     return f"DC {value(text_or_wave):g}"
 
 
@@ -174,6 +188,8 @@ def netlist(circuit):
             lines.append(f"X{ref} {order} OPAMP")
         elif kind == "V":
             lines.append(f"V{ref} {_net(pins['+'])} {_net(pins['-'])} {_source(p.get('value', 0))}")
+        elif kind in mcu.BOARDS:
+            lines += mcu.spice(p, _net)
     # every breadboard row and its wires have a few picofarads to ground; it also keeps a broken oscillator (its
     # timing capacitor gone) from racing at the speed of the simulator's own delays
     for net in sorted({_net(n) for n in nets_of(circuit)} - {"0"}):
@@ -203,6 +219,9 @@ def faults(circuit):
     """[(fault id, what it means in words)] for every typical fault of every part."""
     out = []
     for p in circuit["parts"]:
+        if p["kind"] in mcu.BOARDS:
+            out += mcu.faults(p)
+            continue
         unit = {"R": "ohm", "C": "F", "L": "H"}.get(p["kind"], "")
         for f in FAULTS[p["kind"]]:
             right = value(p["value"]) if "value" in p and p["kind"] in ("R", "C", "L") else None

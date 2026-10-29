@@ -17,7 +17,8 @@ sys.path.insert(0, str(ROOT))
 from lunes.conductor import Conductor  # noqa: E402
 
 SENSES = ("oído: micrófono AB13X funcionando, te oye bien. posición: el Kinect todavía no está calibrado para confirmarla. microscopio: conectado, imagen nítida (nitidez 2100), mira la "
-          "placa que está en la CNC. Kinect: conectado, ve el banco desde arriba. CNC: conectada y quieta en X -27, Y 17, "
+          "placa que está en la CNC. cámara del banco (una Sony): conectada y apuntando a toda el área de trabajo. Kinect: "
+          "conectado, ve el banco desde arriba. CNC: conectada y quieta en X -27, Y 17, "
           "Z 7 mm. Muse Spark: disponible por internet.")
 BENCH = ("la placa de la CNC todavía no se midió en esta sesión; lo que ve el microscopio no coincide con el último "
          "mosaico, así que puede ser otra placa")

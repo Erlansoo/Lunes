@@ -30,8 +30,9 @@ Lo medido en el banco el 28 de octubre (RTX 3090, internet de casa en Cochabamba
 | Voz MMS, una frase corta | 0.45 s (1.1 s para 3.6 s de audio) |
 | Muse Voice Transcribe por lotes, una frase de 4.4 s | 1.9 a 2.1 s después de terminar la frase |
 | Omnilingual ASR 1B int8 en el equipo (CPU, 8 hilos) | 0.4 a 0.7 s para "Lunes, para"; 1.2 a 2.4 s para frases de 4 a 7 s; el que mejor oye nombres y números ("pin 4 del tp405 6") |
-| El mismo modelo int8 en la GPU (CUDA) | más lento, 4.4 s para 7 s: sus capas int8 se quedan en la CPU |
-| Omnilingual ASR 300M de precisión completa en la GPU | 0.03 a 0.3 s para cualquier frase; usa 2.3 GB de la GPU (con Glimmer quedan 21.2 de 24 GB); se equivoca más en nombres ("lúnese", "tp celo 56") |
+| El mismo con 4 hilos, como corre ahora junto al rápido (29 de octubre) | 0.4 s para "Lunes, para"; 1.1 s para 3 s de audio y 2.5 s para 6 s |
+| Omnilingual ASR 300M de precisión completa en la CPU (29 de octubre, 4 hilos) | 0.2 s para "Lunes, para"; 0.5 s para 3 s de audio y 1.1 s para 6 s; 0.8 s si el preciso está ocupado al mismo tiempo; se equivoca más en nombres ("lúnese", "tp celo 56") |
+| Los dos oídos en la GPU (CUDA), probado el 28 | el 300M bajaba a 0.03 a 0.3 s, pero necesita las librerías CUDA de NVIDIA, que son cerradas: se dejó, y los dos oídos van en la CPU |
 | Glimmer cuando dos llamadas piden distinto tamaño de contexto | Ollama lo recarga: 22 a 24 s cada vez; por eso conductor y trabajador usan el mismo (8192) |
 | Muse Spark, charla corta | 2.4 s |
 | Muse Spark, identificar o diagnosticar buscando en internet | 14 a 16 s |
@@ -82,9 +83,10 @@ que el trabajador publica.
 - "Lunes" abre la conversación. Queda abierta mientras hablan, mientras hay un trabajo en curso y hasta 90 s después
   del último intercambio; dentro de ella todo lo que dice Erlan va al conductor, que juzga qué es para Lunes. Lo que se
   oye encima de la voz de Lunes solo cuenta si es "para" o si lo nombran: casi siempre es su propio eco.
-- Son dos oídos con el mismo modelo en dos tamaños. El rápido (300M, en la GPU) oye todo y decide al instante: si
-  es "para", si lo llamaron y qué contestar. El preciso (1B, en la CPU) vuelve a oír lo que fue para Lunes y le pasa
-  al trabajador las palabras exactas del pedido, donde importan los números de parte.
+- Son dos oídos con el mismo modelo en dos tamaños. El rápido (300M) oye todo y decide al instante: si
+  es "para", si lo llamaron y qué contestar. El preciso (1B) vuelve a oír lo que fue para Lunes y le pasa
+  al trabajador las palabras exactas del pedido, donde importan los números de parte. Los dos corren en la CPU del
+  equipo, con 4 hilos cada uno, así el oído no depende de librerías cerradas.
 - Muse Voice Transcribe en tiempo real, en el modo que marca el principio y el fin de cada frase, queda como segundo
   oído para cuando el local no alcance (mucho ruido, nombres del banco).
 - La propia voz de Lunes se descarta: Lunes sabe qué dijo y en qué momento, y quita esas palabras de lo que oye.
@@ -174,7 +176,7 @@ en el código; el conductor solo pone las palabras.
 | Conductor: entender, conversar, decidir qué hacer, contar el avance | Muse Spark 1.3, esfuerzo mínimo; Muse Glimmer sin internet | API; equipo (RTX 3090) | menos de medio centavo por turno |
 | Trabajador: el agente con herramientas | Muse Spark 1.3, con búsqueda web para identificar y diagnosticar | API (Responses) | US$1.25 / 4.25 por millón de tokens (entrada / salida), más US$2.50 por 1000 búsquedas |
 | Trabajador sin internet y modo privado | Muse Glimmer | equipo | gratis |
-| Oír todo y decidir al instante | Omnilingual ASR 300M (pesos abiertos de Meta) | equipo (GPU) | gratis |
+| Oír todo y decidir al instante | Omnilingual ASR 300M (pesos abiertos de Meta) | equipo (CPU) | gratis |
 | Las palabras exactas de un pedido | Omnilingual ASR 1B (pesos abiertos de Meta) | equipo (CPU) | gratis |
 | Segundo oído, para ruido y nombres | Muse Voice Transcribe en tiempo real | API | US$0.18 por hora de audio |
 | Separar voces cuando hay más gente en el cuarto | Muse Voice Transcribe, modo diarización | API | igual |
@@ -247,7 +249,7 @@ del registro:
 1. Medir el conductor, la voz y los oídos (hecho, sección 1).
 2. Solo modelos de Meta (hecho): el oído detecta la voz por energía y descarta la propia voz de Lunes por sus
    palabras.
-3. Oído continuo con los dos oídos locales de Meta (hecho: el rápido en la GPU, el preciso en la CPU). Falta probarlo
+3. Oído continuo con los dos oídos locales de Meta (hecho: los dos en la CPU). Falta probarlo
    con la voz real de Erlan (las pruebas fueron con la voz de Lunes, que sale distinta en cada frase) y Voice
    Transcribe en tiempo real como tercer oído para mucho ruido.
 4. Conductor con criterio, sus sentidos reales, la conversación abierta y las frases de prueba (hecho:

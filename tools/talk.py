@@ -18,6 +18,7 @@ import collections
 from concurrent.futures import ThreadPoolExecutor
 import difflib
 import json
+import os
 import queue
 import re
 import sys
@@ -33,9 +34,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 from lunes.conductor import Conductor  # noqa: E402
+from lunes.cameras import cameras, find_camera  # noqa: E402
 from lunes.dashboard import Dashboard  # noqa: E402
 from lunes.hume import MODEL, THINK, Hume  # noqa: E402
-from lunes.kinect import Kinect, start_bridge  # noqa: E402
+from lunes.kinect import Kinect  # noqa: E402
 from lunes.machine import Machine  # noqa: E402
 from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, local_transcriber  # noqa: E402
 from microscope import Camera, sharpness  # noqa: E402
@@ -65,6 +67,13 @@ QUIET = re.compile(r"\b(no (hace falta que )?me (cuentes|avises|vayas contando)|
                    r"termines)|solo (al final|el resultado))\b", re.IGNORECASE)
 TALKATIVE = re.compile(r"\b(cu[eé]ntame c[oó]mo vas|ve(te)? cont[aá]ndome|av[ií]same c[oó]mo va)\b", re.IGNORECASE)
 REACTION_AFTER_S = 0.9  # said only if the conductor has not answered by then
+# The cameras by name, since their numbers change when one is plugged in: the MS5 microscope's USB id (its name,
+# "USB CAMERA", is too common) and the Sony ZV-E10 II that sees the whole work area.
+MICROSCOPE, BENCH_CAMERA = "vid_1224&pid_2825", "ZV-E10M2"
+# Creating this file closes Lunes from outside, to restart it: "Lunes, adiós" needs a working ear, Ctrl+C cannot
+# reach a main thread waiting for the ear on Windows, and killing the process while it holds the CNC's port left the
+# port jammed for minutes.
+CLOSE_FILE = ROOT / "runs" / "cerrar_lunes"
 # When Erlan leaves a sentence half-way, what he says within HALF_WAIT_S joins it; after NUDGE_AFTER_S of silence
 # Lunes says "¿Sí? Te escucho" once.
 HALF_WAIT_S, NUDGE_AFTER_S = 8.0, 3.0
@@ -75,6 +84,9 @@ CONVERSATION_S = 90
 # What each tool means to Erlan, said when it starts (if the narrator finds the moment) and kept as the current step
 STEPS = {"measure_board": "mido la placa", "survey_board": "recorro la placa con el microscopio",
          "inspect_component": "me acerco al componente", "look_kinect": "miro con el Kinect",
+         "look_bench": "miro el banco con la cámara", "find_in_bench": "busco en la foto del banco",
+         "center_on_point": "centro el microscopio", "center_on_corner": "busco la esquina exacta de la placa",
+         "measure_hole": "mido el agujero", "measure_distance": "mido la distancia",
          "kinect_distance": "mido con el Kinect", "autofocus": "enfoco el microscopio",
          "look_microscope": "miro por el microscopio", "look_survey": "reviso el mosaico",
          "go_to_mosaic_point": "voy a un punto del mosaico", "move_to": "muevo la máquina", "move_by": "muevo la máquina",
@@ -257,7 +269,7 @@ class Worker:
             self.narrator_ref().update(f"Ahora {STEPS[name]}.", lambda: self.hume.status == name)
 
     def _result(self, name, result):
-        if name not in ("where", "look_microscope", "look_kinect", "kinect_distance", "look_survey"):
+        if name not in ("where", "look_microscope", "look_bench", "look_kinect", "kinect_distance", "look_survey"):
             got = json.dumps(result, ensure_ascii=False, default=float)[:160] if isinstance(result, dict) else ""
             self.actions.append(f"{name} {json.dumps(self._args, ensure_ascii=False)} -> {got}")
         text = milestone(name, result)
@@ -338,7 +350,10 @@ def wait_for_microphone(voice, error, ear):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("port", nargs="?", default="COM8")
-    ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--camera", default=MICROSCOPE,
+                    help="the microscope: its number, or part of its name or USB id (the MS5 is vid_1224&pid_2825)")
+    ap.add_argument("--banco", default=BENCH_CAMERA,
+                    help="the camera that sees the whole work area, by name or number ('no' to go without it)")
     ap.add_argument("--text", action="store_true", help="type instead of talking")
     ap.add_argument("--no-wake", action="store_true", help="answer everything, not only sentences with 'Lunes'")
     ap.add_argument("--model", default=MODEL, help="Ollama model for the conductor and the local worker")
@@ -353,10 +368,28 @@ def main():
     args = ap.parse_args()
 
     global board
-    print("conectando la CNC, el microscopio y el Kinect...")
-    machine, cam = Machine(args.port), Camera(args.camera)
+    print("conectando la CNC, el microscopio, la cámara del banco y el Kinect...")
+    index = find_camera(args.camera)
+    if index is None:
+        sys.exit(f"no encuentro el microscopio ({args.camera}); las cámaras conectadas son: {cameras()}")
+    machine, cam = Machine(args.port), Camera(index)
     print(f"posición en el banco: { {k: round(v, 2) for k, v in machine.position().items()} }")
-    kinect = Kinect() if start_bridge() else None
+    bench = None
+    index = None if args.banco.lower() == "no" else find_camera(args.banco)
+    if index is not None:
+        try:
+            bench = Camera(index, size=(1920, 1080))  # what the Sony sends depends on its USB Streaming setting
+            h, w = bench.frame().shape[:2]
+            print(f"cámara del banco: {args.banco}, {w}x{h}")
+        except RuntimeError as e:
+            print(f"(la cámara del banco {args.banco} no da imagen: {e}; sigo sin ella)")
+    elif args.banco.lower() != "no":
+        print(f"(la cámara del banco {args.banco} no está; si es la Sony, ponla en USB Streaming)")
+    try:
+        kinect = Kinect()
+    except RuntimeError as e:
+        kinect = None
+        print(f"(sin Kinect: {e})")
     think = False if args.think.lower() in ("false", "no", "0") else args.think
     brain = ("Muse Spark por la API de Meta (Muse Glimmer en esta PC si no hay internet)" if args.spark
              else "Muse Glimmer en esta PC")
@@ -365,7 +398,7 @@ def main():
              f"observaste.")
     hume = Hume(machine, cam, kinect, show=show, model=args.model, think=think,
                 on_think=lambda t: log("think", "   (pensó) " + " ".join(t.split())[:300]), spark=args.spark,
-                about=about)
+                about=about, bench=bench)
     print("trabajador y conductor: " + ("Muse Spark por la API de Meta (si falla, Muse Glimmer local)"
                                         if hume.brain == "spark"
                                         else f"Muse Glimmer local ({args.model}); a Muse Spark no se le manda nada"))
@@ -377,14 +410,15 @@ def main():
     warming.start()
     voice = Voice()
     voice.prepare(*REACTIONS, "Listo, me detengo.")
-    board = Dashboard(camera=cam, kinect_factory=Kinect if kinect else None, speaking=lambda: voice.speaking)
+    board = Dashboard(camera=cam, kinect=kinect, speaking=lambda: voice.speaking,
+                      bench=bench)
     hume.on_image = lambda image, what: board.set_seen(image, what)
     print(f"página en vivo: {board.url}")
     ear = None
     if not args.text:
         print("cargando los oídos (Omnilingual ASR de Meta, en esta PC)...")
-        fast = local_transcriber(FAST_EAR, provider="cuda", threads=2)  # every utterance
-        precise = local_transcriber()  # the 1B model, for the words of a job
+        fast = local_transcriber(FAST_EAR, threads=4)  # every utterance
+        precise = local_transcriber(threads=4)  # the 1B model, for the words of a job; both fit the 8 CPU threads
         precise_pool = ThreadPoolExecutor(1)
         while True:  # a microphone unplugged at start is waited for, not a crash
             try:
@@ -450,9 +484,18 @@ def main():
                          (f" (enfocado sobre una placa da unos {best:.0f})" if best else ""))
         except Exception:
             parts.append("microscopio: no da imagen")
-        # what the Kinect points at, not what it sees now: with "ve la CNC" in here it said "sí, la veo" without looking
-        parts.append("Kinect: conectado y apuntando a la CNC de frente y desde arriba (lo que hay ahora, solo mirando)"
-                     if kinect else "Kinect: no conectado")
+        # what the cameras point at, not what they see now: with "ve la CNC" in here it said "sí, la veo" without
+        # looking
+        if bench:
+            _, problem = hume.bench_picture()
+            parts.append("cámara del banco (una Sony): conectada pero da la imagen en negro (¿tapa del lente puesta, o "
+                         "se apagó?)" if problem else
+                         "cámara del banco (una Sony): conectada y apuntando a toda el área de trabajo, con mejor "
+                         "imagen que el Kinect (lo que hay ahora, solo mirando)")
+        else:
+            parts.append("cámara del banco: no conectada")
+        parts.append("Kinect: conectado y apuntando a la CNC de frente y desde arriba; sirve para la profundidad y "
+                     "para confirmar la posición" if kinect else "Kinect: no conectado")
         check = hume.last_kinect_check
         if kinect and not machine.config.get("kinect_head"):
             parts.append("posición: el Kinect todavía no está calibrado para confirmarla (calibrate_kinect)")
@@ -486,6 +529,29 @@ def main():
             stop_requested.clear()
 
     threading.Thread(target=watch_keys, daemon=True).start()
+
+    def close_all():
+        """Leaves the CNC's port, the cameras and the Kinect closed, so the next Lunes finds them free."""
+        if worker.running:
+            interrupt()
+            worker.thread.join(timeout=10)
+        machine.close()
+        cam.cap.release()
+        if bench:
+            bench.release()
+        if kinect:
+            kinect.close()
+
+    def watch_close_file():
+        while not CLOSE_FILE.exists():
+            time.sleep(0.5)
+        CLOSE_FILE.unlink(missing_ok=True)
+        log("info", "(me piden cerrar desde afuera: cierro la CNC y las cámaras)")
+        close_all()
+        os._exit(0)  # the main thread may be stuck waiting for the ear
+
+    CLOSE_FILE.unlink(missing_ok=True)  # one left from before is not for this Lunes
+    threading.Thread(target=watch_close_file, daemon=True).start()
 
     heard_q = queue.Queue()
 
@@ -626,13 +692,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        if worker.running:
-            interrupt()
-            worker.thread.join(timeout=10)
-        machine.close()
-        cam.cap.release()
-        if kinect:
-            kinect.close()
+        close_all()
         cv2.destroyAllWindows()
 
 

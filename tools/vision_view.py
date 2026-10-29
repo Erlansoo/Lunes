@@ -1,14 +1,12 @@
 """One live window with everything Lunes sees: Kinect colour, Kinect depth and the microscope.
 
-It only looks, it never moves the machine, so it can run next to the jog window. Starts the Kinect bridge if
-needed. Keys: s saves the three images to captures/, q or Esc quits.
+It only looks, it never moves the machine, so it can run next to the jog window. Keys: s saves the three images to
+captures/, q or Esc quits.
 
     python tools/vision_view.py --camera 0
 """
 import argparse
-import subprocess
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +16,6 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
-from kinect_view import BRIDGE, bridge_running  # noqa: E402
 from lunes.kinect import Kinect, depth_colormap  # noqa: E402
 from microscope import Camera, sharpness  # noqa: E402
 
@@ -35,14 +32,6 @@ def main():
     ap.add_argument("--camera", type=int, default=0, help="microscope camera index")
     args = ap.parse_args()
 
-    proc = None
-    if not bridge_running():
-        proc = subprocess.Popen([str(BRIDGE)])
-        for _ in range(50):
-            if bridge_running():
-                break
-            time.sleep(0.2)
-        time.sleep(1.5)
     kinect = Kinect()
     micro = Camera(args.camera)
     win = "Lunes - lo que veo"
@@ -77,8 +66,6 @@ def main():
         kinect.close()
         micro.cap.release()
         cv2.destroyAllWindows()
-        if proc:
-            proc.terminate()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """A page on this PC that shows what Lunes sees, hears, says and does, live: http://127.0.0.1:8765
 
-The microscope live, the Kinect, the last picture the brain looked at (a mosaic or a close-up), the conversation
+The microscope live, the bench camera, the Kinect, the last picture the brain looked at (a mosaic or a close-up), the conversation
 with the tools Lunes used, what it is doing now, whether it is talking, and how long each part of an answer took.
 Nothing leaves the PC; the page only listens on 127.0.0.1.
 """
@@ -32,7 +32,8 @@ main { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:16
 @media (max-width: 860px) { main { grid-template-columns:1fr; } }
 .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; }
 .panel h2 { font-size:14px; margin:0 0 8px; color:var(--muted); font-weight:600; }
-.views { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.views { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+@media (max-width: 560px) { .views { grid-template-columns:1fr 1fr; } }
 .views .wide { grid-column:1 / -1; }
 img { width:100%; border-radius:6px; background:#000; display:block; }
 #status { font-weight:600; }
@@ -51,6 +52,7 @@ img { width:100%; border-radius:6px; background:#000; display:block; }
 <main>
 <section class="panel"><div class="views">
   <div><h2>Microscopio</h2><img id="mic" alt="microscopio"></div>
+  <div><h2>Banco</h2><img id="ben" alt="cámara del banco"></div>
   <div><h2>Kinect</h2><img id="kin" alt="Kinect"></div>
   <div class="wide"><h2 id="seenh">Lo último que analizó la IA</h2><img id="seen" alt="última imagen analizada"></div>
 </div></section>
@@ -93,7 +95,8 @@ function refresh(id, path, ms) {
   img.onload = img.onerror = () => setTimeout(tick, ms);
   tick();
 }
-poll(); refresh("mic", "/img/microscope.jpg", 250); refresh("kin", "/img/kinect.jpg", 1500);
+poll(); refresh("mic", "/img/microscope.jpg", 250); refresh("ben", "/img/bench.jpg", 500);
+refresh("kin", "/img/kinect.jpg", 1500);
 </script></body></html>"""
 
 
@@ -107,15 +110,15 @@ def _jpeg(image, max_side=960, quality=80):
 
 
 class Dashboard:
-    def __init__(self, camera=None, kinect_factory=None, speaking=lambda: False, port=PORT):
-        """camera: the microscope (its frame() is safe from any thread); kinect_factory: makes a Kinect client of
-        the page's own; speaking: tells whether Lunes is talking now."""
-        self.camera, self.kinect_factory, self.speaking = camera, kinect_factory, speaking
+    def __init__(self, camera=None, kinect=None, speaking=lambda: False, port=PORT, bench=None):
+        """camera: the microscope and bench: the bench camera; kinect: the Kinect Hume uses too (all their frames are
+        safe from any thread); speaking: tells whether Lunes is talking now."""
+        self.camera, self.bench, self.kinect, self.speaking = camera, bench, kinect, speaking
         self.events = deque(maxlen=500)
         self.count = 0
         self.status, self.busy = "", False
         self.seen, self.seen_label, self.seen_version = None, "", 0
-        self._kinect, self._kinect_jpg, self._kinect_at = None, b"", 0.0
+        self._kinect_jpg, self._kinect_at = b"", 0.0
         self._lock = threading.Lock()
         handler = self._handler()
         self.server = ThreadingHTTPServer(("127.0.0.1", port), handler)
@@ -135,16 +138,14 @@ class Dashboard:
 
     # what the page asks for ------------------------------------------------------------------------------------
     def _kinect_frame(self):
-        if self.kinect_factory is None:
+        if self.kinect is None:
             return b""
         if time.time() - self._kinect_at < 1.0:
             return self._kinect_jpg
         try:
-            if self._kinect is None:
-                self._kinect = self.kinect_factory()
-            self._kinect_jpg = _jpeg(self._kinect.color(), 640, 75)
-        except Exception:
-            self._kinect = None
+            self._kinect_jpg = _jpeg(self.kinect.color(), 640, 75)
+        except RuntimeError:  # unplugged: the tile keeps its last picture
+            pass
         self._kinect_at = time.time()
         return self._kinect_jpg
 
@@ -174,11 +175,12 @@ class Dashboard:
                                 "speaking": bool(board.speaking()), "seen_version": board.seen_version,
                                 "seen_label": board.seen_label}
                     return self._send(json.dumps(body, ensure_ascii=False).encode(), "application/json")
-                if path == "/img/microscope.jpg" and board.camera is not None:
-                    try:
-                        return self._send(_jpeg(board.camera.frame(), 640, 75), "image/jpeg")
-                    except Exception:
-                        pass
+                for name, camera in (("/img/microscope.jpg", board.camera), ("/img/bench.jpg", board.bench)):
+                    if path == name and camera is not None:
+                        try:
+                            return self._send(_jpeg(camera.frame(), 640, 75), "image/jpeg")
+                        except Exception:
+                            pass
                 if path == "/img/kinect.jpg":
                     jpg = board._kinect_frame()
                     if jpg:

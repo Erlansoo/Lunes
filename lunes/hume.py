@@ -3,7 +3,8 @@
 Lunes' brain is Muse Spark through Meta's API when Erlan allows the bench pictures to go out, and Muse Glimmer
 (Meta's open weights) on the bench PC through Ollama otherwise: for private boards, without internet, or when the
 day's Spark budget is spent (then Glimmer takes the turn over). Lunes plans with tools that move the CNC and look
-through the microscope and the Kinect, and answers in short spoken Spanish.
+through the microscope, the bench camera (the whole work area) and the Kinect (depth), and answers in short spoken
+Spanish.
 
 Its memory is called Hume, after David Hume: Lunes only believes what it observed. Every fact it remembers keeps the
 observation behind it, and it says so when it is only guessing.
@@ -32,8 +33,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 from microscope import autofocus, calibrate, sharpness  # noqa: E402
-from survey import (Interrupted, closeup_for_reading, component_box, find_perimeter, grid_for, hop,  # noqa: E402
-                    locate_in_mosaic, mosaic_point_to_mm, pixels_to_mm, survey)
+from survey import (Interrupted, board_corner_in_picture, closeup_for_reading, component_box,  # noqa: E402
+                    distance_in_picture, find_perimeter, geometry, grid_for, hole_in_picture, hop, locate_in_mosaic,
+                    mosaic_point_to_mm, pixels_to_mm, survey)
 
 OLLAMA = "http://127.0.0.1:11434/api/chat"
 MODEL = "muse-glimmer:30b"
@@ -80,12 +82,15 @@ SPARK_READ = ("This picture shows one electronic component through a microscope,
 SYSTEM = """Eres Lunes, el asistente del banco de electrónica de Erlan, un ingeniero electrónico. Te llamas Lunes
 como el asistente de Iron Man se llama Viernes. Tu memoria se llama Hume, por el filósofo David Hume: solo crees lo que
 observaste, y cada cosa que recuerdas guarda la evidencia que la respalda.
-Tienes una CNC con un microscopio montado en el eje Z y un Kinect que mira la máquina. El microscopio ve unos
-12 x 15 mm, así que moverte menos de 5 mm casi no cambia lo que ves. Coordenadas en milímetros sobre el origen del
-banco; Z positivo sube.
-El Kinect te da color y profundidad: la distancia en milímetros desde el Kinect hasta cada punto, con unos
-milímetros de error a un metro (kinect_distance). No está calibrado a las coordenadas del banco: no des posiciones
-del banco ni tamaños de la placa a partir de él; para eso están el microscopio y measure_board.
+Tienes una CNC con un microscopio montado en el eje Z, una cámara del banco y un Kinect que miran la máquina. El
+microscopio ve unos 12 x 15 mm, así que moverte menos de 5 mm casi no cambia lo que ves. Coordenadas en milímetros
+sobre el origen del banco; Z positivo sube.
+La cámara del banco (una Sony) ve toda el área de trabajo, con mucho mejor imagen que el color del Kinect: úsala para
+ver qué hay en el banco, dónde está la placa, los cables y las herramientas (look_bench, find_in_bench).
+El Kinect te da la profundidad: la distancia en milímetros desde el Kinect hasta cada punto, con unos milímetros de
+error a un metro (kinect_distance), y comprueba dónde está el cabezal (check_position).
+Ni la cámara del banco ni el Kinect están calibrados a las coordenadas del banco: no des posiciones del banco ni
+tamaños de la placa a partir de ellos; para eso están el microscopio y measure_board.
 
 Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, no pasitos.
 - Para ver o fotografiar una placa entera: measure_board encuentra su perímetro desde donde estás (si no ve placa
@@ -103,8 +108,12 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   placa se movió o se dio vuelta, y entonces mídela de nuevo con measure_board y new_board=true.
 - Solo actúas cuando Erlan te lo pide. Un saludo, una pregunta sobre ti o una charla se responden hablando, sin
   usar herramientas ni mover la máquina.
-- Si measure_board no encuentra la placa, mira con look_kinect o pregúntale a Erlan dónde está. Si Erlan te dice
+- Si measure_board no encuentra la placa, mira con look_bench o pregúntale a Erlan dónde está. Si Erlan te dice
   dónde está o cuánto mide, úsalo: survey_board con width_mm y height_mm.
+- Para apuntar el microscopio a algo que ves en su foto: center_on_point con la posición de eso en la foto; a una
+  esquina de la placa: center_on_corner. Nunca calcules milímetros a ojo con move_by: la geometría la hace el código.
+- Para medir en la foto del microscopio: measure_hole para un agujero (y su anillo de cobre), measure_distance entre
+  dos puntos. No des medidas a ojo; si no puedes medir con una herramienta, di que no lo sabes.
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
@@ -114,7 +123,7 @@ Reglas:
 - Responde en español, corto y natural, para decirlo en voz alta: una a tres frases, sin listas, sin markdown.
 - Antes de afirmar algo sobre la placa o el banco, míralo con una herramienta.
 - Nunca anuncies una acción ("voy a mirar", "en un momento"): hazla llamando la herramienta en ese mismo turno.
-- Lo que puedes hacer es lo que hacen tus herramientas: mirar por el microscopio y el Kinect, mover la CNC y recordar. No puedes recibir videos, archivos ni fotos del teléfono, ni entrar a internet: si te ofrecen algo así, dilo.
+- Lo que puedes hacer es lo que hacen tus herramientas: mirar por el microscopio, la cámara del banco y el Kinect, mover la CNC y recordar. No puedes recibir videos, archivos ni fotos del teléfono, ni entrar a internet: si te ofrecen algo así, dilo.
 - Solo crees lo que observaste. Distingue "vi" de "supongo", y di cuando la imagen no alcanza para saberlo. Al leer
   una marca, di qué caracteres no se ven claros en vez de inventarlos.
 - Sabes mucha electrónica (cómo funciona un integrado conocido, sus valores típicos, cómo se mide): úsalo, pero dilo como conocimiento general ("en general el TP4056..."), nunca como algo que viste ni como una hoja de datos que leíste; y si la placa podría ser distinta, dilo.
@@ -131,8 +140,8 @@ Reglas:
 - Lo que Erlan dice te llega transcrito de su voz y a veces sale mal oído. Si parece dirigido a ti pero no tiene
   sentido, le falta algo, o viene marcado como transcripción dudosa, no adivines: pide en una frase que lo repita
   ("¿Puedes repetir, por favor?"), o di lo que entendiste y pregunta si es eso.
-- Tu trabajo es la electrónica del banco. No describas a las personas que veas con el Kinect (qué hacen, qué comen,
-  cómo son) salvo que Erlan te lo pida, y usa el Kinect para mirar la máquina, no la habitación.
+- Tu trabajo es la electrónica del banco. No describas a las personas que veas con la cámara del banco o el Kinect
+  (qué hacen, qué comen, cómo son) salvo que Erlan te lo pida, y úsalos para mirar la máquina, no la habitación.
 - Si Erlan pide algo peligroso o fuera del área permitida, dilo y no lo hagas.
 - Guarda con remember los hechos importantes que descubras, con la evidencia que los respalda.
 """
@@ -152,25 +161,33 @@ TOOLS = [
                        "at the mosaic yourself. Stepper drivers are usually under heat sinks.",
         "parameters": {"type": "object", "properties": {"concept": {"type": "string"}}, "required": ["concept"]}}},
     {"type": "function", "function": {
+        "name": "find_in_bench",
+        "description": "Find every instance of one thing in a fresh picture of the bench camera with SAM 3.1: where it "
+                       "is in the picture (x, y from 0 to 1) and how sure. For what is on the bench: 'circuit board', "
+                       "'cable', 'screwdriver', 'multimeter'. It gives no machine millimetres.",
+        "parameters": {"type": "object", "properties": {"concept": {"type": "string"}}, "required": ["concept"]}}},
+    {"type": "function", "function": {
         "name": "find_in_kinect",
         "description": "Find every instance of one thing in a fresh Kinect picture with SAM 3.1: where it is in the "
-                       "picture and how sure. 'circuit board' finds the board on the bed well (is there a board, and "
-                       "is it under the microscope?); 'cable' works; 'microscope', 'stepper motor' and 'hand' did not. "
-                       "It gives no machine millimetres: the Kinect's calibration only covers the head's height, and "
-                       "for the bed it was 40-50 mm off. On microscope pictures SAM finds almost nothing.",
+                       "picture and how sure, and whether the microscope's ring is inside it. 'circuit board' finds "
+                       "the board on the bed well (is it under the microscope?); 'cable' works; 'microscope', 'stepper "
+                       "motor' and 'hand' did not. Its picture is poorer than the bench camera's. It gives no machine "
+                       "millimetres: the Kinect's calibration only covers the head's height, and for the bed it was "
+                       "40-50 mm off. On microscope pictures SAM finds almost nothing.",
         "parameters": {"type": "object", "properties": {"concept": {"type": "string"}}, "required": ["concept"]}}},
     {"type": "function", "function": {
         "name": "record_video",
-        "description": "Record a video from the microscope or the Kinect into an MP4 for Erlan (and for "
-                       "track_in_video), up to 60 s. The machine does not move unless you move it meanwhile.",
+        "description": "Record a video from the microscope, the bench camera or the Kinect into an MP4 for Erlan (and "
+                       "for track_in_video), up to 60 s. The machine does not move unless you move it meanwhile.",
         "parameters": {"type": "object", "properties": {
-            "seconds": {"type": "number"}, "source": {"type": "string", "enum": ["microscopio", "kinect"]}},
+            "seconds": {"type": "number"},
+            "source": {"type": "string", "enum": ["microscopio", "banco", "kinect"]}},
             "required": ["seconds", "source"]}}},
     {"type": "function", "function": {
         "name": "track_in_video",
         "description": "Follow one thing through the last recorded video with SAM 3.1 and write a copy with the boxes "
-                       "drawn. Works on Kinect videos ('circuit board', 'cable'); on microscope videos SAM finds "
-                       "almost nothing.",
+                       "drawn. Works on bench camera and Kinect videos ('circuit board', 'cable'); on microscope "
+                       "videos SAM finds almost nothing.",
         "parameters": {"type": "object", "properties": {"concept": {"type": "string"}}, "required": ["concept"]}}},
     {"type": "function", "function": {
         "name": "search_web",
@@ -217,7 +234,50 @@ TOOLS = [
         "name": "look_microscope", "description": "Take a picture through the microscope at the current position.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
-        "name": "look_kinect", "description": "Take a picture of the whole machine and bench with the Kinect.",
+        "name": "center_on_point",
+        "description": "Move the microscope so that a point of its last picture (from look_microscope or a center_on_ "
+                       "tool) comes to the middle of the view. Give the point as fractions of that picture: x from "
+                       "the left edge, y from the top edge (0 to 1). The code turns pixels into mm with the "
+                       "microscope's calibration; never estimate mm by eye with move_by. Returns the new picture with "
+                       "a cross in the middle.",
+        "parameters": {"type": "object", "properties": {
+            "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}}},
+    {"type": "function", "function": {
+        "name": "center_on_corner",
+        "description": "Put one corner of the board exactly in the middle of the microscope's view: the code finds the "
+                       "board's two edges in the picture, moves until they cross under the cross, and checks it with "
+                       "a last picture. Give the corner by its sides along the machine axes: x_side and y_side, '+' "
+                       "or '-' ('+' is the board's largest X or Y). Left out, it takes the measured board's corner "
+                       "nearest to the microscope. Needs a measured board, or the corner already in view.",
+        "parameters": {"type": "object", "properties": {
+            "x_side": {"type": "string", "enum": ["+", "-"]}, "y_side": {"type": "string", "enum": ["+", "-"]}}}}},
+    {"type": "function", "function": {
+        "name": "measure_hole",
+        "description": "Measure a round hole (a mounting hole, a via, a through-hole pad) in the last microscope "
+                       "picture: give a point inside it as fractions of that picture (x from the left, y from the "
+                       "top, 0 to 1). The code finds its edge all around and fits a circle in mm with the "
+                       "calibration: the hole's diameter and its copper ring's outer diameter. Returns the picture "
+                       "with the edges drawn, to check they sit where they should.",
+        "parameters": {"type": "object", "properties": {
+            "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}}},
+    {"type": "function", "function": {
+        "name": "measure_distance",
+        "description": "Distance in mm between two points of the last microscope picture, given as fractions of it "
+                       "(x from the left, y from the top, 0 to 1), with the calibration: a pin pitch, a part's "
+                       "length, a gap. Points you place by eye are only as exact as where you put them.",
+        "parameters": {"type": "object", "properties": {
+            "x1": {"type": "number"}, "y1": {"type": "number"}, "x2": {"type": "number"}, "y2": {"type": "number"}},
+            "required": ["x1", "y1", "x2", "y2"]}}},
+    {"type": "function", "function": {
+        "name": "look_bench",
+        "description": "Take a picture of the whole work area with the bench camera: wider than the microscope and "
+                       "much sharper than the Kinect. For what is on the bench and where the board is; not for "
+                       "reading markings (that is inspect_component).",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "look_kinect", "description": "Take a picture of the whole machine and bench with the Kinect, colour "
+                                              "and depth side by side. For distances; to see the bench, look_bench is "
+                                              "sharper.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "kinect_distance",
@@ -342,13 +402,27 @@ def _mm(d):
     return {k: round(float(v), 3) for k, v in d.items()}
 
 
+def with_cross(frame, mark=None):
+    """A microscope picture with a thin cross at its middle (where the microscope points) and, if given, a ring on
+    another pixel (what was found)."""
+    view = frame.copy()
+    h, w = view.shape[:2]
+    for ink, width in (((0, 0, 0), 3), ((0, 255, 255), 1)):
+        cv2.line(view, (w // 2 - 25, h // 2), (w // 2 + 25, h // 2), ink, width)
+        cv2.line(view, (w // 2, h // 2 - 25), (w // 2, h // 2 + 25), ink, width)
+    if mark is not None:
+        cv2.circle(view, (int(round(mark[0])), int(round(mark[1]))), 9, (255, 0, 255), 2)
+    return view
+
+
 class Hume:
     def __init__(self, machine, microscope, kinect=None, show=None, model=MODEL, think=THINK, on_think=None,
-                 spark=False, about=""):
+                 spark=False, about="", bench=None):
         """think: False, "low", "medium" or "high", how much Glimmer reasons before it answers (it is not spoken).
         on_think(text) gets the reasoning of each step, for the session log. spark=True lets Lunes send pictures
-        to Muse Spark over the internet (with free credits Meta may use them), so only when Erlan allows it."""
-        self.m, self.cam, self.kinect = machine, microscope, kinect
+        to Muse Spark over the internet (with free credits Meta may use them), so only when Erlan allows it.
+        bench: the camera that sees the whole work area (the Sony), if it is plugged in."""
+        self.m, self.cam, self.kinect, self.bench = machine, microscope, kinect, bench
         self.show = show or (lambda frame, text: None)
         self.model, self.think, self.on_think = model, think, on_think
         self.on_image = None  # on_image(picture, what) for each picture shown to the brain (the dashboard)
@@ -365,6 +439,7 @@ class Hume:
             self.surveys, self.side = saved["surveys"], saved["side"]
         self.stop = threading.Event()  # set by the ear when Erlan says "para"
         self.last_image = None  # the last picture shown to the model, for ask_spark
+        self.last_look = None  # (position, picture) of the last microscope picture, for center_on_ and measure_
         self.mosaic_doubtful = False  # the microscope did not find itself in the last mosaic at start
         # the motors were released (now or in an earlier session): someone may have moved the carriage by hand
         from lunes.machine import load_position
@@ -461,6 +536,120 @@ class Hume:
         self.m.move_to(Z=target["Z"])
         return {"ok": True, "position_mm": _mm(self.m.position())}
 
+    def _look(self):
+        """A fresh microscope picture, kept with where it was taken so a point of it can be turned into mm."""
+        self.cam.fresh_gray(1)
+        frame = self.cam.frame()
+        self.last_look = (self.m.position(), frame)
+        return frame
+
+    def _center_on_point(self, x, y):
+        """Moves the microscope so a point of its last picture is in the middle of the view. The code turns the
+        picture's pixels into mm with the calibration, so the model never guesses distances."""
+        if self.last_look is None:
+            return {"ok": False, "error": "look_microscope first, then give a point of that picture"}, None
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            return {"ok": False, "error": "x and y are fractions of the picture, from 0 to 1"}, None
+        at, last = self.last_look
+        h, w = last.shape[:2]
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        tx, ty = (float(v[0]) for v in pixels_to_mm(at, vx, vy, [x * (w - 1)], [y * (h - 1)]))
+        result = self._move(tx, ty)
+        if not result.get("ok"):
+            return result, None
+        frame = self._look()
+        result.update(moved_mm={"X": round(tx - at["X"], 3), "Y": round(ty - at["Y"], 3)},
+                      note="that point is now in the middle of the picture, under the cross")
+        return result, with_cross(frame)
+
+    def _last_picture_point(self, *fractions):
+        """(position, picture, pixels) for points of the last microscope picture given as fractions, or an error."""
+        if self.last_look is None:
+            return None, "look_microscope first, then give points of that picture"
+        if not all(0 <= f <= 1 for f in fractions):
+            return None, "points are fractions of the picture, from 0 to 1"
+        at, frame = self.last_look
+        h, w = frame.shape[:2]
+        pixels = [(fx * (w - 1), fy * (h - 1)) for fx, fy in zip(fractions[::2], fractions[1::2])]
+        return (at, frame, pixels), None
+
+    def _measure_hole(self, x, y):
+        """Diameter of a hole of the last microscope picture (and of its copper ring), measured by the code."""
+        got, problem = self._last_picture_point(x, y)
+        if problem:
+            return {"ok": False, "error": problem}, None
+        at, frame, [(px, py)] = got
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        hole, why = hole_in_picture(frame, at, vx, vy, px, py)
+        if hole is None:
+            return {"ok": False, "error": why}, with_cross(frame, (px, py))
+        view = frame.copy()
+        for edge, ink in zip(hole.pop("edges_px"), ((0, 255, 0), (255, 0, 255))):
+            for ex, ey in edge.astype(int):
+                cv2.circle(view, (ex, ey), 1, ink, -1)
+        hole.update(ok=True, note="measured by the code from the edge all around, with the microscope's calibration, "
+                                  "at the board's surface (green: the hole's edge; pink: the ring's). Say it as "
+                                  "measured, to a tenth of a millimetre")
+        return hole, view
+
+    def _measure_distance(self, x1, y1, x2, y2):
+        """Distance between two points of the last microscope picture, with the calibration."""
+        got, problem = self._last_picture_point(x1, y1, x2, y2)
+        if problem:
+            return {"ok": False, "error": problem}, None
+        at, frame, (p1, p2) = got
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        d, dx, dy = distance_in_picture(at, vx, vy, p1, p2)
+        view = frame.copy()
+        cv2.line(view, tuple(int(v) for v in p1), tuple(int(v) for v in p2), (0, 255, 255), 1)
+        return {"ok": True, "distance_mm": round(d, 3), "along_X_mm": round(dx, 3), "along_Y_mm": round(dy, 3),
+                "note": "as exact as where the two points were put; at the board's surface"}, view
+
+    def _center_on_corner(self, x_side=None, y_side=None, tolerance_mm=0.05, tries=4):
+        """Puts one corner of the board in the middle of the microscope's view. The corner is found by the code
+        from the board's edges in each picture, moved to, and checked with a last picture."""
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        here = self.m.position()
+        box = self.board["box_mm"] if self.board else None
+        if x_side in ("+", "-") and y_side in ("+", "-"):
+            sx, sy = (1 if x_side == "+" else -1), (1 if y_side == "+" else -1)
+        elif box:  # the measured board's corner nearest to the microscope
+            sx = 1 if abs(here["X"] - box["X"][1]) < abs(here["X"] - box["X"][0]) else -1
+            sy = 1 if abs(here["Y"] - box["Y"][1]) < abs(here["Y"] - box["Y"][0]) else -1
+        else:
+            return {"ok": False, "error": "say which corner (x_side and y_side), or measure_board first"}, None
+        which = f"X{'+' if sx > 0 else '-'} Y{'+' if sy > 0 else '-'}"
+        if box:  # start over that corner of the measured board, unless the microscope is already near it
+            near = (box["X"][0 if sx < 0 else 1], box["Y"][0 if sy < 0 else 1])
+            if math.hypot(near[0] - here["X"], near[1] - here["Y"]) > 4:
+                moved = self._move(*near)
+                if not moved["ok"]:
+                    return moved, None
+        if self.focus_z is not None:  # crisp edges
+            self.m.move_to(Z=self.focus_z)
+        corrections = []
+        for attempt in range(tries + 1):
+            frame = self._look()
+            at = self.m.position()
+            corner, why = board_corner_in_picture(frame, at, vx, vy, sx, sy)
+            if corner is None:
+                return {"ok": False, "corner": which, "error": f"I cannot place the corner: {why}",
+                        "position_mm": _mm(at), "corrections_mm": corrections}, with_cross(frame)
+            d = np.array([corner["X"] - at["X"], corner["Y"] - at["Y"]])
+            off = float(np.hypot(*d))
+            mark = (frame.shape[1] / 2, frame.shape[0] / 2) - (vx * d[0] + vy * d[1])  # the corner's pixel
+            if off <= tolerance_mm or attempt == tries:
+                return {"ok": off <= 3 * tolerance_mm, "corner": which,
+                        "corner_mm": {"X": round(corner["X"], 2), "Y": round(corner["Y"], 2)},
+                        "off_centre_mm": round(off, 3), "position_mm": _mm(at), "corrections_mm": corrections,
+                        "edges_seen_mm": corner["edges_seen_mm"], "out_of_square_deg": corner["out_of_square_deg"],
+                        "note": "checked with this last picture: the cross is on the board's corner (the ring is "
+                                "where the code found it)"}, with_cross(frame, mark)
+            moved = self._move(corner["X"], corner["Y"])
+            if not moved["ok"]:
+                return moved, with_cross(frame, mark)
+            corrections.append(round(off, 3))
+
     def find_in_mosaic(self, concept):
         """Every instance of a concept in the mosaic of the face that is up, found by SAM 3.1; returns (result, the
         mosaic with the boxes drawn, for Erlan's live page)."""
@@ -489,6 +678,50 @@ class Hume:
                   "note": "" if items else "SAM found none: try another word, or look at the mosaic yourself"}
         return result, view
 
+    def _find_in_picture(self, color, concept, where, head=None):
+        """Every instance of a concept in one picture, found by SAM 3.1, where it is in the picture (0 to 1); head:
+        where the microscope's ring light is in it, to say whether a thing is under it."""
+        h, w = color.shape[:2]
+        view, items = color.copy(), []
+        thick, letters = max(2, w // 640), w / 1100
+        for n, (x1, y1, x2, y2, c) in enumerate(sorted(self.spark.segment(color, concept), key=lambda b: -b[4])[:12], 1):
+            item = {"n": n, "x": round((x1 + x2) / 2 / w, 2), "y": round((y1 + y2) / 2 / h, 2),
+                    "confidence": round(c, 2)}
+            if head:
+                item["microscope_ring_inside_box"] = bool(x1 <= head[0] <= x2 and y1 <= head[1] <= y2 + 40)
+            items.append(item)
+            cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), thick)
+            cv2.putText(view, str(n), (int(x1), max(14, int(y1) - 4)), cv2.FONT_HERSHEY_SIMPLEX, letters,
+                        (0, 255, 255), thick)
+        return {"ok": True, "concept": concept, "found": items,
+                "note": f"x, y are where it is in the {where} picture (0 to 1), not machine positions"
+                if items else "SAM found none: try another word"}, view
+
+    def bench_picture(self):
+        """(a fresh picture of the bench camera, None) or (None, why there is none). A flat picture is checked here,
+        not left to the model: the Sony sends black frames with its lens cap on or while it shuts down."""
+        if self.bench is None:
+            return None, "the bench camera is not connected (the Sony, in USB Streaming mode)"
+        try:
+            frame = self.bench.frame()
+        except RuntimeError:
+            return None, "the bench camera stopped sending pictures: the Sony may have turned off; tell Erlan"
+        if frame.std() < 2:
+            return None, ("the bench camera sends a flat black picture: its lens cap may be on, or the camera turned "
+                          "off; tell Erlan")
+        return frame, None
+
+    def find_in_bench(self, concept):
+        """Every instance of a concept in a fresh picture of the bench camera, found by SAM 3.1."""
+        if self.spark is None:
+            return {"ok": False, "error": "SAM 3.1 needs the Meta API (--spark)"}, None
+        if not concept:
+            return {"ok": False, "error": "say what to find, as a short English noun phrase"}, None
+        frame, problem = self.bench_picture()
+        if problem:
+            return {"ok": False, "error": problem}, None
+        return self._find_in_picture(frame, concept, "bench camera")
+
     def find_in_kinect(self, concept):
         """Every instance of a concept in a fresh Kinect picture, found by SAM 3.1, where it is in the picture (no
         machine mm: the Kinect calibration only holds at the head's height; on the bed it was 40-50 mm off)."""
@@ -497,27 +730,20 @@ class Hume:
         if not concept:
             return {"ok": False, "error": "say what to find, as a short English noun phrase"}, None
         color = self.kinect.color()
-        h, w = color.shape[:2]
-        head = self.kinect_head()  # where the microscope's ring light is, to say whether a thing is under it
-        view, items = color.copy(), []
-        for n, (x1, y1, x2, y2, c) in enumerate(sorted(self.spark.segment(color, concept), key=lambda b: -b[4])[:12], 1):
-            item = {"n": n, "x": round((x1 + x2) / 2 / w, 2), "y": round((y1 + y2) / 2 / h, 2),
-                    "confidence": round(c, 2)}
-            if head:
-                item["microscope_ring_inside_box"] = bool(x1 <= head[0] <= x2 and y1 <= head[1] <= y2 + 40)
-            items.append(item)
-            cv2.rectangle(view, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 2)
-            cv2.putText(view, str(n), (int(x1), max(14, int(y1) - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        return {"ok": True, "concept": concept, "found": items,
-                "note": "x, y are where it is in the Kinect picture (0 to 1), not machine positions"
-                if items else "SAM found none: try another word"}, view
+        return self._find_in_picture(color, concept, "Kinect", head=self.kinect_head())
 
     def record_video(self, seconds, source="microscopio"):
-        """Records the microscope (15 frames a second) or the Kinect (5) into captures/videos/."""
+        """Records the microscope (15 frames a second), the bench camera (15) or the Kinect (5) into
+        captures/videos/."""
         seconds = max(1.0, min(float(seconds), 60.0))
         if source == "kinect" and self.kinect is None:
             return {"ok": False, "error": "the Kinect is not connected"}
-        grab, fps = (self.kinect.color, 5) if source == "kinect" else (self.cam.frame, 15)
+        if source == "banco" and self.bench is None:
+            return {"ok": False, "error": "the bench camera is not connected"}
+        if source == "kinect":
+            grab, fps = self.kinect.color, 5
+        else:
+            grab, fps = (self.bench if source == "banco" else self.cam).frame, 15
         folder = ROOT / "captures" / "videos"
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{datetime.now():%Y%m%d_%H%M%S}_{source}.mp4"
@@ -610,7 +836,9 @@ class Hume:
         return {"ok": True, "agrees": agrees, "kinect_mm": _mm(seen_mm), "believed_mm": _mm(here),
                 "difference_mm": difference, "tolerance_mm": tolerance,
                 "note": "" if agrees else "the Kinect sees the head elsewhere: tell Erlan and do not move on your "
-                                          "own; he decides (measure the board again, or put the machine back)"}
+                                          "own. Either the carriage moved (measure_board with new_board=true finds "
+                                          "where the board really is) or the Kinect itself was moved (then, if Erlan "
+                                          "says the carriage did not move, calibrate_kinect). He decides which"}
 
     def calibrate_kinect(self):
         """Moves around where the machine is, finds the head with the Kinect at each place, and fits the map from
@@ -719,7 +947,7 @@ class Hume:
             found["note"] = "the microscope is now over the board's centre; tell Erlan the size"
             self.position_doubtful = False  # the board's edges place the machine again
         else:
-            found["note"] = "no board under the microscope nor around it: look with the Kinect or ask Erlan where it is"
+            found["note"] = "no board under the microscope nor around it: look with the bench camera or ask Erlan where it is"
         return found
 
     def _survey_board(self, width_mm=None, height_mm=None):
@@ -869,6 +1097,8 @@ class Hume:
                     "note": "" if on else "the carriage can be moved by hand now; its position is no longer certain"}, None
         if name == "find_in_mosaic":
             return self.find_in_mosaic(str(args.get("concept", "")).strip())
+        if name == "find_in_bench":
+            return self.find_in_bench(str(args.get("concept", "")).strip())
         if name == "find_in_kinect":
             return self.find_in_kinect(str(args.get("concept", "")).strip())
         if name == "record_video":
@@ -895,13 +1125,29 @@ class Hume:
             if result.get("ok") and self.kinect is not None and self.m.config.get("kinect_head"):
                 result["kinect_check"] = self.check_position()
             return result, None
+        if name == "measure_hole":
+            return self._measure_hole(float(args.get("x", -1)), float(args.get("y", -1)))
+        if name == "measure_distance":
+            return self._measure_distance(*(float(args.get(k, -1)) for k in ("x1", "y1", "x2", "y2")))
+        if name in ("center_on_point", "center_on_corner"):
+            if name == "center_on_point":
+                result, picture = self._center_on_point(float(args.get("x", -1)), float(args.get("y", -1)))
+            else:
+                result, picture = self._center_on_corner(args.get("x_side"), args.get("y_side"))
+            if "position_mm" in result and self.kinect is not None and self.m.config.get("kinect_head"):
+                result["kinect_check"] = self.check_position()  # like every move: checked once, never acted on
+            return result, picture
         if name == "look_microscope":
-            self.cam.fresh_gray(1)
-            frame = self.cam.frame()
+            frame = self._look()
             s = sharpness(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32))
             self.show(frame, f"microscopio  nitidez {s:.0f}")
             return {"position_mm": _mm(self.m.position()), "sharpness": round(s),
                     "note": "below about 300 the image is blurry; it shows about 12 x 15 mm"}, frame
+        if name == "look_bench":
+            frame, problem = self.bench_picture()
+            if problem:
+                return {"ok": False, "error": problem}, None
+            return {"note": "the whole work area, now"}, frame
         if name == "look_kinect":
             if self.kinect is None:
                 return {"ok": False, "error": "the Kinect is not connected"}, None

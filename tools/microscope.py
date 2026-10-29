@@ -28,15 +28,16 @@ KEY_PGUP, KEY_PGDN = 2162688, 2228224
 
 
 class Camera:
-    """The microscope, read continuously on its own thread. frame() is always the newest picture, so anyone (the
-    dashboard too) can look at any moment; fresh_gray() waits for pictures taken after it was called."""
+    """A camera (the microscope, or the bench camera), read continuously on its own thread. frame() is always the
+    newest picture, so anyone (the dashboard too) can look at any moment; fresh_gray() waits for pictures taken
+    after it was called."""
 
-    def __init__(self, index):
+    # 640x480 is the MS5 microscope's real resolution; its larger modes are the same image stretched.
+    def __init__(self, index, size=(640, 480)):
         self._cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
         self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        # 640x480 is the MS5's real resolution; its larger modes are the same image stretched.
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
         if not self._cap.isOpened():
             raise RuntimeError(f"no camera at index {index}")
         self.cap = self  # older callers release the camera with cam.cap.release()
@@ -44,7 +45,7 @@ class Camera:
         self._latest, self._count, self._alive = None, 0, True
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
-        self._wait_for(1, timeout=5)
+        self._wait_for(1, timeout=10)  # the Sony takes about 4 s to send its first picture
 
     def _reader(self):
         while self._alive:

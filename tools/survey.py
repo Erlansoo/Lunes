@@ -222,15 +222,20 @@ def survey(m, cam, grid=3, span=0.3, show=show_window, recalibrate=True, cols=No
     return mosaic, out, summary
 
 
+def bed_mask(image):
+    """Pixels of the wooden bed: under the microscope's LEDs a strongly saturated orange (hue about 17, saturation
+    above 100)."""
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    return (hsv[..., 0] >= 5) & (hsv[..., 0] <= 30) & (hsv[..., 1] >= 70)
+
+
 def board_mask(image):
     """Pixels of an image (a picture or a mosaic) that belong to a circuit board rather than the wooden bed.
 
-    Under the microscope's LEDs the bed is a strongly saturated orange (hue about 17, saturation above 100) while
-    boards come out almost grey (saturation about 30), pads and metal cans included. So the board is whatever is
-    neither bed, nor dark, nor a mosaic's empty black margin."""
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    bed = (h >= 5) & (h <= 30) & (s >= 70)
+    Boards come out almost grey under the microscope's LEDs (saturation about 30), pads and metal cans included, so
+    the board is whatever is neither bed, nor dark, nor a mosaic's empty black margin."""
+    v = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[..., 2]
+    bed = bed_mask(image)
     empty = image.sum(axis=2) == 0
     mask = (~bed & ~empty & (v >= 30)).astype(np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((15, 15), np.uint8))
@@ -268,6 +273,160 @@ def board_in_picture(frame, at, vx, vy):
     ys, xs = np.nonzero(mask[::4, ::4])
     bx, by = pixels_to_mm(at, vx, vy, xs * 4, ys * 4)
     return share, (*np.percentile(bx, [1, 99]), *np.percentile(by, [1, 99]))
+
+
+def board_corner_in_picture(frame, at, vx, vy, sx, sy, bin_mm=0.1, skip_mm=0.4, reach_mm=8.0):
+    """One corner of the circuit board, in machine mm, from one microscope picture taken at `at`.
+
+    sx, sy (+1 or -1) say which corner, by the board's side along machine X and along Y: sx=-1, sy=+1 is the corner
+    where the board has its smallest X and its largest Y. The board's edges are long straight lines, so each one is
+    fitted to the board's outermost pixels on its side, slice by slice, away from the corner's rounding; the corner
+    is where the two lines cross. Returns (corner, None) or (None, why it cannot be seen); corner has "X" and "Y" (mm)
+    and how straight each edge came out."""
+    mask = board_mask(frame)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    if count < 2:
+        return None, "there is no board in the picture"
+    biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))  # bits of grey on the bed are not the board
+    ys, xs = np.nonzero(labels[::2, ::2] == biggest)
+    xs, ys = xs * 2, ys * 2
+    if len(xs) < 500:
+        return None, "there is almost no board in the picture"
+    h, w = mask.shape
+    on_border = (xs < 6) | (xs > w - 7) | (ys < 6) | (ys > h - 7)  # the board goes on past the picture there
+    bx, by = pixels_to_mm(at, vx, vy, xs, ys)
+    guess = {"X": np.percentile(sx * bx, 99.5) * sx, "Y": np.percentile(sy * by, 99.5) * sy}
+
+    def edge(axis):
+        """(slope, offset) of the edge on the `axis` side, as axis = slope * other + offset, and its spread."""
+        along, across = (bx, by) if axis == "X" else (by, bx)
+        sign, other_sign = (sx, sy) if axis == "X" else (sy, sx)
+        other = "Y" if axis == "X" else "X"
+        away = other_sign * (guess[other] - across)  # how far from the corner along this edge
+        keep = (away > skip_mm) & (away < reach_mm)
+        slices = np.round(across[keep] / bin_mm).astype(int)
+        points = {}
+        for s, a, b in zip(slices, along[keep], on_border[keep]):
+            if s not in points or sign * a > sign * points[s][0]:
+                points[s] = (a, b)
+        pts = np.array([(s * bin_mm, a) for s, (a, b) in points.items() if not b])
+        if len(pts) < 15:
+            return None
+        fit = np.ones(len(pts), bool)
+        for _ in range(3):  # a part sticking out of the edge is not the edge
+            slope, offset = np.polyfit(pts[fit, 0], pts[fit, 1], 1)
+            residual = np.abs(pts[:, 1] - (slope * pts[:, 0] + offset))
+            fit = residual < max(0.08, 2.5 * np.median(residual[fit]))
+        if fit.sum() < 15:
+            return None
+        return slope, offset, float(residual[fit].std()), float(np.ptp(pts[fit, 0]))
+
+    ex, ey = edge("X"), edge("Y")
+    missing = [name for name, e in (("X", ex), ("Y", ey)) if e is None]
+    if missing:
+        return None, f"the board's {' and '.join(missing)} edge of that corner is not in the picture"
+    (a, b, spread_x, length_x), (c, d, spread_y, length_y) = ex, ey
+    x = (a * d + b) / (1 - a * c)  # x = a*y + b crossed with y = c*x + d
+    y = c * x + d
+    angle = abs(np.degrees(np.arctan(a) + np.arctan(c)))  # 0 when the edges are square to each other
+    corner = {"X": float(x), "Y": float(y), "edges_seen_mm": [round(length_x, 1), round(length_y, 1)],
+              "edge_spread_mm": [round(spread_x, 3), round(spread_y, 3)], "out_of_square_deg": round(float(angle), 1)}
+    # The outline of a part inside the board can look like a corner too; the board's own corner is crisp, square,
+    # and has no board beyond it.
+    ys, xs = np.nonzero(mask[::2, ::2])
+    ax, ay = pixels_to_mm(at, vx, vy, xs * 2, ys * 2)
+    beyond = (sx * (ax - x) > 0.3) & (sx * (ax - x) < 2.5) & (sy * (ay - y) > 0.3) & (sy * (ay - y) < 2.5)
+    if max(spread_x, spread_y) > 0.12 or angle > 12 or min(length_x, length_y) < 1.5 or beyond.sum() > 40:
+        return None, (f"what looks like that corner is not crisp or square enough to be the board's own (edges "
+                      f"spread {spread_x:.2f} and {spread_y:.2f} mm, {angle:.0f} degrees out of square)")
+    return corner, None
+
+
+def distance_in_picture(at, vx, vy, p1, p2):
+    """Distance in mm between two pixels of a microscope picture, and its X and Y parts (machine axes)."""
+    x, y = pixels_to_mm(at, vx, vy, [p1[0], p2[0]], [p1[1], p2[1]])
+    dx, dy = float(x[1] - x[0]), float(y[1] - y[0])
+    return float(np.hypot(dx, dy)), dx, dy
+
+
+def _fit_circle(x, y):
+    """(centre x, centre y, radius) of the circle closest to the points (least squares)."""
+    a = np.column_stack([x, y, np.ones_like(x)])
+    (d, e, f), *_ = np.linalg.lstsq(a, -(x ** 2 + y ** 2), rcond=None)
+    cx, cy = -d / 2, -e / 2
+    return float(cx), float(cy), float(np.sqrt(cx ** 2 + cy ** 2 - f))
+
+
+def _edge_points(gray, cx, cy, r0, sign, band=0.25, rays=180):
+    """Where each ray from (cx, cy) crosses the sharpest edge near radius r0 (pixels, to a fraction of one): from
+    dark to bright going out (sign +1) or from bright to dark (-1). Rays that leave the picture are skipped."""
+    h, w = gray.shape
+    rs = np.arange(r0 * (1 - band), r0 * (1 + band), 0.5)
+    points = []
+    for a in np.linspace(0, 2 * np.pi, rays, endpoint=False):
+        xs, ys = cx + rs * np.cos(a), cy + rs * np.sin(a)
+        if xs.min() < 1 or ys.min() < 1 or xs.max() > w - 2 or ys.max() > h - 2:
+            continue
+        values = cv2.remap(gray, xs.astype(np.float32)[None], ys.astype(np.float32)[None], cv2.INTER_LINEAR)[0]
+        g = np.gradient(values) * sign
+        k = int(np.argmax(g))
+        if g[k] < 3 or k in (0, len(g) - 1):
+            continue
+        bend = g[k - 1] - 2 * g[k] + g[k + 1]
+        r = rs[k] + (0.5 * (g[k - 1] - g[k + 1]) / bend * 0.5 if bend else 0.0)  # the peak, between samples
+        points.append((cx + r * np.cos(a), cy + r * np.sin(a)))
+    return np.array(points).reshape(-1, 2), rays
+
+
+def _circle_in_mm(points, at, vx, vy):
+    """Circle fitted to edge pixels in machine mm, dropping the points that are not on it (a via in the ring, a
+    scratch): (centre x, centre y, radius, the points kept, how far they stray, mm)."""
+    for _ in range(3):
+        mx, my = pixels_to_mm(at, vx, vy, points[:, 0], points[:, 1])
+        cx, cy, r = _fit_circle(mx, my)
+        off = np.abs(np.hypot(mx - cx, my - cy) - r)
+        points = points[off < max(0.02, 3 * np.median(off))]
+    mx, my = pixels_to_mm(at, vx, vy, points[:, 0], points[:, 1])
+    cx, cy, r = _fit_circle(mx, my)
+    return cx, cy, r, points, float((np.hypot(mx - cx, my - cy) - r).std())
+
+
+def hole_in_picture(frame, at, vx, vy, px, py):
+    """The round hole nearest a pixel (px, py) of a microscope picture taken at `at`: a mounting hole, a via, a
+    through-hole pad. Returns (hole, None) or (None, why not); hole has the hole's diameter and, if it has one, its
+    copper ring's outer diameter (mm), with how round each edge came out, and the edge pixels found.
+
+    Circles are found first (Hough), then each edge is measured where every ray from the centre crosses it, turned
+    into mm with the calibration (so X and Y scale each by their own) and fitted with a circle."""
+    u8 = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    circles = cv2.HoughCircles(u8, cv2.HOUGH_GRADIENT_ALT, 1.5, 8, param1=120, param2=0.6, minRadius=6,
+                               maxRadius=min(u8.shape) // 2)
+    if circles is None:
+        return None, "there is no round edge in the picture"
+    circles = circles[0]
+    holding = [c for c in circles if np.hypot(c[0] - px, c[1] - py) < c[2]]  # circles with the point inside
+    if not holding:
+        return None, "no round hole around that point; give a point inside the hole"
+    seed = min(holding, key=lambda c: np.hypot(c[0] - px, c[1] - py))
+    family = sorted((c for c in circles if np.hypot(c[0] - seed[0], c[1] - seed[1]) < max(4.0, 0.15 * c[2])),
+                    key=lambda c: c[2])  # the hole and the rings around it share a centre
+    gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (3, 3), 0).astype(np.float32)
+    hole = family[0]
+    points, rays = _edge_points(gray, hole[0], hole[1], hole[2], +1)
+    if len(points) < 0.6 * rays:
+        return None, ("the hole is cut by the picture's border or its edge is not clear: put it in the middle "
+                      "(center_on_point) and measure again")
+    cx, cy, r, kept, stray = _circle_in_mm(points, at, vx, vy)
+    found = {"hole_diameter_mm": round(2 * r, 3), "hole_roundness_mm": round(stray, 3),
+             "centre_mm": {"X": round(cx, 3), "Y": round(cy, 3)}, "edges_px": [kept]}
+    ring = next((c for c in family if c[2] > 1.25 * hole[2]), None)
+    if ring is not None:
+        points, _ = _edge_points(gray, hole[0], hole[1], ring[2], -1)
+        if len(points) >= 0.4 * rays:
+            _, _, rr, kept, stray = _circle_in_mm(points, at, vx, vy)
+            found.update(ring_diameter_mm=round(2 * rr, 3), ring_roundness_mm=round(stray, 3))
+            found["edges_px"].append(kept)
+    return found, None
 
 
 def find_perimeter(m, cam, z, cal, limits, show=show_window, max_mm=180.0, seen=0.15, stop=None):

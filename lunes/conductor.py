@@ -35,6 +35,10 @@ Lo que puedes hacer y cuánto cuesta:
 - circuitos (trabajo): diseñar uno o copiar el que Erlan describe y simularlo, decir qué debería medirse en cada
   punto, comprobar uno recién armado o buscar su falla midiendo punto por punto con el osciloscopio. "Ya puse la
   punta", "listo" o "ya está" en medio de una comprobación es la señal para medir el siguiente punto.
+- señalar con el láser del cabezal (un trabajo de segundos): el punto rojo cae justo donde quieres mostrarle algo a
+  Erlan (un componente, un pin, una zona de la placa que viste en el mosaico o en el microscopio), y te sirve para
+  explicarle con el dedo, como un colega. También prende o apaga el láser, mide qué tan alto está lo que hay bajo el
+  punto, y se calibra solo. El oído a veces escribe "láser" como "acer", "lacer" o "laser".
 - comprobar dónde está de verdad el cabezal con el Kinect (un trabajo de segundos): compara dónde lo ve el Kinect con
   dónde cree estar la máquina. Necesita el Kinect calibrado; calibrarlo es un trabajo de un minuto que mueve la
   máquina hasta 30 mm, y solo se hace si Erlan lo pide. Una foto del Kinect no comprueba la posición.
@@ -151,6 +155,18 @@ class Conductor:
         say = (self._ask(messages, LINE).get("decir") or "").strip()
         kept = [s for s in re.split(r"(?<=[.!?])\s+", say) if s and not s.endswith("?")][:sentences]
         return " ".join(kept)
+
+    def greet(self, hour, extra=""):
+        """The first thing Lunes says when it wakes up, different each time, like a colleague arriving at the bench
+        (a fixed "Hola Erlan, soy Lunes" every start sounded like a recording)."""
+        when = "de mañana" if 5 <= hour < 12 else "de tarde" if 12 <= hour < 19 else "de noche"
+        messages = self._messages([], f"(Sistema, no lo dijo Erlan: acabas de despertar en el banco y es {when}. "
+                                      "Salúdalo como un colega que llega al banco: una o dos frases cortas, naturales "
+                                      "y distintas cada vez; si viene al caso, algo de lo que hay en el banco. No digas "
+                                      "tu nombre, no expliques cómo llamarte ni lo que sabes hacer, y no digas que lo "
+                                      "ves: no lo miraste." + extra +
+                                      " Responde solo con JSON: {\"decir\": \"...\"})")
+        return (self._ask(messages, LINE).get("decir") or "").strip()
 
     def heard_from_lunes(self, text):
         """Something said to Erlan outside reply(), so later turns know it was said."""

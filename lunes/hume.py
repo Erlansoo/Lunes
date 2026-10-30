@@ -59,6 +59,9 @@ WORKSPACE = _workspace()
 CIRCUIT = Path(__file__).resolve().parent.parent / "runs" / "circuit.json"  # the circuit on the bench and its simulation
 GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' circuit guide, read by circuit_guide
 LIFT_MM = 3.0
+# what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
+MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
+                "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
 MAX_ROUNDS = 10
 MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
 MAX_PART_TILES = 12
@@ -135,6 +138,9 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   palabras de banco ("el pin 3 del 555", "la pata de R2 que va al capacitor") y, cuando diga que está, llama
   diagnose_measure. El motor decide qué medir y qué falla es; tú lo explicas con los números. Solo nombra una falla
   cuando el motor la da como clara; si varias leen igual, pídele mirar esas partes. Nunca inventes una falla.
+- Si el Kinect no ve el cabezal donde crees estar, la máquina queda en pausa: ninguna herramienta que la mueva
+  funciona. Dile a Erlan las dos medidas (lo que ve el Kinect y lo que dice el microscopio contra el mosaico) y
+  espera; solo cuando él diga que sigas, allow_moves con sus palabras, y después sigue con lo que estabas haciendo.
 - Si una herramienta falla o responde raro (el simulador, el osciloscopio, el Kinect), usa system_check antes de
   culpar al circuito, y system_restart para la parte que falle; dile a Erlan qué pasó.
 - El láser del cabezal es tu dedo para señalarle cosas a Erlan: el punto rojo es lo que él ve, así que apunta a la
@@ -232,10 +238,20 @@ TOOLS = [
                        "for something that matters. Moves already check it by themselves.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
+        "name": "allow_moves",
+        "description": "Lift the hold on moving that a Kinect disagreement put (every tool that moves the machine "
+                       "refuses while it holds). Only when Erlan says in this conversation that the machine may move "
+                       "on (\"sigue\", \"muévete\", \"el carro está bien\"), never on your own; evidence is his "
+                       "words.",
+        "parameters": {"type": "object", "properties": {"evidence": {"type": "string"}}, "required": ["evidence"]}}},
+    {"type": "function", "function": {
         "name": "calibrate_kinect",
-        "description": "Teaches the Kinect where the microscope head is: moves the machine to nine positions up to "
-                       "30 mm around where it is (Z only up) and back, in about a minute. Only when Erlan asks, and "
-                       "only if the machine is where you think (he did not move it by hand).",
+        "description": "Teaches the Kinect where the microscope head is, over the whole work area: first it "
+                       "checks that the Kinect sees the head, then moves to five places 30 mm around where it is, "
+                       "a grid over the whole table about 12 mm higher, and the four corners higher still (Z only "
+                       "goes up from where it is) and back, in about five minutes. Only when Erlan asks, with "
+                       "nothing tall on the table, and only if the machine is where you think (he did not move it "
+                       "by hand).",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "learn_direction",
@@ -628,6 +644,10 @@ class Hume:
         from lunes.machine import load_position
         self.position_doubtful = load_position("by") == "motors released"
         self.last_kinect_check = None  # {"at", "agrees", "off_mm"} of the last check_position
+        # Moving is on hold after the Kinect disagreed, until Erlan allows it (allow_moves): a note asking the model
+        # not to move was not enough, it moved on. Once he allowed it, the Kinect alone no longer stops moves this
+        # session; the microscope against the mosaic still does.
+        self.hold, self.kinect_waived = None, False
         self.spark = None
         if spark:
             try:
@@ -1462,7 +1482,7 @@ class Hume:
 
     # Position seen by the Kinect -------------------------------------------------------------------------------
     def kinect_head(self):
-        """(column, row, distance) of the microscope head in a fresh Kinect picture, or None."""
+        """(column, row, distance or None) of the microscope head in a fresh Kinect picture, or None."""
         from lunes.head import find_ring
         color = self.kinect.color()
         return find_ring(color, self.kinect.depth())
@@ -1470,7 +1490,7 @@ class Hume:
     def check_position(self):
         """Where the Kinect sees the head against where Lunes thinks the machine is. Agreeing clears the doubt left by
         released motors; disagreeing sets it, and Lunes tells Erlan instead of moving on its own."""
-        from lunes.head import predict
+        from lunes.head import where
         cal = self.m.config.get("kinect_head")
         if self.kinect is None:
             return {"ok": False, "error": "the Kinect is not connected"}
@@ -1479,7 +1499,11 @@ class Hume:
         seen = self.kinect_head()
         if seen is None:
             return {"ok": False, "error": "the Kinect does not find the microscope's ring light (on, and in view?)"}
-        seen_mm, here = predict(cal["map"], seen), self.m.position()
+        here = self.m.position()
+        seen_mm = where(cal, seen, here["Z"])
+        if seen_mm is None:
+            return {"ok": False, "error": "the Kinect sees the ring light but measures no depth next to it, and this "
+                                          "old calibration needs it: calibrate_kinect again, when Erlan asks"}
         if any(not (WORKSPACE[a][0] - 20 <= seen_mm[a] <= WORKSPACE[a][1] + 20) for a in "XYZ"):
             # Low over the board the ring's reflection on it can pass for the ring: once it read Z -34 at Z 1.9.
             # An impossible reading neither confirms nor contradicts anything.
@@ -1487,61 +1511,125 @@ class Hume:
                                           "the ring light's reflection for the ring; position neither confirmed nor "
                                           "contradicted", "kinect_mm": _mm(seen_mm)}
         difference = {k: round(seen_mm[k] - here[k], 1) for k in "XYZ"}
-        tolerance = max(5.0, 3 * cal["typical_error_mm"])
-        agrees = all(abs(v) <= tolerance for v in difference.values())
+        # per axis when the calibration measured it (Y, along the Kinect's view, is the least certain)
+        tolerance = cal.get("tolerance_mm") or {a: max(5.0, 3 * cal["typical_error_mm"]) for a in "XYZ"}
+        agrees = all(abs(v) <= tolerance[k] for k, v in difference.items())
         if not agrees:  # one look can catch a reflection or a hand in the way: look again before saying so
             time.sleep(0.5)
             again = self.kinect_head()
             if again is not None:
-                second = predict(cal["map"], again)
-                difference = {k: round(second[k] - here[k], 1) for k in "XYZ"}
-                agrees, seen_mm = all(abs(v) <= tolerance for v in difference.values()), second
+                second = where(cal, again, here["Z"])
+                if second is not None:
+                    difference = {k: round(second[k] - here[k], 1) for k in "XYZ"}
+                    agrees, seen_mm = all(abs(v) <= tolerance[k] for k, v in difference.items()), second
         self.position_doubtful = not agrees
         self.last_kinect_check = {"at": time.time(), "agrees": agrees,
                                   "off_mm": max(abs(v) for v in difference.values())}
-        return {"ok": True, "agrees": agrees, "kinect_mm": _mm(seen_mm), "believed_mm": _mm(here),
-                "difference_mm": difference, "tolerance_mm": tolerance,
-                "note": "" if agrees else "the Kinect sees the head elsewhere: tell Erlan and do not move on your "
-                                          "own. Either the carriage moved (measure_board with new_board=true finds "
-                                          "where the board really is) or the Kinect itself was moved (then, if Erlan "
-                                          "says the carriage did not move, calibrate_kinect). He decides which"}
+        out = {"ok": True, "agrees": agrees, "kinect_mm": _mm(seen_mm), "believed_mm": _mm(here),
+               "difference_mm": difference, "tolerance_mm": tolerance, "note": ""}
+        if agrees:
+            return out
+        # a second opinion that does not depend on the Kinect: the microscope looks for itself in the mosaic
+        mosaic_off = self._mosaic_offset()
+        if mosaic_off is not None:
+            out["mosaic_offset_mm"] = round(mosaic_off, 2)
+        slipped = mosaic_off is not None and mosaic_off > 1.0
+        if not self.kinect_waived or slipped:
+            self.hold = {"why": f"the Kinect sees the head {self.last_kinect_check['off_mm']:.0f} mm from where the "
+                                f"machine thinks it is" + (f"; the microscope finds itself in the mosaic "
+                                                           f"{mosaic_off:.1f} mm from it" if mosaic_off is not None
+                                                           else "")}
+        out["on_hold"] = self.hold is not None
+        if self.hold:
+            out["note"] = ("moving is ON HOLD: every tool that moves the machine refuses until Erlan allows it "
+                           "(allow_moves, with his words). Tell him both readings. " +
+                           ("The microscope finds itself in the mosaic where the machine thinks it is, so the "
+                            "carriage did not move and the Kinect is likely off (calibrate_kinect, when he asks)."
+                            if mosaic_off is not None and not slipped else
+                            "The mosaic confirms it: the carriage may really have moved (measure_board with "
+                            "new_board=true finds where the board really is)." if slipped else
+                            "The mosaic could not confirm either way."))
+        else:
+            out["note"] = ("the Kinect still disagrees, but Erlan allowed moving, so moving goes on; " +
+                           ("the microscope finds itself in the mosaic where the machine thinks it is"
+                            if mosaic_off is not None else "the mosaic could not check it here"))
+        return out
+
+    def _mosaic_offset(self):
+        """How far (mm) the microscope finds itself, in the last mosaic of the face that is up, from where the
+        machine thinks it is; None when there is no such mosaic or no clear match in it."""
+        face_up = [v for v in self.surveys if v["face"] == self.side]
+        if not face_up:
+            return None
+        summary = face_up[-1]["summary"]
+        mosaic = cv2.imread(summary["mosaic"])
+        if mosaic is None:
+            return None
+        self.cam.fresh_gray(2)
+        found = locate_in_mosaic(self.cam.frame(), mosaic, summary)
+        if not found:
+            return None
+        (x, y), score, second = found
+        if score < 0.5 or score - second < 0.08:  # a repeating board fools a weak match
+            return None
+        here = self.m.position()
+        return math.hypot(x - here["X"], y - here["Y"])
 
     def calibrate_kinect(self):
         """Moves around where the machine is, finds the head with the Kinect at each place, and fits the map from
         what the Kinect sees to machine millimetres. Comes back to where it started."""
-        from lunes.head import CALIBRATION_OFFSETS, fit
+        from lunes.head import LOCAL_OFFSETS, area_points, fit_camera, held_out
         if self.kinect is None:
             return {"ok": False, "error": "the Kinect is not connected"}
+        if self.kinect_head() is None:  # a look before moving anything
+            return {"ok": False, "error": "the Kinect does not see the microscope's ring light from where it is: is "
+                                          "the light on and the head in its view?"}
         start, points, skipped = self.m.position(), [], []
+        # the grid over the whole table goes well above where the head is now (and above the board's surface), so
+        # nothing on the table is in the way; Z only goes up from here
+        z_top = WORKSPACE["Z"][1]
+        z_low = min(z_top - 15.0, max(start["Z"], self._z_floor()) + 12.0)  # low, so less is extrapolated
+        z_low = max(z_low, start["Z"])
+        z_high = min(z_top, z_low + 15.0)
+        plan = [(start["X"] + dx, start["Y"] + dy, start["Z"] + dz) for dx, dy, dz in LOCAL_OFFSETS]
+        plan += area_points(WORKSPACE, z_low, z_high)
         try:
-            for dx, dy, dz in CALIBRATION_OFFSETS:
+            for x, y, z in plan:
                 if self.stop.is_set():
                     raise Interrupted()
-                moved = self._move(start["X"] + dx, start["Y"] + dy, start["Z"] + dz)
+                moved = self._move(x, y, z)
                 if not moved["ok"]:
                     skipped.append(moved["error"])
                     continue
                 time.sleep(0.5)  # the carriage settles and the Kinect sends a picture taken after the move
                 seen = self.kinect_head()
                 if seen is None:
-                    skipped.append(f"no ring at {dx:+} {dy:+} {dz:+} mm")
+                    skipped.append(f"no ring at X {x:.0f} Y {y:.0f} Z {z:.0f}")
                     continue
                 points.append((seen, self.m.position()))
-                self.show(self.cam.frame(), f"calibrando el Kinect {len(points)} de {len(CALIBRATION_OFFSETS)}")
+                self.show(self.cam.frame(), f"calibrando el Kinect {len(points)} de {len(plan)}")
         finally:
-            self._move(start["X"], start["Y"], start["Z"])
-        if len(points) < 6:
-            return {"ok": False, "error": f"the Kinect found the head in {len(points)} of {len(CALIBRATION_OFFSETS)} "
-                                          f"positions", "skipped": skipped}
-        mapping, errors = fit(points)
+            # back where it started, or to the nearest allowed place when it started just outside (a corner)
+            self._move(*(min(max(start[a], WORKSPACE[a][0]), WORKSPACE[a][1]) for a in "XY"), start["Z"])
+        if len(points) < 9:
+            return {"ok": False, "error": f"the Kinect found the head in {len(points)} of {len(plan)} positions",
+                    "skipped": skipped}
+        mapping, errors = fit_camera(points)
         typical = round(float(np.median(errors)), 1)
+        unseen = np.array(held_out(points))
+        tolerance = {"X": round(max(5.0, 3 * float(np.median(unseen[:, 0]))), 1),
+                     "Y": round(max(5.0, 3 * float(np.median(unseen[:, 1]))), 1), "Z": 1e9}  # Z is not checked
+        reached = {a: [round(min(p[a] for _, p in points), 1), round(max(p[a] for _, p in points), 1)] for a in "XYZ"}
         self.m.config["kinect_head"] = {
-            "map": mapping, "typical_error_mm": typical, "points": len(points),
+            "P": mapping, "model": "camera", "typical_error_mm": typical, "tolerance_mm": tolerance,
+            "points": len(points), "covers_mm": reached,
             "at": datetime.now().isoformat(timespec="minutes"),
-            "note": "linear map from where the Kinect sees the ring light (column, row, distance mm) to machine mm; "
-                    "made by calibrate_kinect"}
+            "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column "
+                    "and row, at the height the machine knows, give X and Y (Z is not checked); made by "
+                    "calibrate_kinect"}
         self.m.config_path.write_text(json.dumps(self.m.config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return {"ok": True, "points": len(points), "error_mm": errors, "typical_error_mm": typical,
+        return {"ok": True, "points": len(points), "of": len(plan), "error_mm": errors, "typical_error_mm": typical,
+                "worst_error_mm": max(errors), "tolerance_mm": {a: tolerance[a] for a in "XY"}, "covers_mm": reached,
                 "skipped": skipped}
 
     # Skills ------------------------------------------------------------------------------------------------
@@ -1735,6 +1823,16 @@ class Hume:
     # Tools -------------------------------------------------------------------------------------------------
     def run_tool(self, name, args):
         """Runs one tool; returns (result for the model, image to show the model or None)."""
+        if self.hold and name in MOVING_TOOLS:
+            return {"ok": False, "on_hold": True,
+                    "error": f"moving is on hold: {self.hold['why']}. Tell Erlan and wait; only when he says to go "
+                             f"on, allow_moves with his words"}, None
+        if name == "allow_moves":
+            if not self.hold:
+                return {"ok": True, "note": "nothing was on hold"}, None
+            self.hold, self.kinect_waived = None, True
+            return {"ok": True, "note": "moving again, as Erlan allowed. For the rest of this session the Kinect "
+                                        "alone no longer stops moves; the microscope against the mosaic still does"}, None
         if name == "where":
             return {"position_mm": _mm(self.m.position()), "focus_z_mm": self.focus_z, "area_mm": WORKSPACE,
                     "board": self.board and {k: self.board[k] for k in ("size_mm", "center_mm")}}, None
@@ -1779,7 +1877,10 @@ class Hume:
         if name == "check_position":
             return self.check_position(), None
         if name == "calibrate_kinect":
-            return self.calibrate_kinect(), None
+            result = self.calibrate_kinect()
+            if result.get("ok"):  # a freshly calibrated Kinect is trusted again
+                self.hold, self.kinect_waived = None, False
+            return result, None
         if name in ("move_to", "move_by"):
             here = self.m.position()
             if name == "move_to":
@@ -1958,7 +2059,10 @@ class Hume:
             parts.append(f"hay {len(self.surveys)} mosaicos guardados; el último es de la cara {self.surveys[-1]['face']}")
         if self.mosaic_doubtful:
             parts.append("al arrancar el microscopio no se ubicó en el último mosaico: la placa pudo cambiar")
-        if self.position_doubtful:
+        if self.hold:
+            parts.append("la máquina está en pausa porque el Kinect no la ve donde cree estar: no se mueve hasta que "
+                         "Erlan dé permiso (si lo da, es un trabajo: seguir con lo que estaba haciendo)")
+        elif self.position_doubtful:
             parts.append("los motores se liberaron: si alguien movió la máquina a mano, no sabes bien dónde está")
         return "; ".join(parts) or "todavía no se midió ni se recorrió ninguna placa en esta sesión"
 

@@ -13,6 +13,7 @@ model it sits behind the audio chip, which needs Microsoft's firmware.
 
 One Kinect object streams for the whole process; the dashboard and Hume share it.
 """
+import atexit
 import struct
 import threading
 import time
@@ -120,6 +121,9 @@ class Kinect:
                 self.transfers.append(transfer)
         self.pump = threading.Thread(target=self._pump, daemon=True)
         self.pump.start()
+        # also when Lunes is stopped halfway (Ctrl-C while it starts): libusb's own clean-up at exit waits forever
+        # for transfers nobody cancelled, and the process never ends
+        atexit.register(self.close)
         for register, value in START:
             self._write(register, value)
         self.mm, self.calibration = self._factory_table()

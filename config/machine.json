@@ -51,77 +51,60 @@
       480
     ],
     "px_per_mm": {
-      "X": 44.655,
-      "Y": 42.865
+      "X": 41.901,
+      "Y": 42.005
     },
     "image_shift_px_per_mm": {
       "X": [
-        -1.536,
-        44.629
+        -0.025,
+        41.901
       ],
       "Y": [
-        -42.86,
-        -0.66
+        -42.002,
+        -0.52
       ]
     },
-    "x_axis_angle_deg": 91.97,
-    "angle_between_axes_deg": 88.91,
-    "calibrated_at": "2026-10-29T00:15:31"
+    "x_axis_angle_deg": 90.03,
+    "angle_between_axes_deg": 90.68,
+    "calibrated_at": "2026-10-29T19:18:16"
   },
   "workspace_mm": {
     "X": [
-      -100.0,
-      100.0
+      0.0,
+      250.0
     ],
     "Y": [
       -200.0,
-      150.0
+      0.0
     ],
     "Z": [
       -9.7,
       50.3
     ],
-    "origin": "bench origin: X and Y are where the machine stood when Erlan measured these travels (2026-10-27, known to about 5 mm), Z = 0 is the focused surface of the board on the bed; the position is kept in runs/machine_position.json",
-    "z_note": "2026-10-29, Erlan from Z 0.3: the axis travels 70 mm up and 30 mm down, of which 50 up and 10 down are safe; these limits are the safe ones (the table, level zero, focuses at -5.68)"
+    "origin": "bench origin, set 2026-10-29 19:40: X 0, Y 0 is the front corner where Erlan put the head by hand (+X runs toward the other end, about 25 cm; -Y runs back, 20 cm for now, he said 20 to 30); Z = 0 is the focused surface of a board on the bed; the position is kept in runs/machine_position.json",
+    "z_note": "2026-10-29, Erlan from Z 0.3: the axis travels 70 mm up and 30 mm down, of which 50 up and 10 down are safe; these limits are the safe ones (the table, level zero, focuses at -5.68)",
+    "xy_note": "the XY travel measured on 10-27 no longer matched the machine: the head ran into the back at Y -25"
   },
   "como_lo_ve_erlan": {
-    "X": "todavía no se sabe si +X va hacia la izquierda o hacia la derecha de Erlan",
+    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la máquina (29/10, por la calibración del Kinect)",
     "Y": "+Y va hacia adelante y -Y hacia atrás, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atrás)",
     "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
   },
-  "kinect_head": {
-    "map": [
-      [
-        -1.3274949801671025,
-        -0.9037723304470302,
-        -0.004678998502936604
-      ],
-      [
-        -0.7711899096041163,
-        1.1806291203549208,
-        -1.1534994876141444
-      ],
-      [
-        0.3340325027927381,
-        -0.5581249944371671,
-        -0.2640360859906579
-      ],
-      [
-        471.8928571830284,
-        404.4416395813843,
-        583.3292785301588
-      ]
-    ],
-    "typical_error_mm": 0.8,
-    "points": 9,
-    "at": "2026-10-29T11:26",
-    "note": "linear map from where the Kinect sees the ring light (column, row, distance mm) to machine mm; made by calibrate_kinect",
-    "z_flipped": "2026-10-29: Z column turned to the inverted and rescaled Z axis (new = -0.9466 old)"
-  },
   "laser": {
-    "pwm": 29,
-    "at": "2026-10-29T18:11",
+    "pwm": 32,
+    "at": "2026-10-29T18:46",
     "surfaces": [
+      {
+        "z": 7.0,
+        "pwm": 32,
+        "dot_mm": 0.399,
+        "offset_mm": {
+          "X": 4.61,
+          "Y": -2.437
+        },
+        "at": "2026-10-29T18:46",
+        "surface": "placa"
+      },
       {
         "z": -1.68,
         "pwm": 29,
@@ -146,8 +129,54 @@
       }
     ],
     "slant_mm_per_mm": {
-      "X": 0.3358,
-      "Y": -0.2785
+      "X": 0.4113,
+      "Y": -0.296
     }
+  },
+  "kinect_head": {
+    "P": [
+      [
+        -555.2630345580272,
+        -282.66304503279844,
+        -73.53837853910957,
+        214871.9424387936
+      ],
+      [
+        -19.89331637317005,
+        -92.94306660642394,
+        -616.3526167556555,
+        167818.10359946327
+      ],
+      [
+        -0.06697470601155962,
+        -0.9585033044528654,
+        -0.27710251552016396,
+        517.2915467896438
+      ]
+    ],
+    "model": "camera",
+    "typical_error_mm": 0.3,
+    "tolerance_mm": {
+      "X": 5.0,
+      "Y": 5.0,
+      "Z": 1000000000.0
+    },
+    "points": 13,
+    "covers_mm": {
+      "X": [
+        33.0,
+        217.0
+      ],
+      "Y": [
+        -172.0,
+        -28.0
+      ],
+      "Z": [
+        32.3,
+        47.3
+      ]
+    },
+    "at": "2026-10-29T20:25",
+    "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column and row (its saturated core), at the height the machine knows, give X and Y (Z is not checked); fitted to the 13 positions of calibrate_kinect's route"
   }
 }

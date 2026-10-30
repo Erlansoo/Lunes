@@ -223,7 +223,7 @@ class Voice:
 class Ear:
     def __init__(self, transcriber, microphone=None):
         """transcriber: a Meta speech-to-text model, as a function from float32 16 kHz audio to text.
-        microphone: part of the input device's name (e.g. "AB13X"); Windows' default input when left out."""
+        microphone: part of the input device's name (e.g. "fifine"); Windows' default input when left out."""
         self.transcriber = transcriber
         self.microphone = microphone
         self.device = find_microphone(microphone)

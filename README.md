@@ -24,6 +24,13 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
     which the microscope cannot; the Kinect adds depth.
   - **Self-check:** the Kinect checks every move against where the machine thinks it is. Lunes drives the Kinect
     with its own USB driver, written for this project.
+    - It is calibrated as a camera over the whole table (`lunes/head.py`). The Kinect measures no depth on the
+      black microscope tube, so the ring light's place in the picture, at the height the machine knows, gives X
+      and Y: 0.3 mm typical error, a 5 mm tolerance.
+    - When it disagrees, the microscope looks for itself in the board's mosaic as a second opinion. Every tool
+      that moves refuses until Erlan says the machine may go on.
+    - A move the motion board stops because it lost the PC for a moment is finished by itself. The board counts
+      every step, so the position stays exact.
   - **Research:** it looks up datasheets on the web, with sources.
   - **Conversation:** you talk to it like a call: it answers at once, works in the background and tells the result.
 - **Ready, first test on the real scope on Oct 30:** the oscilloscope.

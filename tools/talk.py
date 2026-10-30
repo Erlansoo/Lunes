@@ -10,7 +10,7 @@ with Muse Spark through the Meta Model API (Muse Glimmer on this PC without --sp
 Hume, keeps what it observed between sessions.
 --text reads typed lines instead of the microphone, to test without talking.
 
-    python tools/talk.py COM8 --spark --mic AB13X
+    python tools/talk.py COM8 --spark --mic fifine
     python tools/talk.py COM8 --text
 """
 import argparse
@@ -20,6 +20,7 @@ import difflib
 import json
 import os
 import queue
+import random
 import re
 import sys
 import threading
@@ -107,10 +108,16 @@ def milestone(name, result):
         return None
     check = result.get("kinect_check")
     if isinstance(check, dict) and check.get("agrees") is False:
+        if not check.get("on_hold"):
+            return None  # Erlan already allowed moving, and the mosaic agrees: nothing new to say
         off = check["difference_mm"]
         axis = max(off, key=lambda k: abs(off[k]))
+        mosaic = check.get("mosaic_offset_mm")
+        second = ("" if mosaic is None else
+                  " Pero el microscopio se ubica bien en el mosaico, así que parece ser el Kinect." if mosaic <= 1.0
+                  else f" Y en el mosaico también me veo corrido, unos {mosaic:.0f} milímetros.")
         return (f"Ojo: el Kinect no me ve donde creo estar, hay unos {abs(off[axis]):.0f} milímetros de diferencia en "
-                f"{axis}. No muevo nada más hasta que me digas.")
+                f"{axis}.{second} No me muevo hasta que me des permiso.")
     if name == "measure_board":
         if result.get("found"):
             w, h = result["size_mm"]
@@ -333,6 +340,27 @@ class Worker:
             self.start(job)
 
 
+# When the brain cannot say hello in time: still not the same line every start
+GREETINGS = ("Buenas, Erlan. Acá estoy.", "Listo, ya desperté. ¿Qué hacemos?", "Aquí estoy, cuando quieras.",
+             "Buenas. ¿En qué andamos?", "Ya llegué al banco. Cuando quieras empezamos.")
+
+
+def greeting(conductor, kinect):
+    """What Lunes says on waking up: the conductor makes it up (the hour, what is on the bench), different each time;
+    after ten seconds without an answer, one of a few plain ones."""
+    missing = "" if kinect else " Dile también, de pasada, que el Kinect no está conectado."
+    pool = ThreadPoolExecutor(1)
+    try:
+        hello = pool.submit(conductor.greet, time.localtime().tm_hour, missing).result(timeout=10)
+    except Exception:
+        hello = ""
+    finally:
+        pool.shutdown(wait=False)
+    if not hello:
+        hello = random.choice(GREETINGS) + ("" if kinect else " El Kinect no está conectado.")
+    return hello
+
+
 def wait_for_microphone(voice, error, ear):
     """When the microphone's cable moves, Windows drops it. Say so once and wait until it is back, instead of
     stopping Lunes."""
@@ -371,7 +399,7 @@ def main():
     ap.add_argument("--spark", action="store_true",
                     help="the worker uses the Meta Model API: Muse Spark sees the pictures (with free credits Meta "
                          "may use them)")
-    ap.add_argument("--mic", default=None, help="part of the microphone's name, e.g. AB13X (Windows' default if left out)")
+    ap.add_argument("--mic", default=None, help="part of the microphone's name, e.g. fifine (Windows' default if left out)")
     ap.add_argument("--audifonos", action="store_true",
                     help="Lunes speaks into headphones, so the microphone never hears it: everything heard is Erlan, "
                          "even over Lunes' voice (set the headphones as Windows' sound output)")
@@ -606,7 +634,7 @@ def main():
             heard_q.put(("text", input("\nTú: ").strip()))
 
     threading.Thread(target=read_typed if args.text else listen, daemon=True).start()
-    narrator.must("Hola Erlan, soy Lunes. Dime Lunes y te escucho." + ("" if kinect else " El Kinect no está conectado."))
+    narrator.must(greeting(conductor, kinect))
 
     last_exchange, turn = 0.0, 0
     # Two things in a row that were not for Lunes (Erlan talking with his father) close the conversation until he

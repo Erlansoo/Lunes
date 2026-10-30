@@ -19,6 +19,7 @@ import serial
 
 CONFIG = Path(__file__).resolve().parent.parent / "config" / "machine.json"
 POSITION = Path(__file__).resolve().parent.parent / "runs" / "machine_position.json"
+EVENTS = Path(__file__).resolve().parent.parent / "runs" / "machine_events.jsonl"
 FW_AXES = "XYZAB"
 RATE_CAP = 18000  # steps/s, the firmware's ceiling
 
@@ -30,6 +31,16 @@ def load_position(key="mm"):
         return json.loads(POSITION.read_text(encoding="utf-8"))[key]
     except (OSError, ValueError, KeyError):
         return None
+
+
+def log_event(event):
+    """One line in runs/machine_events.jsonl: a move the firmware stopped, and how long the PC had been quiet."""
+    try:
+        EVENTS.parent.mkdir(exist_ok=True)
+        with EVENTS.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": time.strftime("%Y-%m-%d %H:%M:%S"), **event}) + "\n")
+    except OSError:
+        pass
 
 
 def save_position(mm, by, direction=None):
@@ -80,6 +91,7 @@ class Machine:
             self.offset_mm = {n: float(saved.get(n, here[n])) - here[n] for n in self.axes}
         # which way each axis last moved (+1 / -1, 0 unknown): a reversal takes up the backlash first
         self.direction = {n: int((load_position("dir") or {}).get(n, 0)) if keep_position else 0 for n in self.axes}
+        self.poll_gap = 0.0  # of the last move: the longest the PC went without writing to the board
         self.at_mm = self.position()
 
     def _read(self):
@@ -131,8 +143,12 @@ class Machine:
         self.at_mm = self.position()
         save_position(self.at_mm, "set_position", self.direction)
 
-    def move_to(self, timeout=120, **targets_mm):
-        """Coordinated move to absolute millimetres; every axis arrives together, each within its own speed."""
+    def move_to(self, timeout=120, _again=20, **targets_mm):
+        """Coordinated move to absolute millimetres; every axis arrives together, each within its own speed. A move the
+        firmware stopped with host_lost (it heard nothing from the PC for a second, now and then in a long X move even
+        while the PC polled every 0.5 s: once three times in a row, every 27 mm) is made again while each try gets
+        closer: the firmware stops cleanly and counts every step, so the position stays exact."""
+        remaining = max((abs(v - self.at_mm[n]) for n, v in targets_mm.items()), default=0.0)
         for n, v in targets_mm.items():
             delta = v - self.at_mm[n]
             if abs(delta) < 1e-6:
@@ -152,12 +168,28 @@ class Machine:
         if errors:
             raise RuntimeError(f"the motion board refused the move: {errors[0]}")
         try:
-            if not any(m.get("ev") == "done" for m in reply):
+            done = [m for m in reply if m.get("ev") == "done"]
+            if not done:
                 self.wait_done(timeout)
+            elif done[0].get("stopped"):  # a short move can end, or be stopped, before send() returns
+                raise RuntimeError(f"the move stopped early: {done[0]}")
+        except RuntimeError:
+            alarm, here = self.status().get("alarm"), self.position()
+            closer = max(abs(v - here[n]) for n, v in targets_mm.items()) < remaining - 0.5
+            _again = _again if alarm == "host_lost" and closer else 0
+            log_event({"event": alarm or "stopped", "targets_mm": targets_mm, "longest_poll_gap_s": self.poll_gap,
+                       "again": bool(_again), "tries_left": _again})
+            if not _again:
+                raise
+        else:
+            _again = False  # it arrived
         finally:  # also after a stopped move: wherever it ended is where the machine is
             self.at_mm = self.position()
             save_position(self.at_mm, "move", self.direction)
         self.last_motion = time.time()
+        if _again:  # stopped by host_lost: clear it and finish the same move
+            self.reset_alarm()
+            self.move_to(timeout, _again=_again - 1, **targets_mm)
 
     def soft_stop(self):
         """Brakes the current move (safe to call from another thread); the waiting move_to then raises."""
@@ -168,8 +200,11 @@ class Machine:
         self.move_to(**{n: here[n] + d for n, d in deltas_mm.items()})
 
     def wait_done(self, timeout=120):
-        t0 = time.time()
+        t0 = last = time.time()
+        self.poll_gap = 0.0  # the longest the PC went without writing to the board during this move
         while time.time() - t0 < timeout:
+            now = time.time()
+            self.poll_gap, last = max(self.poll_gap, now - last), now
             self.s.write(b"?")  # status polls keep the host watchdog quiet
             for m in self._read():
                 if m.get("ev") == "done":

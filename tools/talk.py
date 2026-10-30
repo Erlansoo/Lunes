@@ -39,6 +39,7 @@ from lunes.cameras import cameras, find_camera  # noqa: E402
 from lunes.dashboard import Dashboard  # noqa: E402
 from lunes.hume import MODEL, THINK, Hume  # noqa: E402
 from lunes.hantek import Scope, SimulatedScope, sine, square  # noqa: E402
+from lunes.mcu import SimulatedBoard  # noqa: E402
 from lunes.kinect import Kinect  # noqa: E402
 from lunes.machine import Machine  # noqa: E402
 from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, local_transcriber  # noqa: E402
@@ -356,7 +357,7 @@ def greeting(conductor, kinect):
         hello = ""
     finally:
         pool.shutdown(wait=False)
-    if not hello:
+    if not re.search(r"[A-Za-zÁÉÍÓÚáéíóúñÑ]", hello or ""):  # Glimmer once greeted with "..."
         hello = random.choice(GREETINGS) + ("" if kinect else " El Kinect no está conectado.")
     return hello
 
@@ -392,6 +393,11 @@ def main():
     ap.add_argument("--osciloscopio", default="hantek",
                     help="'hantek' (the 6022BE on the USB), 'simulado' (made-up signals, to try Lunes without it) "
                          "or 'no'")
+    ap.add_argument("--arduino", default="usb",
+                    help="'usb' (a real board, found by its port when Lunes programs it) or 'simulado' (a made-up "
+                         "board that reads the simulated circuit, to try Lunes without one)")
+    ap.add_argument("--falla", default=None,
+                    help="with --arduino simulado: a fault planted on the made-up bench, e.g. R1:open or U1:not_running")
     ap.add_argument("--text", action="store_true", help="type instead of talking")
     ap.add_argument("--no-wake", action="store_true", help="answer everything, not only sentences with 'Lunes'")
     ap.add_argument("--model", default=MODEL, help="Ollama model for the conductor and the local worker")
@@ -438,6 +444,11 @@ def main():
             print(f"osciloscopio: Hantek 6022BE, firmware {scope.firmware_version:#06x}, puntas {scope.probe}")
         except RuntimeError as e:
             print(f"(sin osciloscopio: {e})")
+    mcu_board = None
+    if args.arduino.lower() == "simulado":
+        mcu_board = SimulatedBoard(args.falla)
+        print("Arduino: SIMULADO (lee el circuito simulado, no el banco)" +
+              (f", con la falla {args.falla} plantada" if args.falla else ""))
     think = False if args.think.lower() in ("false", "no", "0") else args.think
     brain = ("Muse Spark por la API de Meta (Muse Glimmer en esta PC si no hay internet)" if args.spark
              else "Muse Glimmer en esta PC")
@@ -446,7 +457,7 @@ def main():
              f"observaste.")
     hume = Hume(machine, cam, kinect, show=show, model=args.model, think=think,
                 on_think=lambda t: log("think", "   (pensó) " + " ".join(t.split())[:300]), spark=args.spark,
-                about=about, bench=bench, scope=scope)
+                about=about, bench=bench, scope=scope, mcu=mcu_board)
     from lunes import simulator
     simulator_ok = simulator.selftest()
     simulator_ok["hanging_runs_ended"] = simulator.kill_strays()
@@ -554,6 +565,10 @@ def main():
                     "Hantek 6022BE conectado")
             parts.append(f"osciloscopio: {kind}, dos canales, puntas x{hume.scope.probe['CH1']:g} (CH1) y "
                          f"x{hume.scope.probe['CH2']:g} (CH2); mide voltajes y señales donde Erlan ponga la punta")
+        if isinstance(hume.mcu, SimulatedBoard):
+            parts.append("Arduino: SIMULADO, lee el circuito simulado (no el banco)")
+        elif hume.mcu_port:
+            parts.append(f"Arduino: programado en {hume.mcu_port}")
         parts.append("simulador de circuitos (ngspice): " + ("listo" if simulator_ok["ok"] else
                                                              f"con problemas ({simulator_ok.get('problem')})"))
         parts.append("Kinect: conectado y apuntando a la CNC de frente y desde arriba; sirve para la profundidad y "

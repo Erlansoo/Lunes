@@ -51,22 +51,22 @@
       480
     ],
     "px_per_mm": {
-      "X": 41.901,
-      "Y": 42.005
+      "X": 43.009,
+      "Y": 41.776
     },
     "image_shift_px_per_mm": {
       "X": [
-        -0.025,
-        41.901
+        -0.702,
+        43.003
       ],
       "Y": [
-        -42.002,
-        -0.52
+        -41.721,
+        2.142
       ]
     },
-    "x_axis_angle_deg": 90.03,
-    "angle_between_axes_deg": 90.68,
-    "calibrated_at": "2026-10-29T19:18:16"
+    "x_axis_angle_deg": 90.94,
+    "angle_between_axes_deg": 86.13,
+    "calibrated_at": "2026-10-29T21:02:52"
   },
   "workspace_mm": {
     "X": [
@@ -74,20 +74,20 @@
       250.0
     ],
     "Y": [
-      -200.0,
+      -300.0,
       0.0
     ],
     "Z": [
       -9.7,
       50.3
     ],
-    "origin": "bench origin, set 2026-10-29 19:40: X 0, Y 0 is the front corner where Erlan put the head by hand (+X runs toward the other end, about 25 cm; -Y runs back, 20 cm for now, he said 20 to 30); Z = 0 is the focused surface of a board on the bed; the position is kept in runs/machine_position.json",
+    "origin": "bench origin, set 2026-10-29 19:40: X 0, Y 0 is the front corner where Erlan put the head by hand (+X runs toward the other end, about 25 cm; -Y runs back 30 cm, Erlan confirmed); Z = 0 is the focused surface of a board on the bed; the position is kept in runs/machine_position.json",
     "z_note": "2026-10-29, Erlan from Z 0.3: the axis travels 70 mm up and 30 mm down, of which 50 up and 10 down are safe; these limits are the safe ones (the table, level zero, focuses at -5.68)",
     "xy_note": "the XY travel measured on 10-27 no longer matched the machine: the head ran into the back at Y -25"
   },
   "como_lo_ve_erlan": {
-    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la máquina (29/10, por la calibración del Kinect)",
-    "Y": "+Y va hacia adelante y -Y hacia atrás, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atrás)",
+    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la m\u00e1quina (29/10, por la calibraci\u00f3n del Kinect)",
+    "Y": "+Y va hacia adelante y -Y hacia atr\u00e1s, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atr\u00e1s)",
     "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
   },
   "laser": {

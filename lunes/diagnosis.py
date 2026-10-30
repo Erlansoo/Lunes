@@ -17,6 +17,7 @@ import numpy as np
 
 OTHER = "other"
 UNPREDICTABLE = 0.05  # likelihood of any reading under a hypothesis whose simulation failed
+VISIBLE_SWING_V = 0.1  # a swing smaller than this is lost in the scope's steps over a few volts of range
 
 
 def _gauss(x, sigma):
@@ -28,19 +29,35 @@ def likelihood(pred, meas):
     if pred is None:
         return UNPREDICTABLE
     like = 1.0
-    if meas.get("mean_v") is not None:
-        like *= _gauss(meas["mean_v"] - pred["mean_v"], 0.06 + 0.05 * abs(pred["mean_v"]))
+    high, low = meas.get("clipped_high"), meas.get("clipped_low")
+    if meas.get("mean_v") is not None and not (high and low):
+        off = meas["mean_v"] - pred["mean_v"]
+        if high:  # the instrument stopped at its top: the net is at least this high
+            off = max(off, 0.0)
+        elif low:  # stopped at its bottom: at most this high
+            off = min(off, 0.0)
+        like *= _gauss(off, 0.06 + 0.05 * abs(pred["mean_v"]))
     if "frequency_hz" in meas:
         fp, fm = pred.get("frequency_hz"), meas.get("frequency_hz")
-        if (fp is None) != (fm is None):
+        if fp and fm is None and pred["vpp_v"] < VISIBLE_SWING_V:
+            pass  # a ripple too small for the scope to see: not seeing it says nothing
+        elif (fp is None) != (fm is None):
             like *= 0.02  # one oscillates and the other does not
         elif fp and fm:
             like *= _gauss(math.log(fm / fp), 0.15)
             if pred.get("duty") is not None and meas.get("duty") is not None:
                 like *= _gauss(meas["duty"] - pred["duty"], 0.06)
     if meas.get("vpp_v") is not None:
-        like *= _gauss(meas["vpp_v"] - pred["vpp_v"], 0.1 + 0.08 * pred["vpp_v"])
+        off = meas["vpp_v"] - pred["vpp_v"]
+        if high or low:  # clipped: the swing is at least what was seen
+            off = min(off, 0.0)
+        like *= _gauss(off, 0.1 + 0.08 * pred["vpp_v"])
     return max(like, 1e-300)
+
+
+def _seen_frequency(pred):
+    """The frequency a scope would find on a net that behaves like pred: none when its swing is too small to see."""
+    return pred.get("frequency_hz") if pred["vpp_v"] >= VISIBLE_SWING_V else None
 
 
 def _other_likelihood(meas, supply_v):
@@ -101,7 +118,7 @@ class Diagnosis:
             return a is b
         if abs(a["mean_v"] - b["mean_v"]) > 0.08 + 0.03 * abs(a["mean_v"]):
             return False
-        fa, fb = a.get("frequency_hz"), b.get("frequency_hz")
+        fa, fb = _seen_frequency(a), _seen_frequency(b)
         if (fa is None) != (fb is None) or (fa and abs(math.log(fa / fb)) > 0.1):
             return False
         return abs(a["vpp_v"] - b["vpp_v"]) <= 0.1 + 0.05 * a["vpp_v"]
@@ -118,17 +135,22 @@ class Diagnosis:
         return {h: v / total for h, v in p.items()}
 
     def update(self, net, reading):
-        """A reading at net: {"mean_v", "vpp_v", "frequency_hz" (None if it does not oscillate), "duty"}."""
+        """A reading at net: {"mean_v", "vpp_v", "frequency_hz" (None if it does not oscillate), "duty"}. Only what
+        the instrument measured: a multimeter gives mean_v alone, and leaving frequency_hz out (not None) says
+        nothing about whether the net oscillates."""
         if net not in self.nets:
             raise ValueError(f"no net {net} in this circuit; nets: {self.nets}")
-        reading = {k: reading.get(k) for k in ("mean_v", "vpp_v", "frequency_hz", "duty")}
+        reading = {k: reading[k] for k in ("mean_v", "vpp_v", "frequency_hz", "duty", "clipped_high", "clipped_low")
+                   if k in reading}
         self.readings.append((net, reading))
         self.p = self._posterior(net, reading)
 
     def next_net(self):
         """(net, expected information in bits, the hypotheses it separates) to measure next, or None."""
-        measured = {n for n, _ in self.readings}
-        if "VCC" in self.nets and "VCC" not in measured:
+        # a net counts as measured once the scope saw it; a multimeter or a board's input gives its mean only, so
+        # the scope may still be worth putting there
+        measured = {n for n, r in self.readings if "frequency_hz" in r}
+        if "VCC" in self.nets and "VCC" not in {n for n, _ in self.readings}:
             return "VCC", None, ["the supply first: without it, nothing else means anything"]
         h0 = _entropy(self._group_p(self.p))
         best = None
@@ -142,7 +164,7 @@ class Diagnosis:
                 if pred is None:
                     continue
                 outcome = {"mean_v": pred["mean_v"], "vpp_v": pred["vpp_v"],
-                           "frequency_hz": pred.get("frequency_hz"), "duty": pred.get("duty")}
+                           "frequency_hz": _seen_frequency(pred), "duty": pred.get("duty")}
                 expected_h += self.p[h] * _entropy(self._group_p(self._posterior(net, outcome)))
             gain = h0 - expected_h / max(sum(self.p[h] for h in likely), 1e-12)
             if best is None or gain > best[1]:

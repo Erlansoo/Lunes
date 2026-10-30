@@ -113,6 +113,8 @@ def fit_camera(points):
     _, _, vt = np.linalg.svd(np.array(rows))
     p = np.linalg.inv(tu) @ vt[-1].reshape(3, 4) @ tx
     p /= np.linalg.norm(p[2, :3])
+    if p[2] @ np.r_[xyz.mean(axis=0), 1.0] < 0:  # the third row is then the depth in front of the camera, in mm
+        p = -p
     errors = [float(np.hypot(*(np.array(locate(p, u, v, q["Z"])) - [q["X"], q["Y"]]))) for (u, v, _), q in points]
     return p.tolist(), [round(e, 1) for e in errors]
 
@@ -126,6 +128,18 @@ def held_out(points):
         x, y = locate(p, u, v, q["Z"])
         out.append((abs(x - q["X"]), abs(y - q["Y"])))
     return out
+
+
+def on_ray(p, u, v, depth):
+    """Machine X, Y of the thing the camera p sees at column u, row v, depth mm in front of it: what the Kinect sees
+    on the table (a board) has a depth, unlike the black microscope tube. Its Z is in the calibration's own frame (the
+    head's height while its ring was seen), so only X and Y are given."""
+    p = np.asarray(p, float)
+    m = p[:, :3]
+    centre = -np.linalg.solve(m, p[:, 3])
+    direction = np.linalg.solve(m, np.array([u, v, 1.0]))
+    x = centre + direction * depth / float(p[2, :3] @ direction)
+    return float(x[0]), float(x[1])
 
 
 def locate(p, u, v, z):

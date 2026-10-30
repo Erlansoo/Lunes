@@ -38,7 +38,7 @@ NGSPICE = ROOT / "ngspice" / "bin" / "ngspice_con.exe"
 MODELS = Path(__file__).resolve().parent / "spice" / "models.lib"
 CACHE = ROOT / "runs" / "fault_dictionaries"
 POINTS = 40000  # samples per run: plenty for the measurements, quick for ngspice
-VERSION = "7"  # of how a simulation is read; a change makes the cached fault dictionaries be simulated again
+VERSION = "8"  # of how a simulation is read; a change makes the cached fault dictionaries be simulated again
 # every node also leaks 1 GOhm to ground, as a breadboard does: it changes nothing a scope can see, and it keeps a
 # node that is cut off from everything (a collector whose transistor and LED are both off) from drifting to nonsense
 # over long time steps

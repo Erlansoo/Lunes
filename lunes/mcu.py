@@ -11,12 +11,24 @@ the sketch, up to 5 kHz), "input", "input_pullup", "analog_in" (on the analogue 
 The same program does three things, so the bench and the simulation cannot disagree:
 - In ngspice each pin is what it is electrically: an output is a 0 / VCC source behind the pin's own resistance
   (about 25 ohm on an ATmega328P), an input a high impedance, a pull-up 35 k to the board's supply.
-- sketch() writes the Arduino sketch: pinMode, the outputs, and a JSON line every 250 ms with every input
-  ({"A0": 307, "D4": 1}). compile() and upload() go through arduino-cli; upload never goes to the CNC's port.
-- read() listens to those lines over USB serial, and expectations() says what each input should read according
-  to the simulation (analogRead counts, digitalRead levels).
+- sketch() writes the Arduino sketch: pinMode, the outputs, and a JSON line every 250 ms with every input. The
+  board reads its inputs as fast as it can between lines (about 9000 times a second for one analogue input on an
+  Uno), so an analogue input comes as [mean, lowest, highest] counts and a digital one as the share of reads that
+  were HIGH: {"A0": [307.4, 301, 312], "D4": 1.0}. The board is then a slow voltmeter on every net its analogue
+  inputs touch. compile() and upload() go through arduino-cli; upload never goes to the CNC's port.
+- read() listens to those lines over USB serial, expectations() says what each input should read according to the
+  simulation, and compare() puts the two side by side. to_reading() turns an analogue input into a measurement of
+  its net for the diagnosis, like the multimeter but with the swing too.
+
+The sampling slows the loop (about 0.1 ms per analogue input on an Uno), so a square output toggled by the sketch
+keeps its frequency but its edges move by up to that much.
+
+SimulatedBoard is a board on a made-up bench: it prints what the sketch would on the simulated circuit, with a
+fault planted if asked, to try all of this without a board.
 """
+import copy
 import json
+import random
 import re
 import subprocess
 import time
@@ -45,6 +57,8 @@ BOARDS = {
                                           "PB1", "PB6", "PB7", "PB8", "PB9")}, "upload": False},
 }
 OUTPUTS = ("high", "low", "pwm", "square")
+ARDUINO_VIDS = ("2341", "2A03")  # USB vendor ids of genuine Arduino boards; clones use common serial chips
+NO_READINGS = "no readings: is it this port, and is Lunes' sketch on the board?"
 
 
 def mode_of(entry):
@@ -119,11 +133,17 @@ def spice(part, net):
                     source = f"PULSE(0 {board['vcc']:g} 0 {edge:g} {edge:g} {duty * period - edge:g} {period:g})"
             lines.append(f"V{name} mcu_{ref}_{pin} 0 {source}")
             lines.append(f"R{name} mcu_{ref}_{pin} {node} {board['pin_r']:g}")
-        else:  # an input, or an output the sketch never drives: a high impedance with a little capacitance
+        else:  # an input, or an output the sketch never drives: a high impedance with a little capacitance, and the
+            # pin's protection diodes, so a net pushed past the supply (12 V through a resistor) sits at about
+            # VCC + 0.5 V, as on the real chip, not at 12 V
             lines.append(f"R{name}_in {node} 0 100Meg")
             lines.append(f"C{name}_in {node} 0 10p")
+            lines.append(f"D{name}_up {node} {vcc_node} DMCU_{ref}")
+            lines.append(f"D{name}_down 0 {node} DMCU_{ref}")
             if mode == "input_pullup" and running:
                 lines.append(f"R{name}_pullup {node} {vcc_node} {board['pullup']:g}")
+    if any(line.startswith("D") for line in lines):
+        lines.append(f".model DMCU_{ref} D(IS=1e-14 N=1.2 RS=100)")
     return lines
 
 
@@ -141,27 +161,90 @@ def faults(part):
     return out
 
 
+def _counts(v, board):
+    return round(min(max(v, 0.0), board["vcc"]) / board["vcc"] * (2 ** board["adc_bits"] - 1))
+
+
+def _level(v, board):
+    """1, 0, or None between the logic thresholds."""
+    return 1 if v >= board["vih"] * board["vcc"] else 0 if v <= board["vil"] * board["vcc"] else None
+
+
 def expectations(part, nets):
-    """What each input should read on the board, from the simulated nets: analogRead counts, digitalRead levels."""
+    """What each input should read on the board, from the simulated nets: analogRead counts (mean, lowest and
+    highest), and for a digital input its level and the share of the time it reads HIGH."""
     board, out = BOARDS[part["kind"]], {}
-    top = 2 ** board["adc_bits"] - 1
     for pin, entry in (part.get("program") or {}).items():
         mode, _ = mode_of(entry)
         m = nets.get(part["pins"][pin])
         if m is None or mode not in ("analog_in", "input", "input_pullup"):
             continue
         v = m["mean_v"]
+        low, high = m.get("min_v", v), m.get("max_v", v)
         if mode == "analog_in":
-            out[pin] = {"analogRead": round(min(max(v, 0), board["vcc"]) / board["vcc"] * top), "volts": round(v, 3)}
-            if m.get("frequency_hz"):
-                out[pin]["note"] = (f"the net moves ({m['frequency_hz']:.4g} Hz, {m['vpp_v']:.2f} Vpp): single "
-                                    f"readings scatter around the mean")
+            out[pin] = {"analogRead": _counts(v, board), "lowest": _counts(low, board),
+                        "highest": _counts(high, board), "volts": round(v, 3)}
+            if m.get("frequency_hz") and m["vpp_v"] > 0.02 * board["vcc"]:
+                out[pin]["note"] = (f"the net moves ({m['frequency_hz']:.4g} Hz, {m['vpp_v']:.2f} Vpp): the mean is "
+                                    f"over many periods, lowest and highest are its swing")
         else:
-            level = 1 if v >= board["vih"] * board["vcc"] else 0 if v <= board["vil"] * board["vcc"] else None
+            level = _level(v, board)
             out[pin] = {"digitalRead": level, "volts": round(v, 3)}
-            if level is None:
+            if m.get("frequency_hz") and _level(low, board) == 0 and _level(high, board) == 1:
+                out[pin]["high_share"] = round(float(m.get("duty") or 0.5), 2)  # it toggles: HIGH for its duty
+            elif _level(low, board) == _level(high, board) is not None:
+                out[pin]["high_share"] = float(_level(low, board))
+            else:
                 out[pin]["note"] = "between the logic thresholds: it may read either way"
     return out
+
+
+def compare(part, got, expect):
+    """{pin: what the board read beside what the simulation says, and whether they agree}. got: read()'s result.
+    An analogue input agrees within 5 % plus 1 % of the scale: the parts' tolerance, and the board's 5 V from USB
+    is often 4.8 V, which every reading of an outside voltage scales with."""
+    board = BOARDS[part["kind"]]
+    top = 2 ** board["adc_bits"] - 1
+    out = {}
+    for pin, e in expect.items():
+        g = got["pins"].get(pin)
+        if g is None:
+            out[pin] = {"expected": e, "read": None, "ok": False,
+                        "note": "the board sent nothing for this pin: its sketch is not this circuit's"}
+            continue
+        if "analogRead" in e:
+            tolerance = 0.05 * e["analogRead"] + 0.01 * top
+            row = {"net": part["pins"][pin], "expected_v": e["volts"], "read_v": g.get("mean_v"),
+                   "expected_counts": e["analogRead"], "read_counts": g.get("analogRead"),
+                   "read_swing_v": g.get("vpp_v"), "ok": g.get("analogRead") is not None
+                   and abs(g["analogRead"] - e["analogRead"]) <= tolerance}
+            swing = e["highest"] - e["lowest"]
+            if g.get("highest") is not None and abs((g["highest"] - g["lowest"]) - swing) > 0.1 * swing + 0.02 * top:
+                row["ok"] = False
+                row["note"] = (f"it swings {g['highest'] - g['lowest']} counts where the simulation swings {swing}: "
+                               f"{'the net moves and should not' if swing < 0.02 * top else 'the net is not moving as it should'}")
+        else:
+            row = {"net": part["pins"][pin], "expected_high_share": e.get("high_share"),
+                   "read_high_share": g.get("high_share"),
+                   "ok": e.get("high_share") is None or abs(g.get("high_share", -1) - e["high_share"]) <= 0.1}
+        if e.get("note"):
+            row.setdefault("note", e["note"])
+        out[pin] = row
+    return out
+
+
+def to_reading(pin_read, part):
+    """An analogue input's reading as a measurement of its net, for lunes.diagnosis: its mean and its swing. No
+    frequency: the board does not measure one, and the engine then does not judge by it. The ADC stops at 0 and at
+    its supply: a reading that touched the top says the net is at least that high (its swing at least that big),
+    one that touched 0 that it is at most that high, as on a scope that clips."""
+    top = 2 ** BOARDS[part["kind"]]["adc_bits"] - 1
+    reading = {"mean_v": pin_read["mean_v"], "vpp_v": pin_read["vpp_v"]}
+    if pin_read["highest"] >= top - 1:
+        reading["clipped_high"] = True
+    if pin_read["lowest"] <= 0:
+        reading["clipped_low"] = True
+    return reading
 
 
 def review(part, sim):
@@ -198,6 +281,10 @@ def review(part, sim):
 
 
 # ---- the sketch ---------------------------------------------------------------------------------------------------
+def _var(pin):
+    return re.sub(r"\W", "_", pin)
+
+
 def _code_pin(pin, board):
     return pin[1:] if pin.startswith("D") and board["vcc"] == 5.0 else pin  # D9 -> 9, A0 -> A0, PA0 -> PA0
 
@@ -206,7 +293,7 @@ def sketch(part, circuit_name="circuit"):
     """The Arduino sketch for the part's pin program, as text."""
     board = BOARDS[part["kind"]]
     program = part.get("program") or {}
-    head, setup, loop, report = [], [], [], []
+    head, setup, loop, analog, digital = [], [], [], [], []
     for pin, entry in program.items():
         mode, args = mode_of(entry)
         p = _code_pin(pin, board)
@@ -227,22 +314,45 @@ def sketch(part, circuit_name="circuit"):
                      f"    digitalWrite({p}, on_{v} ? HIGH : LOW);", "  }"]
         elif mode in ("input", "input_pullup"):
             setup.append(f"  pinMode({p}, {'INPUT_PULLUP' if mode == 'input_pullup' else 'INPUT'});")
-            report.append((pin, f"digitalRead({p})"))
+            digital.append(pin)
         elif mode == "analog_in":
-            report.append((pin, f"analogRead({p})"))
+            analog.append(pin)
+    for pin in analog:
+        v = _var(pin)
+        head += [f"unsigned long sum_{v} = 0;", f"int lowest_{v} = 32767, highest_{v} = -1;"]
+    for pin in digital:
+        head.append(f"unsigned long high_{_var(pin)} = 0;")
+    if analog or digital:
+        head.append("unsigned long reads = 0, last_report = 0;")
     lines = [f"// Written by Lunes from the pin program of \"{circuit_name}\" ({board['name']}).",
              "// The same program is what Lunes simulated, so the bench and the simulation should agree.",
-             "// Every 250 ms it prints one JSON line with every input, for Lunes to read over USB.", ""]
+             "// Between reports it reads every input as fast as it can. Every 250 ms it prints one JSON line for",
+             "// Lunes: an analogue input as [mean, lowest, highest] counts, a digital one as the share of HIGH reads.",
+             ""]
     lines += head + ["", "void setup() {", "  Serial.begin(115200);"] + setup + ["}", "", "void loop() {",
                                                                               "  unsigned long now = micros();"]
     lines += loop
-    if report:
-        lines += ["  static unsigned long last_report = 0;", "  if (millis() - last_report >= 250) {",
-                  "    last_report = millis();"]
-        for k, (pin, expr) in enumerate(report):
-            lines.append(f'    Serial.print("{"{" if k == 0 else ","}\\"{pin}\\":");')
-            lines.append(f"    Serial.print({expr});")
-        lines += ['    Serial.println("}");', "  }"]
+    if analog or digital:
+        for pin in analog:
+            v, p = _var(pin), _code_pin(pin, board)
+            lines += [f"  int a_{v} = analogRead({p});", f"  sum_{v} += a_{v};",
+                      f"  if (a_{v} < lowest_{v}) lowest_{v} = a_{v};",
+                      f"  if (a_{v} > highest_{v}) highest_{v} = a_{v};"]
+        for pin in digital:
+            lines.append(f"  high_{_var(pin)} += digitalRead({_code_pin(pin, board)});")
+        lines += ["  reads++;", "  if (millis() - last_report >= 250) {", "    last_report = millis();"]
+        for k, pin in enumerate(analog + digital):
+            v = _var(pin)
+            start = "{" if k == 0 else ","
+            if pin in analog:
+                lines += [f'    Serial.print("{start}\\"{pin}\\":[");', f"    Serial.print((float)sum_{v} / reads, 1);",
+                          '    Serial.print(",");', f"    Serial.print(lowest_{v});", '    Serial.print(",");',
+                          f"    Serial.print(highest_{v});", '    Serial.print("]");',
+                          f"    sum_{v} = 0;", f"    lowest_{v} = 32767;", f"    highest_{v} = -1;"]
+            else:
+                lines += [f'    Serial.print("{start}\\"{pin}\\":");', f"    Serial.print((float)high_{v} / reads, 2);",
+                          f"    high_{v} = 0;"]
+        lines += ['    Serial.println("}");', "    reads = 0;", "  }"]
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -299,26 +409,180 @@ def upload(part, port, forbidden=(), circuit_name="circuit"):
             **({} if code == 0 else {"error": [l for l in out.splitlines() if l.strip()][-6:]})}
 
 
-def read(port, seconds=3.0, forbidden=()):
-    """The sketch's JSON lines over serial for a few seconds: {"readings": n, "mean": {pin: value},
-    "last": {...}}. Opening the port resets the board, so it waits for it to start first."""
+def read(port, part, seconds=3.0, forbidden=()):
+    """What the board's inputs read over a few seconds, from the sketch's JSON lines (see summarize). Opening the
+    port resets the board, so it waits for it to start first."""
     import serial
     if str(port).upper() in {str(f).upper() for f in forbidden}:
         return {"ok": False, "error": f"{port} is the CNC's motion board, not the Arduino"}
     rows = []
-    with serial.Serial(port, 115200, timeout=0.3) as s:
-        time.sleep(2.0)
-        s.reset_input_buffer()
-        t0 = time.time()
+    try:
+        with serial.Serial(port, 115200, timeout=0.3) as s:
+            time.sleep(2.0)
+            s.reset_input_buffer()
+            t0 = time.time()
+            while time.time() - t0 < seconds:
+                line = s.readline().decode(errors="ignore").strip()
+                if line.startswith("{"):
+                    try:
+                        rows.append(json.loads(line))
+                    except ValueError:
+                        pass
+    except serial.SerialException as e:
+        return {"ok": False, "error": f"cannot open {port}: {e}"}
+    return summarize(rows, part) if rows else {"ok": False, "error": NO_READINGS}
+
+
+BAUDS = (115200, 9600, 57600, 38400, 19200, 4800, 2400, 1200, 230400, 250000, 500000, 1000000)
+
+
+def text_share(data):
+    """Share of the bytes that are plain text (printable, tab, line ends): at the wrong baud rate it is low."""
+    return sum(1 for b in data if 32 <= b < 127 or b in (9, 10, 13)) / len(data) if data else 0.0
+
+
+def _listen(port, baud, seconds, send=None, reset=False):
+    import serial
+    s = serial.Serial()
+    s.port, s.baudrate, s.timeout = port, int(baud), 0.1
+    if not reset:  # DTR held low from the start: most boards keep running instead of restarting
+        s.dtr = s.rts = False
+    s.open()
+    try:
+        if send is not None:
+            s.write((str(send).rstrip("\r\n") + "\n").encode())
+        data, t0 = bytearray(), time.time()
         while time.time() - t0 < seconds:
-            line = s.readline().decode(errors="ignore").strip()
-            if line.startswith("{"):
-                try:
-                    rows.append(json.loads(line))
-                except ValueError:
-                    pass
-    if not rows:
-        return {"ok": False, "error": "no readings: is it this port, and is Lunes' sketch on the board?"}
-    keys = sorted({k for r in rows for k in r})
-    mean = {k: round(sum(r[k] for r in rows if k in r) / sum(1 for r in rows if k in r), 1) for k in keys}
-    return {"ok": True, "readings": len(rows), "mean": mean, "last": rows[-1]}
+            data += s.read(4096)
+        return bytes(data)
+    finally:
+        s.close()
+
+
+def monitor(port, baud=115200, seconds=3.0, send=None, reset=False, forbidden=()):
+    """What runs on a board prints on its serial port, like the Arduino IDE's serial monitor: any sketch, not only
+    Lunes' own. baud "auto" tries the usual rates and keeps the one whose bytes read as text. send: a line written
+    right after opening (a newline is added), for sketches that take commands. reset=False keeps the running
+    sketch going (on most boards); True restarts it, to catch what it prints when it starts."""
+    import serial
+    if str(port).upper() in {str(f).upper() for f in forbidden}:
+        return {"ok": False, "error": f"{port} is the CNC's motion board: Lunes does not open it as a monitor"}
+    try:
+        if str(baud).lower() == "auto":
+            tried = {}
+            for rate in BAUDS:
+                sample = _listen(port, rate, 0.8)
+                tried[rate] = round(text_share(sample), 2) if sample else None
+                if sample and text_share(sample) >= 0.95:
+                    baud = rate
+                    break
+            else:
+                heard = {r: t for r, t in tried.items() if t is not None}
+                if not heard:
+                    return {"ok": False, "error": "the board printed nothing at any usual baud rate in 0.8 s each",
+                            "note": "it may print only when something happens, or only at start (reset=true)"}
+                baud = max(heard, key=heard.get)
+        data = _listen(port, baud, seconds, send, reset)
+    except serial.SerialException as e:
+        return {"ok": False, "error": f"cannot open {port}: {e}"}
+    text = data.decode("utf-8", errors="replace")
+    lines = [line[:200] for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
+    out = {"ok": True, "port": port, "baud": int(baud), "seconds": seconds, "bytes": len(data),
+           "lines": lines[-60:], "text_share": round(text_share(data), 2)}
+    if len(lines) > 60:
+        out["note"] = f"{len(lines)} lines; the last 60 are here"
+    if data and text_share(data) < 0.9:
+        out["warning"] = ("these bytes do not read as text: the baud rate is probably wrong (try baud 'auto'), or "
+                          "the sketch sends binary data")
+    if not data:
+        out["note"] = "nothing printed in that time" + ("" if reset else ": try reset=true to catch the start")
+    return out
+
+
+def summarize(rows, part):
+    """The sketch's lines over a few seconds as one reading per input: an analogue one as its mean, lowest and
+    highest counts and volts (and the swing, highest minus lowest), a digital one as the share of HIGH reads."""
+    board = BOARDS[part["kind"]]
+    volts = board["vcc"] / (2 ** board["adc_bits"] - 1)
+    pins = {}
+    for pin in sorted({k for r in rows for k in r}):
+        values = [r[pin] for r in rows if pin in r]
+        if isinstance(values[0], list):  # [mean, lowest, highest] of one 250 ms report
+            mean = sum(v[0] for v in values) / len(values)
+            low, high = min(v[1] for v in values), max(v[2] for v in values)
+            pins[pin] = {"analogRead": round(mean, 1), "lowest": low, "highest": high,
+                         "mean_v": round(mean * volts, 3), "min_v": round(low * volts, 3),
+                         "max_v": round(high * volts, 3), "vpp_v": round((high - low) * volts, 3)}
+        else:
+            pins[pin] = {"high_share": round(sum(values) / len(values), 2)}
+    return {"ok": True, "reports": len(rows), "pins": pins}
+
+
+def simulated_rows(part, nets, seconds=3.0, rng=None):
+    """The lines Lunes' sketch would print over a few seconds on a board whose nets read like nets (a simulation),
+    with a count or two of noise."""
+    rng = rng or random.Random(1)
+    board = BOARDS[part["kind"]]
+    top = 2 ** board["adc_bits"] - 1
+    rows = []
+    for _ in range(max(1, int(seconds / 0.25))):
+        row = {}
+        for pin, entry in (part.get("program") or {}).items():
+            mode, _ = mode_of(entry)
+            m = nets.get(part["pins"][pin])
+            if m is None:
+                continue
+            if mode == "analog_in":
+                low, high = _counts(m.get("min_v", m["mean_v"]), board), _counts(m.get("max_v", m["mean_v"]), board)
+                mean = min(max(_counts(m["mean_v"], board) + rng.gauss(0, 0.7), 0), top)
+                row[pin] = [round(mean, 1), max(low - rng.randint(0, 2), 0), min(high + rng.randint(0, 2), top)]
+            elif mode in ("input", "input_pullup"):
+                low, high = _level(m.get("min_v", m["mean_v"]), board), _level(m.get("max_v", m["mean_v"]), board)
+                if m.get("frequency_hz") and low == 0 and high == 1:
+                    row[pin] = round(float(m.get("duty") or 0.5), 2)
+                else:
+                    level = _level(m["mean_v"], board)
+                    row[pin] = float(level) if level is not None else float(rng.random() < 0.5)
+        rows.append(row)
+    return rows
+
+
+class SimulatedBoard:
+    """A board on a made-up bench, to try Lunes without one. Programming it keeps the circuit; reading it gives what
+    Lunes' sketch would print on that circuit as ngspice simulates it, with one fault planted if asked (an id of
+    lunes.circuit.faults, like "R1:open" or "U1:not_running")."""
+    port = "simulated"
+
+    def __init__(self, fault=None, seed=1):
+        self.fault, self.rng = fault, random.Random(seed)
+        self.circuit = self.ref = None
+
+    def program(self, circuit, ref):
+        self.circuit, self.ref = copy.deepcopy(circuit), ref
+
+    def read(self, seconds=3.0):
+        if self.circuit is None or self.fault == f"{self.ref}:not_running":
+            return {"ok": False, "error": NO_READINGS}
+        part = next(p for p in self.circuit["parts"] if p["ref"] == self.ref)
+        return summarize(self._rows(seconds), part)
+
+    def _rows(self, seconds):
+        from lunes.circuit import with_fault
+        from lunes.simulator import expected
+        bench = self.circuit
+        if self.fault:
+            try:
+                bench = with_fault(self.circuit, self.fault)
+            except ValueError:  # a part this circuit does not have: the fault is not on this bench
+                pass
+        part = next(p for p in self.circuit["parts"] if p["ref"] == self.ref)
+        return simulated_rows(part, expected(bench)["nets"], seconds, self.rng)
+
+    def monitor(self, seconds=3.0):
+        """What the serial monitor would show: the lines of Lunes' sketch."""
+        if self.circuit is None or self.fault == f"{self.ref}:not_running":
+            return {"ok": True, "port": "simulated", "baud": 115200, "seconds": seconds, "bytes": 0, "lines": [],
+                    "note": "nothing printed in that time"}
+        lines = [json.dumps(r, separators=(",", ":")) for r in self._rows(seconds)]
+        return {"ok": True, "port": "simulated", "baud": 115200, "seconds": seconds,
+                "bytes": sum(len(line) + 2 for line in lines), "lines": lines[-60:], "text_share": 1.0}

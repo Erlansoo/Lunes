@@ -99,12 +99,33 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
       the 4 mm block as 4.02 mm.
   - Measured error on a board: 0.12 mm.
   - `tools/laser_aim.py` is a live microscope view with a cross, for aiming the laser by hand.
-- **Being built: Arduino in the simulation** (`lunes/mcu.py`).
-  - An Uno, a Nano or a Blue Pill is a part of the circuit, with a program for its pins. The same program is
-    simulated with the circuit, written as a sketch and built with arduino-cli. The board's readings come back
-    over USB serial, to compare with the simulation.
-  - Design templates: a blinking LED, PWM into an RC filter, a transistor switch, reading a divider.
-  - Not yet a tool Lunes calls on its own. Flashing refuses the CNC's port.
+- **Working on the simulated bench, first test on a real board when one is plugged in: an Arduino in the circuit**
+  (`lunes/mcu.py`).
+  - An Uno, a Nano or a Blue Pill is a part of the circuit, with a program for its pins. ngspice simulates that
+    program with the circuit: each output is a source behind the pin's own resistance, and each input has the
+    chip's protection diodes, so 12 V through a resistor sits at about 5.5 V, as on the real pin.
+  - **The same program goes on the board.** `mcu_program` writes it as a sketch, builds it with arduino-cli and
+    uploads it. It never touches the CNC's port, and without a port it uses the only Arduino plugged in or asks.
+  - **The board measures too.** Between reports, the sketch reads every input as fast as it can. An analogue
+    input reports the mean, lowest and highest of its net; a digital one how much of the time it reads HIGH.
+    `mcu_read` puts those beside the simulation.
+  - **Diagnosis without the probe:** while a diagnosis runs, each net on an analogue input goes to the engine like a
+    measurement. A reading stuck at 0 or at 5 V counts as "at most" or "at least", as on a scope that clips. The
+    engine then asks for the scope only where the board cannot see.
+  - **Serial monitor:** `serial_monitor` reads what any sketch prints, like the Arduino IDE's monitor. It works at
+    a given baud rate or finds it (`auto` keeps the rate whose bytes read as text). It can send a line to sketches
+    that take commands, and can restart the board to catch its start message.
+  - Design templates: a blinking LED, PWM into an RC filter (the board reads its own output back), a transistor
+    switch, reading 12 V through a divider. All meet their goals in ngspice, and all their sketches compile.
+  - **Tested on a simulated board** (`--arduino simulado`, with `--falla R1:open` to plant a fault), on the PWM
+    read-back and the divider:
+    - Seven cases, and none named wrong.
+    - Five planted faults were named, each with the faults that read the same at every net (for example "R1 open
+      or C1 shorted", which a look tells apart). It took one to three readings.
+    - The healthy circuit was confirmed by the board alone, in one reading.
+    - One stayed undecided: R2 open against R2 ten times too big. With the pin clamped, both read about 5.5 V.
+- **Tests:** `python tests/test_simulated_bench.py` checks all of this with no hardware, in about a minute and a half:
+  the templates and their sketches, the simulated board through Lunes' own tools, and the 555 blinker's 24 faults.
 - **Being built:** the probe held by the machine.
 
 ## Built from scratch

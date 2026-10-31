@@ -39,6 +39,7 @@ from lunes.cameras import cameras, find_camera  # noqa: E402
 from lunes.dashboard import Dashboard  # noqa: E402
 from lunes.hume import MODEL, THINK, Hume  # noqa: E402
 from lunes.hantek import Scope, SimulatedScope, sine, square  # noqa: E402
+from lunes.lab import state as lab_state  # noqa: E402
 from lunes.mcu import SimulatedBoard  # noqa: E402
 from lunes.kinect import Kinect  # noqa: E402
 from lunes.machine import Machine  # noqa: E402
@@ -475,7 +476,7 @@ def main():
     voice = Voice()
     voice.prepare(*REACTIONS, "Listo, me detengo.")
     board = Dashboard(camera=cam, kinect=kinect, speaking=lambda: voice.speaking,
-                      bench=bench)
+                      bench=bench, lab=lambda: lab_state(hume))
     hume.on_image = lambda image, what: board.set_seen(image, what)
     print(f"página en vivo: {board.url}")
     ear = None

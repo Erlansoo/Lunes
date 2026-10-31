@@ -688,6 +688,9 @@ class Hume:
         self.m, self.cam, self.kinect, self.bench, self.scope = machine, microscope, kinect, bench, scope
         self.mcu, self.mcu_port, self.mcu_sketch = mcu, None, None  # the board, its port, the sketch put on it
         self.last_scope = None  # {"at", "result"} of the last scope_measure
+        self.last_trace = None  # its waveforms, for the web lab
+        self.last_mcu, self.last_serial = None, None  # the last mcu_read, and the last lines the serial monitor showed
+        self.goals, self.lab_diagnosis = None, None  # the circuit's goals, and the diagnosis as the web lab last read it
         self.circuit = self.expected = self.diagnosis = None  # the circuit on the bench, its simulation, a diagnosis
         self.fault_table = None  # the circuit's fault dictionary, simulated in the background after circuit_set
         self._table_thread = None
@@ -889,7 +892,7 @@ class Hume:
     def _scope_measure(self, channel="CH1", auto=True, range_v=None, rate=None):
         """Measure what is on the probe(s): the code sets the scope up (auto) or uses the given setting."""
         from lunes.hantek import ranges
-        from lunes.signals import autoset, fit_range, measure, notes, picture, step_v
+        from lunes.signals import autoset, fit_range, measure, notes, picture, step_v, trace
         if self.scope is None:
             return {"ok": False, "error": "the oscilloscope is not connected"}, None
         names = ["CH1", "CH2"] if channel == "both" else [channel]
@@ -917,6 +920,7 @@ class Hume:
         if getattr(self.scope, "signals", None) is not None:
             result["simulated"] = "made-up signals from the simulated scope, not the bench: say so if you report them"
         self.last_scope = {"at": time.time(), "result": result}
+        self.last_trace = trace(cap, shown)
         return result, picture(cap, shown, title=" + ".join(names))
 
     def _scope_selftest(self, channel="CH1"):
@@ -972,6 +976,7 @@ class Hume:
         warnings += review.after(circuit, sim) + sim["warnings"]
         goals = verify(sim, as_spec(spec)) if spec else []
         self.circuit, self.expected, self.diagnosis, self.fault_table = circuit, sim, None, None
+        self.goals = goals
         CIRCUIT.parent.mkdir(exist_ok=True)
         CIRCUIT.write_text(json.dumps({"circuit": circuit, "expected": sim}, ensure_ascii=False, indent=1),
                            encoding="utf-8")
@@ -1183,13 +1188,16 @@ class Hume:
         if isinstance(self.mcu, mcu.SimulatedBoard) and port in (None, "", "simulated"):
             out = self.mcu.monitor(seconds)
             out["simulated"] = "the simulated board's lines, not a bench"
+            self.last_serial = out.get("lines")
             return out, None
         port = port or self.mcu_port
         if not port:
             port, unknown = self._board_port()
             if unknown:
                 return unknown, None
-        return mcu.monitor(port, baud, seconds, send, reset, forbidden=(self.m.s.port,)), None
+        out = mcu.monitor(port, baud, seconds, send, reset, forbidden=(self.m.s.port,))
+        self.last_serial = out.get("lines")
+        return out, None
 
     def _mcu_program(self, port=None, ref=None):
         from lunes import mcu
@@ -1253,6 +1261,7 @@ class Hume:
                 out["diagnosis"] = self.diagnosis.state()
         if simulated:
             out["simulated"] = "read from the simulated board, not the bench"
+        self.last_mcu = {"at": time.time(), "pins": pins, "all_as_simulated": out["all_as_simulated"]}
         return out, None
 
     # The laser pointer -------------------------------------------------------------------------------------------

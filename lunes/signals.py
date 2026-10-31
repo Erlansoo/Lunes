@@ -259,6 +259,35 @@ def _start(v, m):
     return len(v) // 10 + int(rising[0]) if rising.size else 0
 
 
+def _window(capture, measurements):
+    """(first sample, samples) of what a screen shows: from the trigger, about four periods of the first channel."""
+    first = next(iter(capture.volts))
+    start = _start(capture.volts[first], measurements[first])
+    f = measurements[first].get("frequency_hz")
+    shown = capture.samples - start
+    if f:
+        shown = min(shown, max(50, int(4 * capture.rate / f)))
+    return start, shown
+
+
+def _columns(v, width):
+    """Lowest and highest volts in each of width columns, so a fast edge stays on a screen narrower than the samples."""
+    cols = np.linspace(0, len(v), width + 1).astype(int)
+    return (np.array([v[a:max(b, a + 1)].min() for a, b in zip(cols[:-1], cols[1:])]),
+            np.array([v[a:max(b, a + 1)].max() for a, b in zip(cols[:-1], cols[1:])]))
+
+
+def trace(capture, measurements, width=480):
+    """The same window for the web lab to draw: {"seconds", "rate", "channels": {ch: {"range_v", "low", "high"}}}."""
+    start, shown = _window(capture, measurements)
+    channels = {}
+    for ch, volts in capture.volts.items():
+        lo, hi = _columns(volts[start:start + shown], width)
+        channels[ch] = {"range_v": capture.range_v[ch], "low": [round(float(x), 3) for x in lo],
+                        "high": [round(float(x), 3) for x in hi]}
+    return {"seconds": shown / capture.rate, "rate": capture.rate, "channels": channels}
+
+
 def picture(capture, measurements, title="", size=(960, 540)):
     """The capture drawn like a scope screen: 10 x 8 divisions, each channel at its own volts per division, the
     time per division and the main measurements written below."""
@@ -272,12 +301,7 @@ def picture(capture, measurements, title="", size=(960, 540)):
         y = top + int(j * plot_h / 8)
         cv2.line(img, (0, y), (w - 1, y), (70, 70, 70) if j != 4 else (110, 110, 110), 1)
     channels = list(capture.volts)
-    first = capture.volts[channels[0]]
-    start = _start(first, measurements[channels[0]])
-    f = measurements[channels[0]].get("frequency_hz")
-    shown = len(first) - start
-    if f:  # about four periods across the screen
-        shown = min(shown, max(50, int(4 * capture.rate / f)))
+    start, shown = _window(capture, measurements)
     seconds = shown / capture.rate
     header = [f"{title}  " if title else "", f"{si(seconds / 10, 's')}/div  {si(capture.rate, 'S/s')}"]
     cv2.putText(img, "".join(header), (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1, cv2.LINE_AA)
@@ -285,9 +309,7 @@ def picture(capture, measurements, title="", size=(960, 540)):
     for ch in channels:
         v = capture.volts[ch][start:start + shown]
         full = capture.range_v[ch]
-        cols = np.linspace(0, len(v), w + 1).astype(int)
-        lo = np.array([v[a:max(b, a + 1)].min() for a, b in zip(cols[:-1], cols[1:])])
-        hi = np.array([v[a:max(b, a + 1)].max() for a, b in zip(cols[:-1], cols[1:])])
+        lo, hi = _columns(v, w)
         to_y = lambda x: np.clip(top + plot_h / 2 - x / full * plot_h / 2, top, top + plot_h).astype(np.int32)
         xs = np.arange(w)
         for x, y0, y1 in zip(xs, to_y(lo), to_y(hi)):

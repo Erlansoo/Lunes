@@ -131,7 +131,17 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
       or C1 shorted", which a look tells apart). It took one to three readings.
     - The healthy circuit was confirmed by the board alone, in one reading.
     - One stayed undecided: R2 open against R2 ten times too big. With the pin clamped, both read about 5.5 V.
-- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs three files:
+- **The web lab** (`lunes/web/lab.html`, `lunes/lab.py`): one live page of the whole bench at
+  http://127.0.0.1:8765, in Spanish or English.
+  - The microscope with its scale bar and position, the bench camera, the Kinect and the last picture the model
+    looked at.
+  - The scope's traces and readings, and the machine on a map of its table, with the Kinect's check.
+  - The circuit, what the engine thinks is wrong, where to probe next, and each net simulated against measured.
+  - The Arduino's readings and serial lines, and the conversation with the tools Lunes used.
+  - Nothing leaves the PC, and the page loads nothing from outside it.
+  - `python tools/lab_preview.py` shows it on a simulated bench with no hardware: a 555 with a planted fault,
+    diagnosed by ngspice and the simulated scope. No model is called, and the conversation is scripted.
+- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs four files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -142,6 +152,8 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
     - PWM, and logic at 3.3, 5 and 12 V;
     - sines and steady levels;
     - serial data at 9600 and 115200 baud.
+  - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
+    outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own
     tools, and the 555 blinker's 24 faults.
 - **Being built:** the probe held by the machine.

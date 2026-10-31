@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TESTS = ("test_geometry.py", "test_scope_auto.py", "test_simulated_bench.py")
+TESTS = ("test_geometry.py", "test_scope_auto.py", "test_lab.py", "test_simulated_bench.py")
 
 failed = []
 for name in TESTS:

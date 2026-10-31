@@ -86,7 +86,13 @@ def measure(v, rate, step_v=0.0):
     m = {"samples": n, "sample_rate": rate, "window_s": _round(n / rate), "min_v": _round(vmin), "max_v": _round(vmax),
          "vpp_v": _round(vpp), "mean_v": _round(mean), "rms_v": _round(float(np.sqrt(np.mean(v * v)))),
          "ac_rms_v": _round(ac_rms), "noise_v": _round(noise)}
-    if vpp <= max(6 * noise, 3.5 * step_v, 0.02):
+    # noise alone spans about 2 sqrt(2 ln n) of its sigma over n samples (nine sigmas over 20000): flatter than
+    # that is a steady level
+    # On a scope (step_v given) noise of a step or less is mostly whole steps, where the median of the differences
+    # reads 0 and so does the noise estimate: there, 99 % of the samples within four steps is a steady level.
+    core = float(np.percentile(v, 99.5) - np.percentile(v, 0.5))
+    if vpp <= max(1.1 * 2 * np.sqrt(2 * np.log(max(n, 2))) * noise, 3.5 * step_v, 0.02) or \
+            (step_v and core <= 4 * step_v):
         m["shape"] = "dc"
         return m
 
@@ -199,25 +205,30 @@ def autoset(scope, channel="CH1", samples=20000, alone=False):
     """Range and sample rate for what is on channel. alone=True lets CH1 run by itself when a fast signal needs
     twice the sample rate (CH2 then reads nothing). Returns (capture, measurement, what it tried)."""
     widest = ranges(scope.probe[channel])[0]
-    tried, best, peak = [], None, 0.0
+    tried, best, peak, clipped, shortest = [], None, 0.0, False, None
     for rate in (20e3, 1e6, MAX_RATE[scope.channels]):
         scope.configure(rate=rate, range_v={channel: widest})
         cap = scope.capture(samples)
         m = measure(cap.volts[channel], rate, step_v(widest))
         tried.append({"rate": rate, "frequency_hz": m.get("frequency_hz"), "vpp_v": m["vpp_v"], "shape": m["shape"]})
         peak = max(peak, abs(m["min_v"]), abs(m["max_v"]))
-        if cap.clipped[channel] > 0.001:
-            return cap, m, tried  # past the widest range: nothing narrower will hold it
+        # past the widest range nothing narrower holds it, but the rate still has to fit: a 5 V logic signal on a
+        # x1 probe touches the top of the range
+        clipped = clipped or cap.clipped[channel] > 0.001
         if m.get("frequency_hz") and m.get("periods_seen", 0) >= 3:
             best = m  # the fastest rate that still sees three periods times them best
+        if m.get("shortest_pulse_s") and m["shortest_pulse_s"] * rate >= 4:
+            shortest = m["shortest_pulse_s"]  # serial data: its bit, seen with a few samples at least
     fitting = [r for r in ranges(scope.probe[channel]) if r >= 1.15 * peak]
-    range_v = fitting[-1] if fitting else widest
+    range_v = widest if clipped or not fitting else fitting[-1]
     channels = scope.channels
     if best:
         f = best["frequency_hz"]
         if alone and channel == "CH1" and 25 * f > MAX_RATE[channels]:
             channels = 1
         rate = _pick_rate(f * samples / 10, channels, floor=min(25 * f, MAX_RATE[channels]))
+    elif shortest:  # about 20 samples a bit: the window then holds some hundred bits
+        rate = _pick_rate(20 / shortest, channels)
     elif tried[-1]["shape"] in ("digital", "irregular"):
         rate = MAX_RATE[scope.channels]
     else:

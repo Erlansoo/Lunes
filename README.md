@@ -124,8 +124,19 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
       or C1 shorted", which a look tells apart). It took one to three readings.
     - The healthy circuit was confirmed by the board alone, in one reading.
     - One stayed undecided: R2 open against R2 ten times too big. With the pin clamped, both read about 5.5 V.
-- **Tests:** `python tests/test_simulated_bench.py` checks all of this with no hardware, in about a minute and a half:
-  the templates and their sketches, the simulated board through Lunes' own tools, and the 555 blinker's 24 faults.
+- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs three files:
+  - `test_geometry.py`:
+    - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
+    - laser triangulation;
+    - the Kinect's camera fit over the whole table, at positions it never saw too.
+  - `test_scope_auto.py`: the scope's Auto on 20 kinds of signal with each probe setting, and the self-test catching
+    a probe at x1 while Lunes counts x10, and the other way round. The signals are:
+    - square waves from 50 Hz to 1 MHz;
+    - PWM, and logic at 3.3, 5 and 12 V;
+    - sines and steady levels;
+    - serial data at 9600 and 115200 baud.
+  - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own
+    tools, and the 555 blinker's 24 faults.
 - **Being built:** the probe held by the machine.
 
 ## Built from scratch

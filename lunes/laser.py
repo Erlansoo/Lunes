@@ -14,8 +14,8 @@ down, past the levels that are too bright, to where the dot goes out, and keeps 
 that showed it, so it still lases when the threshold moves.
 
 Where it lands: the laser is fixed to the carriage, not to Z, so moving the head up or down does not move the dot.
-The beam is slanted (about 33 degrees on the bench), so where it lands depends on how high the surface is: the dot's
-distance from the microscope's centre shifts about 0.65 mm for each mm the surface rises. The microscope focuses at
+The beam is slanted (about 27 degrees from vertical on the bench), so where it lands depends on how high the surface
+is: the dot's distance from the microscope's centre shifts about 0.5 mm for each mm the surface rises. The microscope focuses at
 a fixed distance, so the head's Z in focus is the surface's height. calibrate measures the distance (the dot's
 centre in mm minus where the microscope is) on the surface in focus and keeps it with that Z, for up to three
 surfaces (the bed, the board, a breadboard's top). With two or more at different heights the slant is fitted, and

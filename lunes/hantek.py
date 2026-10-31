@@ -15,6 +15,7 @@ samples, triggered in software afterwards, and a range must hold the signal's wh
 SimulatedScope has the same interface with signals made up in software, so Lunes' measuring can be tested without
 the scope on the bench.
 """
+import json
 import time
 from pathlib import Path
 
@@ -22,6 +23,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 FIRMWARE = ROOT / "firmware" / "hantek6022be" / "dso6022be-firmware.hex"
+CONFIG = ROOT / "config" / "machine.json"  # keeps each range's zero as measure_zero found it, per scope
 VENDOR_EMPTY, VENDOR_LOADED, PRODUCT = 0x04B4, 0x04B5, 0x6022
 RANGES_AT_BNC = (5.0, 2.5, 1.0, 0.5)  # volts, either way of 0
 GAIN_CODE = {5.0: 1, 2.5: 2, 1.0: 5, 0.5: 10}  # what the firmware takes for each range
@@ -32,7 +34,8 @@ RATE_CODE = {20e3: 102, 32e3: 103, 40e3: 104, 50e3: 105, 64e3: 106, 100e3: 110, 
              15e6: 15, 16e6: 16, 24e6: 24}
 MAX_RATE = {1: 24e6, 2: 12e6}  # what USB keeps up with
 BULK_EP, PACKET = 0x86, 512
-SKIP_BYTES = 2 * PACKET  # the first packets of a capture are unsettled
+SKIP_BYTES = 16 * PACKET  # a capture starts with what the scope's FIFO kept from the last one (up to 4 KiB), and with
+# a hole where the FIFO filled before the read began: 2 packets left jumps in the first samples of the real scope
 
 
 def rates(channels):
@@ -42,6 +45,22 @@ def rates(channels):
 def ranges(probe):
     """Input ranges at the probe tip, widest first."""
     return [r * probe for r in RANGES_AT_BNC]
+
+
+def zero_of(counts):
+    """A range's zero from readings in ADC counts with the tip at 0 V: their mean, or on the calibration output, a
+    square wave of a few counts or more, the mean of its low level."""
+    counts = np.asarray(counts, np.float64)
+    low, high = np.percentile(counts, [1, 99])  # not the extremes: one spike of noise must not look like a square wave
+    return float(counts[counts < (low + high) / 2].mean() if high - low >= 3.5 else counts.mean())
+
+
+def _saved_zero(serial):
+    """Each range's zero for this scope, from config/machine.json."""
+    try:
+        return json.loads(CONFIG.read_text(encoding="utf-8")).get("scope", {}).get("zero", {}).get(serial, {})
+    except (OSError, ValueError):
+        return {}
 
 
 def _firmware_records(path=FIRMWARE):
@@ -124,8 +143,10 @@ class Scope(_Settings):
         self.handle = self._open(device)
         self.handle.setInterfaceAltSetting(0, 0)  # bulk transfers
         self.firmware_version = device.getbcdDevice()
-        self.serial = device.getSerialNumber()
+        self.serial = self.handle.getSerialNumber()  # on this open handle: WinUSB refuses a second one
         self.offset, self.gain = self._calibration()
+        for ch, codes in _saved_zero(self.serial).items():  # finer than the EEPROM's, when measure_zero has run
+            self.offset[ch].update({int(code): float(counts) for code, counts in codes.items()})
         self.configure(rate=1e6, range_v=self.range_v, channels=2)
 
     def _find(self, vendor):
@@ -196,10 +217,36 @@ class Scope(_Settings):
         for k, ch in enumerate(names):
             counts = adc[k::self.channels][:samples]
             code = self.gain_code(ch)
-            volts_per_count = 5.12 * self.gain[ch][code] * self.probe[ch] / (code * 128)
-            volts[ch] = (counts.astype(np.float64) - 128 - self.offset[ch][code]) * volts_per_count
+            volts[ch] = (counts.astype(np.float64) - 128 - self.offset[ch][code]) * self._volts_per_count(ch, code)
             clipped[ch] = float(np.mean((counts <= 1) | (counts >= 254)))
         return Capture(self.rate, volts, dict(self.range_v), clipped)
+
+    def _volts_per_count(self, ch, code):
+        return 5.12 * self.gain[ch][code] * self.probe[ch] / (code * 128)
+
+    def measure_zero(self, samples=100000):
+        """Each range's zero in ADC counts, per channel, with both tips at 0 V: on the ground clip, or on the
+        calibration output, whose low level is 0 V. The EEPROM keeps whole counts; the noise lets the mean tell tenths.
+        Used from now on and returned as {"CH1": {"10": counts, ...}, "CH2": ...}; nothing is written to the scope."""
+        rate, range_v, channels = self.rate, dict(self.range_v), self.channels
+        found = {"CH1": {}, "CH2": {}}
+        try:
+            for bnc in RANGES_AT_BNC:
+                self.configure(rate=1e6, range_v={ch: bnc * self.probe[ch] for ch in found}, channels=2)
+                self.capture(2000)  # the input relays settle
+                cap = self.capture(samples)
+                for ch, by_code in found.items():
+                    code = self.gain_code(ch)
+                    zero = zero_of(cap.volts[ch] / self._volts_per_count(ch, code) + self.offset[ch][code])
+                    if abs(zero) > 6:
+                        raise ValueError(f"{ch} reads {zero:+.1f} counts where 0 V should be near 0: is the tip on the "
+                                         f"ground clip or on the calibration output?")
+                    by_code[str(code)] = round(zero, 3)
+        finally:
+            self.configure(rate=rate, range_v=range_v, channels=channels)
+        for ch, by_code in found.items():
+            self.offset[ch].update({int(code): counts for code, counts in by_code.items()})
+        return found
 
     def calibration_output(self, hz=1000):
         """Sets the square wave on the scope's calibration pins (32 Hz to 100 kHz, quantised as the firmware

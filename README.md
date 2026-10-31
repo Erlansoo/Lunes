@@ -33,8 +33,15 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
       every step, so the position stays exact.
   - **Research:** it looks up datasheets on the web, with sources.
   - **Conversation:** you talk to it like a call: it answers at once, works in the background and tells the result.
-- **Ready, first test on the real scope on Oct 30:** the oscilloscope.
+- **Working on the real scope:** the oscilloscope.
   - Lunes drives a Hantek 6022BE (two channels, 20 MHz) with its own USB driver (`lunes/hantek.py`).
+  - **First real run, Oct 31, on the scope's calibration output:** both channels read 2 V square waves, and Auto
+    read all seven frequencies tried, from 32 Hz to 100 kHz, with no error. The self-test passes on both.
+  - **What the real scope taught:** a capture starts with leftovers of the last one in the scope's FIFO, which
+    left a hole in its first samples and broke the reading of some frequencies. Lunes now skips past them.
+  - **The zero of each range:** the scope keeps it in whole counts, up to 0.15 V off at the tip of a x10 probe.
+    `scope_zero` measures it to a fraction of a count and keeps it in `config/machine.json`, with nothing
+    written to the scope. On this one the low level of every range now reads within 10 mV of 0 V.
   - Like the Auto button of a bench scope, the code picks the range and the sample rate, then measures levels,
     frequency, duty cycle, rise time, the signal's shape and, for serial data, the likely baud rate
     (`lunes/signals.py`).
@@ -43,7 +50,7 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
   - The model judges the circuit from those numbers. It never reads a value off a picture.
   - A self-test on the scope's own calibration output catches a probe set to x1 while Lunes counts x10, or the
     other way round.
-  - Tested so far on a simulated scope with the same interface (`--osciloscopio simulado`).
+  - A simulated scope with the same interface (`--osciloscopio simulado`) tries all of this without the real one.
 - **Working on the simulated bench, first test on a real breadboard on Oct 30:** diagnosis by measurement.
   - **The circuit as data:** Lunes keeps the circuit on the bench as parts, values and nets (`lunes/circuit.py`),
     one Erlan describes or one Lunes designs.
@@ -195,6 +202,11 @@ win-64 package into `ngspice/`. Its XSPICE code models (`ngspice/lib/ngspice/*.c
 
 The scope talks to Lunes through WinUSB too, and it has two USB identities: empty when plugged in (USB ID 04B4 6022),
 and with Lunes' firmware loaded a second later (04B5 6022). Each needs WinUSB once, with Zadig:
+
+If Hantek's own driver is installed, remove it first, or it loads Hantek's firmware at every plug-in and the
+identity 04B4 goes by too fast for Zadig. With the scope unplugged, in a terminal opened as administrator, find
+its name with `pnputil /enum-drivers` and run `pnputil /delete-driver oemNN.inf /uninstall /force`. To use
+Hantek's software again, update the driver from its folder in Device Manager.
 
 1. Plug the scope in → Zadig → Options → List All Devices → the Hantek with USB ID 04B4 6022 → WinUSB → Replace
    Driver.

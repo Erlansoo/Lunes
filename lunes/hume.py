@@ -128,7 +128,8 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   fuente de 3.3 V, un cristal de 16 MHz, un PWM al 50 %) y dilo con los números medidos.
 - La masa del osciloscopio es la masa de la PC por el USB: nunca le pidas medir la red de 220 V ni algo conectado a
   ella sin transformador de aislamiento. Si no sabes si la punta está en x1 o x10, pregúntale a Erlan o usa
-  scope_selftest con la punta en la salida de calibración del osciloscopio.
+  scope_selftest con la punta en la salida de calibración del osciloscopio. Si el ambiente cambió mucho de temperatura
+  o Erlan lo pide, scope_zero mide de nuevo el cero de cada rango, con las puntas en 0 V.
 - Para trabajar con un circuito (armarlo en la protoboard, comprobarlo o encontrar su falla): si es uno de los
   usuales (LED, 555, transistor como interruptor, divisor, filtro RC, amplificador), diséñalo con circuit_design: el
   código calcula los valores con fórmulas y los verifica en la simulación. Si no, escríbelo con circuit_set y dale
@@ -345,6 +346,14 @@ TOOLS = [
                        "ground clip on the ground pin beside it. It finds out whether the probe's x1/x10 switch "
                        "matches what Lunes believes.",
         "parameters": {"type": "object", "properties": {"channel": {"type": "string", "enum": ["CH1", "CH2"]}}}}},
+    {"type": "function", "function": {
+        "name": "scope_zero",
+        "description": "Measure the zero of every range of both channels, finer than the whole counts the scope keeps "
+                       "(up to 0.15 V off at the tip with a x10 probe), and keep it for this scope. Both tips at 0 V: "
+                       "on the ground clip, or on the calibration output, whose low level is 0 V. Once with the scope "
+                       "warm (twenty minutes after plugging it in), and again if the room changes by 5 degrees. "
+                       "Nothing is written to the scope.",
+        "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "scope_probe",
         "description": "Note the factor on a probe's switch (1 or 10) after Erlan says it or the self-test shows it. "
@@ -1450,6 +1459,22 @@ class Hume:
                                    f"{at['Z']:.2f}, so the slanted beam may land off")
         return out, None
 
+    def _scope_zero(self):
+        """Each range's zero, measured now and kept in config/machine.json for this scope."""
+        if self.scope is None:
+            return {"ok": False, "error": "the oscilloscope is not connected"}, None
+        if not hasattr(self.scope, "measure_zero"):
+            return {"ok": False, "error": "the simulated scope has no zero to measure"}, None
+        try:
+            zero = self.scope.measure_zero()
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, None
+        self.m.config.setdefault("scope", {}).setdefault("zero", {})[self.scope.serial] = zero
+        self.m.config_path.write_text(json.dumps(self.m.config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"ok": True, "zero_counts": zero, "kept_for_scope": self.scope.serial,
+                "note": "counts of each gain code; at the tip of a x10 probe one count is 0.4 V (code 1), 0.2 V (2), "
+                        "0.08 V (5) or 0.04 V (10)"}, None
+
     def _scope_probe(self, channel, factor):
         """What Erlan set on a probe's switch, kept in config/machine.json for the next session."""
         from lunes.hantek import ranges
@@ -2102,6 +2127,8 @@ class Hume:
                                        args.get("range_v"), args.get("rate"))
         if name == "scope_selftest":
             return self._scope_selftest(str(args.get("channel", "CH1")))
+        if name == "scope_zero":
+            return self._scope_zero()
         if name == "scope_probe":
             return self._scope_probe(str(args.get("channel", "")), args.get("factor", 0))
         if name == "circuit_set":

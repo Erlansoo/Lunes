@@ -86,8 +86,8 @@
     "xy_note": "the XY travel measured on 10-27 no longer matched the machine: the head ran into the back at Y -25"
   },
   "como_lo_ve_erlan": {
-    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la m\u00e1quina (29/10, por la calibraci\u00f3n del Kinect)",
-    "Y": "+Y va hacia adelante y -Y hacia atr\u00e1s, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atr\u00e1s)",
+    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la máquina (29/10, por la calibración del Kinect)",
+    "Y": "+Y va hacia adelante y -Y hacia atrás, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atrás)",
     "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
   },
   "laser": {
@@ -178,5 +178,23 @@
     },
     "at": "2026-10-29T20:25",
     "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column and row (its saturated core), at the height the machine knows, give X and Y (Z is not checked); fitted to the 13 positions of calibrate_kinect's route"
+  },
+  "scope": {
+    "zero": {
+      "0564E42F1128": {
+        "CH1": {
+          "1": 0.073,
+          "2": 0.283,
+          "5": 0.71,
+          "10": 0.997
+        },
+        "CH2": {
+          "1": -0.995,
+          "2": -0.993,
+          "5": -1.017,
+          "10": -1.153
+        }
+      }
+    }
   }
 }

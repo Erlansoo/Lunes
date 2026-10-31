@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lunes.hantek import SimulatedScope, sine, square  # noqa: E402
+from lunes.hantek import SimulatedScope, sine, square, zero_of  # noqa: E402
 from lunes.hume import Hume  # noqa: E402
 from lunes.signals import autoset  # noqa: E402
 
@@ -76,6 +76,17 @@ def auto():
                                          f"range ±{scope.range_v['CH1']:g} V, {scope.rate:g} S/s, {m['shape']}"))
 
 
+def zero():
+    print("A range's zero from readings in ADC counts")
+    noise = np.random.default_rng(3).normal(0, 0.4, 100000)
+    flat = np.round(1.2 + noise)  # whole counts, as the converter gives them: the noise lets the mean tell tenths
+    ok(abs(zero_of(flat) - 1.2) < 0.02, f"tip on the ground clip, 1.2 counts off: read {zero_of(flat):.3f}")
+    for high in (5, 50):
+        square_wave = np.round(np.where(np.arange(100000) % 1000 < 500, 0.7, 0.7 + high) + noise)
+        ok(abs(zero_of(square_wave) - 0.7) < 0.03,
+           f"tip on the calibration output, {high} counts high: its low level read {zero_of(square_wave):.3f}")
+
+
 def selftest():
     print("Self-test on the calibration output (2 V, 1 kHz)")
     machine = types.SimpleNamespace(s=types.SimpleNamespace(port="COM8"), config={})
@@ -94,6 +105,7 @@ def selftest():
 
 if __name__ == "__main__":
     auto()
+    zero()
     selftest()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'}")
     sys.exit(1 if FAILED else 0)

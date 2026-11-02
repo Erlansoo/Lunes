@@ -57,10 +57,12 @@ def _workspace():
 
 WORKSPACE = _workspace()
 CIRCUIT = Path(__file__).resolve().parent.parent / "runs" / "circuit.json"  # the circuit on the bench and its simulation
+SUPPLY = Path(__file__).resolve().parent.parent / "runs" / "supply.json"  # the last thing the bench supply showed
 GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' circuit guide, read by circuit_guide
 LIFT_MM = 3.0
 # what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
 MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
+                "guide_step", "guide_net",
                 "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
 MAX_ROUNDS = 10
 MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
@@ -90,7 +92,7 @@ observaste, y cada cosa que recuerdas guarda la evidencia que la respalda.
 Tienes una CNC con un microscopio montado en el eje Z, una cámara del banco y un Kinect que miran la máquina. El
 microscopio ve unos 12 x 15 mm, así que moverte menos de 5 mm casi no cambia lo que ves. Coordenadas en milímetros
 sobre el origen del banco; Z positivo sube.
-La cámara del banco (una Sony) ve toda el área de trabajo, con mucho mejor imagen que el color del Kinect: úsala para
+La cámara del banco (una webcam 4K) ve toda el área de trabajo, con mucho mejor imagen que el color del Kinect: úsala para
 ver qué hay en el banco, dónde está la placa, los cables y las herramientas (look_bench, find_in_bench).
 El Kinect te da la profundidad: la distancia en milímetros desde el Kinect hasta cada punto, con unos milímetros de
 error a un metro (kinect_distance), y comprueba dónde está el cabezal (check_position).
@@ -141,6 +143,16 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   palabras de banco ("el pin 3 del 555", "la pata de R2 que va al capacitor") y, cuando diga que está, llama
   diagnose_measure. El motor decide qué medir y qué falla es; tú lo explicas con los números. Solo nombra una falla
   cuando el motor la da como clara; si varias leen igual, pídele mirar esas partes. Nunca inventes una falla.
+- Para guiar a Erlan con el láser en una protoboard: breadboard_plan reparte el circuito en los agujeros y guide_step
+  le muestra cada paso, con el punto rojo en el agujero y las palabras para decirle; espera a que diga que está listo.
+  En un diagnóstico, cuando el motor pide una red, guide_net la señala: dile que ponga la punta donde está el punto.
+  GND es donde va el clip de masa, que siempre va a la masa del circuito. La fuente se conecta al final, con su voltaje
+  ya revisado.
+- La fuente del banco (KORAD KA3010D, sin USB) la lees con la cámara del banco: supply_read. Antes de decirle a Erlan
+  que conecte o encienda un circuito, mira qué marca: circuit_set, circuit_design y diagnose_start ya te lo traen en
+  supply. Si check dice que no es seguro, díselo con los números y no sigas hasta que lo arregle. Si no la ves, dilo
+  así: que te falta ver la fuente y no sabes cuánto está configurado; lo recordado solo vale como recuerdo y con su
+  antigüedad. Nunca des por hecho el voltaje ni el límite de corriente.
 - Si el circuito lleva un Arduino (circuit_design con las plantillas arduino_, o circuit_set con la placa), su
   programa es parte del circuito: la simulación corre el mismo. Con permiso de Erlan y la placa enchufada,
   mcu_program se lo carga (nunca al puerto de la CNC) y mcu_read lee lo que miden sus entradas al lado de lo que
@@ -361,6 +373,41 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "channel": {"type": "string", "enum": ["CH1", "CH2"]}, "factor": {"type": "number", "enum": [1, 10]}},
             "required": ["channel", "factor"]}}},
+    {"type": "function", "function": {
+        "name": "breadboard_plan",
+        "description": "Lay the circuit on the bench out on a breadboard, by rule: which hole each lead goes in, the "
+                       "wires, the rails, and a hole to probe each net. The code rebuilds the connections from the holes "
+                       "and refuses a plan that is not the circuit. Then guide_step shows each step with the laser.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "breadboard_place",
+        "description": "Say where the breadboard lies on the machine, from two holes at least 20 mm apart and their "
+                       "position in mm: put the laser's dot on each with laser_point, have Erlan confirm it is on the "
+                       "hole, and pass its dot_at_mm. Use holes far apart, like a1 and a63.",
+        "parameters": {"type": "object", "properties": {
+            "hole_a": {"type": "string"}, "x_a": {"type": "number"}, "y_a": {"type": "number"},
+            "hole_b": {"type": "string"}, "x_b": {"type": "number"}, "y_b": {"type": "number"}},
+            "required": ["hole_a", "x_a", "y_a", "hole_b", "x_b", "y_b"]}}},
+    {"type": "function", "function": {
+        "name": "guide_step",
+        "description": "Show Erlan one step of building the circuit: the laser goes to the hole and you get the words to "
+                       "say. step: a number, or 'next' (the default), 'back' or 'same'. end 2 shows a part's or wire's "
+                       "other end. Wait for Erlan to say it is done before the next.",
+        "parameters": {"type": "object", "properties": {"step": {"type": ["string", "integer"]}, "end": {"type": "integer"}}}}},
+    {"type": "function", "function": {
+        "name": "guide_net",
+        "description": "Show Erlan with the laser where a net of the circuit is, to put the probe there: during a "
+                       "diagnosis, the net the engine asks for; GND is where the ground clip goes; VCC and GND are also "
+                       "where the supply's positive and negative go.",
+        "parameters": {"type": "object", "properties": {"net": {"type": "string"}}, "required": ["net"]}}},
+    {"type": "function", "function": {
+        "name": "supply_read",
+        "description": "Read the bench supply (a KORAD KA3010D, no USB) with the bench camera, right now: volts, amps and "
+                       "whether its output is on. With the output off it shows what is set; with it on, what comes out. "
+                       "Compares it with the circuit on the bench and says if it is safe to power it. If the code "
+                       "cannot read the panel it says so: then you do not know what the supply is set to, and you must "
+                       "tell Erlan and ask, never assume. The last good reading is kept, with its age.",
+        "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "circuit_set",
         "description": "Set the circuit on the bench (one Erlan describes, or one you design) and simulate it with "
@@ -682,13 +729,17 @@ class Hume:
         """think: False, "low", "medium" or "high", how much Glimmer reasons before it answers (it is not spoken).
         on_think(text) gets the reasoning of each step, for the session log. spark=True lets Lunes send pictures
         to Muse Spark over the internet (with free credits Meta may use them), so only when Erlan allows it.
-        bench: the camera that sees the whole work area (the Sony), if it is plugged in; scope: the oscilloscope
+        bench: the camera that sees the whole work area, if it is plugged in; scope: the oscilloscope
         (lunes.hantek), if it is plugged in; mcu: a lunes.mcu.SimulatedBoard to try the microcontroller tools
         without a board (a real board is reached by its USB port)."""
         self.m, self.cam, self.kinect, self.bench, self.scope = machine, microscope, kinect, bench, scope
         self.mcu, self.mcu_port, self.mcu_sketch = mcu, None, None  # the board, its port, the sketch put on it
         self.last_scope = None  # {"at", "result"} of the last scope_measure
         self.last_trace = None  # its waveforms, for the web lab
+        self.supply = json.loads(SUPPLY.read_text(encoding="utf-8")) if SUPPLY.exists() else None  # the last reading
+        self.supply_seen = None  # what the bench camera said the last time it looked: a reading, or why there is none
+        self.layout, self.placement = None, None  # the circuit laid out on the breadboard, and where the board lies
+        self.guide = {"step": 0, "holes": [], "says": ""}  # what the laser is showing Erlan
         self.last_mcu, self.last_serial = None, None  # the last mcu_read, and the last lines the serial monitor showed
         self.goals, self.lab_diagnosis = None, None  # the circuit's goals, and the diagnosis as the web lab last read it
         self.circuit = self.expected = self.diagnosis = None  # the circuit on the bench, its simulation, a diagnosis
@@ -994,6 +1045,8 @@ class Hume:
         if goals:
             out["goals"] = goals
             out["all_goals_met"] = all(g["ok"] for g in goals)
+        self.supply_look()  # in the tool, not left to the model: whoever designs a circuit sees what the supply shows
+        out["supply"] = self.supply_state()
         return out, None
 
     def _circuit_design(self, template, params):
@@ -1113,7 +1166,8 @@ class Hume:
         if self.fault_table is None:
             return {"ok": False, "error": "the simulator could not work out the faults of this circuit"}, None
         self.diagnosis = Diagnosis(self.circuit, self.fault_table)
-        out = {"ok": True, "hypotheses": len(self.fault_table), **self.diagnosis.state()}
+        self.supply_look()
+        out = {"ok": True, "hypotheses": len(self.fault_table), **self.diagnosis.state(), "supply": self.supply_state()}
         blind = {h: e.get("problem", "") for h, e in self.fault_table.items() if e.get("nets") is None}
         if blind:
             out["not_predicted"] = {h: f"{self.fault_table[h]['says']}: {why}" for h, why in blind.items()}
@@ -1468,6 +1522,106 @@ class Hume:
                                    f"{at['Z']:.2f}, so the slanted beam may land off")
         return out, None
 
+    # The laser as a guide on the breadboard -------------------------------------------------------------------------
+    def _breadboard_plan(self):
+        from lunes import breadboard
+        if self.circuit is None:
+            return {"ok": False, "error": "no circuit yet: circuit_set or circuit_design first"}, None
+        try:
+            self.layout = breadboard.plan(self.circuit, self.expected)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, None
+        self.guide = {"step": 0, "holes": [], "says": ""}
+        return {"ok": True, "steps": len(self.layout["steps"]), "words": [s["says"] for s in self.layout["steps"]],
+                "probe": self.layout["probe"], "note": "checked: rebuilt from the holes, it is the circuit. "
+                "breadboard_place if the board's place is not known, then guide_step"}, None
+
+    def _breadboard_place(self, args):
+        from lunes.breadboard import Placement
+        try:
+            self.placement = Placement(args["hole_a"], (float(args["x_a"]), float(args["y_a"])), args["hole_b"],
+                                       (float(args["x_b"]), float(args["y_b"])))
+        except (KeyError, ValueError) as e:
+            return {"ok": False, "error": str(e)}, None
+        return {"ok": True, "angle_deg": round(math.degrees(self.placement.angle), 1),
+                "scale_error": round(self.placement.scale_error, 4)}, None
+
+    def _point_at(self, hole):
+        """The laser on a hole, if the board's place is known; returns what to add to the tool's answer."""
+        if self.placement is None:
+            return {"note": "no sé dónde está la protoboard en la máquina: dilo con palabras y haz breadboard_place"}
+        result, _ = self._laser_point({"x": self.placement.mm(hole)[0], "y": self.placement.mm(hole)[1]})
+        if not result.get("ok"):
+            return {"laser_failed": result.get("error", "the laser did not point")}
+        return {"pointed": hole, "mm": self.placement.mm(hole)}
+
+    def _guide_step(self, step="next", end=1):
+        if self.layout is None:
+            return {"ok": False, "error": "no plan yet: breadboard_plan first"}, None
+        steps, now = self.layout["steps"], self.guide["step"]
+        number = {"next": now + 1, "back": now - 1, "same": max(now, 1)}.get(step, step)
+        try:
+            number = int(number)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "step is a number, next, back or same"}, None
+        if not 1 <= number <= len(steps):
+            return {"ok": True, "done": number > len(steps), "note": "no more steps"}, None
+        chosen = steps[number - 1]
+        hole = chosen["holes"][min(int(end or 1), len(chosen["holes"])) - 1]
+        self.guide = {"step": number, "holes": chosen["holes"], "at": hole, "says": chosen["says"]}
+        return {"ok": True, "step": number, "of": len(steps), "says": chosen["says"], "hole": hole,
+                **self._point_at(hole)}, None
+
+    def _guide_net(self, net):
+        if self.layout is None:
+            return {"ok": False, "error": "no plan yet: breadboard_plan first"}, None
+        holes = self.layout["probe"]
+        if net not in holes:
+            return {"ok": False, "error": f"no net {net}; nets: {sorted(holes)}"}, None
+        hole = holes[net]
+        says = (f"El clip de masa va en {hole}, la masa del circuito." if net == "GND" else
+                f"El positivo de la fuente va en {hole}." if net == "VCC" else f"Pon la punta en {hole}: es {net}.")
+        self.guide = {"step": self.guide["step"], "net": net, "holes": [hole], "at": hole, "says": says}
+        return {"ok": True, "net": net, "hole": hole, "says": says, **self._point_at(hole)}, None
+
+    # The bench supply --------------------------------------------------------------------------------------------
+    def supply_look(self):
+        """Looks at the supply's panel now and keeps what it read; returns what the camera said."""
+        from lunes import supply
+        if self.bench is None:
+            self.supply_seen = {"ok": False, "why": "no tengo cámara del banco, así que no veo la fuente"}
+            return self.supply_seen
+        seen = supply.look(self.bench)
+        self.supply_seen = dict(seen, at=time.time())
+        if seen["ok"]:
+            self.supply = {k: seen[k] for k in ("volts", "amps", "out", "cc", "cv")} | {"at": time.time()}
+            SUPPLY.parent.mkdir(exist_ok=True)
+            SUPPLY.write_text(json.dumps(self.supply), encoding="utf-8")
+        return self.supply_seen
+
+    def supply_state(self):
+        """What is known of the supply: seen now, remembered from a while ago, or nothing; with the circuit's check."""
+        from lunes import supply
+        seen = self.supply_seen or {}
+        if seen.get("ok"):
+            out = {"seen_now": True, "age_s": round(time.time() - seen["at"], 1),
+                   **{k: seen[k] for k in ("volts", "amps", "out", "cc", "cv")}}
+        else:
+            out = {"seen_now": False, "why": seen.get("why", "todavía no miré la fuente")}
+            if self.supply:
+                out["remembered"] = dict(self.supply, age_s=round(time.time() - self.supply["at"]))
+                out["note"] = "no la veo ahora: lo recordado puede haber cambiado, confírmalo con Erlan"
+            else:
+                out["note"] = "no sé cuánto marca la fuente: me falta verla; pregúntale a Erlan"
+        if self.circuit and self.expected and out["seen_now"]:
+            out["check"] = supply.check(out, self.circuit, self.expected)
+        return out
+
+    def _supply_read(self):
+        self.supply_look()
+        state = self.supply_state()
+        return {"ok": state["seen_now"], **state}, None
+
     def _scope_zero(self):
         """Each range's zero, measured now and kept in config/machine.json for this scope."""
         if self.scope is None:
@@ -1599,13 +1753,13 @@ class Hume:
 
     def bench_picture(self):
         """(a fresh picture of the bench camera, None) or (None, why there is none). A flat picture is checked here,
-        not left to the model: the Sony sends black frames with its lens cap on or while it shuts down."""
+        not left to the model: a camera sends black frames with its lens cap on or while it shuts down."""
         if self.bench is None:
-            return None, "the bench camera is not connected (the Sony, in USB Streaming mode)"
+            return None, "the bench camera is not connected"
         try:
             frame = self.bench.frame()
         except RuntimeError:
-            return None, "the bench camera stopped sending pictures: the Sony may have turned off; tell Erlan"
+            return None, "the bench camera stopped sending pictures; tell Erlan"
         if frame.std() < 2:
             return None, ("the bench camera sends a flat black picture: its lens cap may be on, or the camera turned "
                           "off; tell Erlan")
@@ -2138,6 +2292,16 @@ class Hume:
             return self._scope_selftest(str(args.get("channel", "CH1")))
         if name == "scope_zero":
             return self._scope_zero()
+        if name == "supply_read":
+            return self._supply_read()
+        if name == "breadboard_plan":
+            return self._breadboard_plan()
+        if name == "breadboard_place":
+            return self._breadboard_place(args)
+        if name == "guide_step":
+            return self._guide_step(args.get("step", "next"), args.get("end", 1))
+        if name == "guide_net":
+            return self._guide_net(str(args.get("net", "")))
         if name == "scope_probe":
             return self._scope_probe(str(args.get("channel", "")), args.get("factor", 0))
         if name == "circuit_set":

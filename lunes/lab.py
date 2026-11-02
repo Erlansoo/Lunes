@@ -78,11 +78,22 @@ def _arduino(hume):
             "pins": last.get("pins"), "all_as_simulated": last.get("all_as_simulated"), "serial": hume.last_serial}
 
 
+def _breadboard(hume):
+    layout = hume.layout
+    if layout is None:
+        return None
+    steps = layout["steps"]
+    return {"holes": [h for pins in layout["holes"].values() for h in pins.values()],
+            "wires": [[w["from"], w["to"]] for w in layout["wires"]], "total": len(steps), "placed": hume.placement is not None,
+            "guide": hume.guide}
+
+
 def state(hume):
     machine, scope = _machine(hume), _scope(hume)
     arduino = _arduino(hume)
     return {"machine": machine, "scope": scope, "circuit": _circuit(hume), "diagnosis": _diagnosis(hume),
-            "arduino": arduino, "brain": hume.brain,
+            "arduino": arduino, "brain": hume.brain, "supply": hume.supply_state(),
+            "breadboard": _breadboard(hume),
             "instruments": {"cnc": bool(machine["at_mm"]), "microscope": hume.cam is not None,
                             "bench": hume.bench is not None, "kinect": hume.kinect is not None,
                             "scope": scope["connected"], "arduino": arduino is not None}}

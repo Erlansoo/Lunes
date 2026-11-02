@@ -109,6 +109,12 @@ td.id { font-family:var(--mono); }
 .bar .track i { display:block; height:100%; background:var(--accent); }
 .bar.top .track i { background:var(--ok); }
 td.good { color:var(--ok); } td.off { color:var(--bad); }
+.power { flex:none; display:flex; align-items:center; gap:10px; padding:6px 12px; border-top:1px solid var(--line); font-size:12.5px; color:var(--muted); }
+.power b { font:600 15px var(--mono); color:#ff6b57; }
+.power.bad { color:var(--bad); font-weight:600; }
+.breadboard svg { display:block; width:100%; height:auto; background:#f2efe6; border-radius:4px; }
+.stepnow { padding:7px 10px; border-radius:6px; background:#2a1a1a; border:1px solid #6b2f2a; font-size:13px; margin-top:6px; }
+.stepnow b { color:#ff6b57; font-family:var(--mono); }
 .serial { font:12px/1.35 var(--mono); color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; max-height:7em; overflow:auto; }
 
 #log { display:flex; flex-direction:column; gap:7px; }
@@ -171,6 +177,7 @@ body:not(.details) .detail { display:none; }
     <div class="dro"><div><b>X</b><span id="dx">—</span></div><div><b>Y</b><span id="dy">—</span></div><div><b>Z</b><span id="dz">—</span></div></div>
     <div class="map"><svg id="map" role="img"></svg></div>
     <div class="line" id="check"><i></i><span></span></div>
+    <div class="power" id="power"></div>
   </section>
 
   <section class="panel" id="bench">
@@ -198,7 +205,9 @@ const TEXT = {
       hold:"Movimiento en pausa", doubtful:"Posición dudosa: los motores se liberaron", front:"frente", back:"fondo",
       board_:"placa", head_:"cabezal", mosaics:"mosaicos", details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
       lunes:"Lunes", noSignal:"Sin imagen", models:"Modelos Meta", api:"API", pc:"en la PC", new_:"Imagen nueva", clear:"Clara",
-      noneTitle:"Sin señal"},
+      noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
+      remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
+      notPlaced:"falta ubicar la protoboard"},
   en:{subtitle:"Electronics lab", scope:"Oscilloscope", machine:"Machine", benchTitle:"Circuit and diagnosis",
       conversation:"Conversation", listening:"Listening", working:"Working", speaking:"Speaking", microscope:"Microscope",
       bench:"Bench", kinect:"Kinect", analysis:"AI analysis", cnc:"CNC", arduino:"Arduino", noScope:"Oscilloscope not connected",
@@ -211,7 +220,9 @@ const TEXT = {
       hold:"Moves on hold", doubtful:"Position doubtful: the motors were released", front:"front", back:"back",
       board_:"board", head_:"head", mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
       lunes:"Lunes", noSignal:"No picture", models:"Meta models", api:"API", pc:"on the PC", new_:"New picture", clear:"Clear",
-      noneTitle:"No signal"}
+      noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
+      remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
+      notPlaced:"breadboard not located yet"}
 };
 // The engine's sentences are in English, as the code is; they read in Spanish on the Spanish page.
 const SPANISH = [
@@ -314,7 +325,7 @@ function showState(){
 function chip(name, on, warn){ const c = el("div","chip" + (warn ? " warn" : on ? " on" : "")); c.append(el("i"), el("span","",name)); return c; }
 function renderStrip(d){
   const i = d.instruments, box = $("instruments");
-  const list = [["cnc",i.cnc,d.machine.hold],["microscope",i.microscope],["bench",i.bench],["kinect",i.kinect],["scope",i.scope,d.scope.simulated],["arduino",i.arduino,d.arduino && d.arduino.simulated]];
+  const list = [["supply",d.supply && d.supply.seen_now,d.supply && d.supply.check && !d.supply.check.safe],["cnc",i.cnc,d.machine.hold],["microscope",i.microscope],["bench",i.bench],["kinect",i.kinect],["scope",i.scope,d.scope.simulated],["arduino",i.arduino,d.arduino && d.arduino.simulated]];
   box.replaceChildren(...list.map(([k,on,warn]) => chip(T[k], on, warn)));
   const m = $("models"); m.replaceChildren(el("span","",T.models));
   for (const [name,where,key] of MODELS){
@@ -409,6 +420,12 @@ function renderBench(d){
     if (c.goals && c.goals.length) s.append(el("div","sub",`${c.goals.filter(x => x.ok).length}/${c.goals.length} ${T.goals}`));
     parts.push(s);
   }
+  if (d.breadboard){
+    const b = d.breadboard, s = section(), now = b.guide || {};
+    s.classList.add("breadboard"); s.append(el("h3","",T.breadboard + (b.placed ? "" : ` · ${T.notPlaced}`)), drawBreadboard(b));
+    if (now.says){ const n = el("div","stepnow"); if (now.step && !now.net) n.append(el("b","",`${T.stepOf} ${now.step}/${b.total} `)); n.append(document.createTextNode(now.says)); s.append(n); }
+    parts.push(s);
+  }
   if (g){
     const s = section();
     if (g.clear && g.verdict){ s.append(el("div","verdict",`${T.verdict}: ${say(g.verdict)}`)); }
@@ -446,7 +463,34 @@ function renderBench(d){
   }
   const top = body.scrollTop; body.replaceChildren(...parts); body.scrollTop = top;
 }
-function render(d){ renderStrip(d); renderMachine(d.machine); renderScope(d.scope); renderBench(d); drawOverlay(); }
+function renderPower(p){
+  const box = $("power"); box.className = "power"; box.replaceChildren(el("span","",T.supply));
+  if (!p) return;
+  const r = p.seen_now ? p : p.remembered;
+  if (r){ box.append(el("b","",`${Number(r.volts).toFixed(2)} V`), el("b","",`${Number(r.amps).toFixed(3)} A`),
+                     el("span","",r.out ? T.outOn : T.outOff)); }
+  if (!p.seen_now) box.append(el("span","",r ? `${T.remembered} · ${age(r.age_s)}` : T.notSeen));
+  const c = p.check;
+  if (c && !c.safe){ box.classList.add("bad"); box.append(el("span","",`${T.circuitWants} ${c.want_v} V`)); }
+  else if (c && p.amps > 2 * c.limit_a) box.append(el("span","",`${T.limitHigh} ${c.limit_a} A`));
+}
+function drawBreadboard(b){
+  const P = 6, W = 63 * P + 12, H = 19 * P, svg = document.createElementNS(NS,"svg");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.setAttribute("role","img"); svg.setAttribute("aria-label",T.breadboard);
+  const at = hole => { const c = hole[0], row = +hole.slice(1), rails = {"-":-3,"+":-2},
+    y = c in rails ? rails[c] : "abcde".includes(c) ? "abcde".indexOf(c) : 7 + "fghij".indexOf(c);
+    return [6 + (row - .5) * P, (y + 4.5) * P]; };
+  const add = (tag, a) => { const e = document.createElementNS(NS,tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k,v); svg.append(e); return e; };
+  add("line",{x1:0,x2:W,y1:(5.5+4.5)*P-3,y2:(5.5+4.5)*P-3,stroke:"#d9d4c5","stroke-width":P*1.6});
+  add("line",{x1:0,x2:W,y1:1.5*P,y2:1.5*P,stroke:"#d33","stroke-width":.6}); add("line",{x1:0,x2:W,y1:.5*P,y2:.5*P,stroke:"#35a","stroke-width":.6});
+  for (let r=1;r<=63;r++) for (const c of "abcdefghij") { const [x,y] = at(c+r); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#7d7a70"}); }
+  for (const [f,t] of b.wires){ const [x1,y1] = at(f), [x2,y2] = at(t); add("line",{x1,y1,x2,y2,stroke:"#2d7fd3","stroke-width":1}); }
+  for (const h of b.holes){ const [cx,cy] = at(h); add("circle",{cx,cy,r:1.9,fill:"#222"}); }
+  const g = b.guide || {};
+  for (const h of g.holes || []){ const [cx,cy] = at(h); add("circle",{cx,cy,r:h === g.at ? 3.2 : 2.4,fill:"none",stroke:"#e0261c","stroke-width":1.2}); }
+  return svg;
+}
+function render(d){ renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); drawOverlay(); }
 
 function addEvent(e){
   const log = $("log"), box = $("logBox"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;

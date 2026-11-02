@@ -38,7 +38,7 @@ set up as this README describes.
     reads its marking.
   - **Aim:** it puts the microscope exactly on a point it sees, or on a corner of the board. The model says what; the
     code finds the board's edges and turns pixels into millimetres, and checks where it landed with a last picture.
-  - **Wide view:** a camera over the bench (a Sony ZV-E10 II, as a plain USB webcam) sees the whole work area,
+  - **Wide view:** a camera beside the bench (an EMEET S800, 4K over USB) sees the whole work area,
     which the microscope cannot; the Kinect adds depth.
   - **Self-check:** the Kinect checks every move against where the machine thinks it is. Lunes drives the Kinect
     with its own USB driver, written for this project.
@@ -159,7 +159,17 @@ set up as this README describes.
   - Nothing leaves the PC, and the page loads nothing from outside it.
   - `python tools/lab_preview.py` shows it on a simulated bench with no hardware: a 555 with a planted fault,
     diagnosed by ngspice and the simulated scope. No model is called, and the conversation is scripted.
-- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs four files:
+- **Guided by the laser, on a breadboard** (`lunes/breadboard.py`). Tried so far with the laser simulated.
+  - `breadboard_plan` lays any circuit Lunes designs out on a breadboard by rule, then rebuilds the connections from
+    the holes alone and refuses a plan that is not the circuit.
+  - `guide_step` shows each lead, wire and supply connection with the laser's dot, in words. During a diagnosis,
+    `guide_net` shows where the probe goes for the net the engine asks for, and where the ground clip goes.
+- **Eyes on the bench supply** (`lunes/supply.py`). The KORAD KA3010D has no USB, so Lunes reads its panel with the bench
+  camera, segment by segment, with no model. A panel it cannot read is no reading.
+  - It looks every few seconds, remembers the last reading with its age, and says when it changes.
+  - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
+    real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
+- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs six files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -170,6 +180,8 @@ set up as this README describes.
     - PWM, and logic at 3.3, 5 and 12 V;
     - sines and steady levels;
     - serial data at 9600 and 115200 baud.
+  - `test_supply.py`: every digit of the panel on drawn panels, unreadable panels, and the check before powering.
+  - `test_breadboard.py`: every design laid out and rebuilt from its holes, holes in mm with the board turned, the guide.
   - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
     outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own

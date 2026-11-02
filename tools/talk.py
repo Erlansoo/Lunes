@@ -72,8 +72,8 @@ QUIET = re.compile(r"\b(no (hace falta que )?me (cuentes|avises|vayas contando)|
 TALKATIVE = re.compile(r"\b(cu[eé]ntame c[oó]mo vas|ve(te)? cont[aá]ndome|av[ií]same c[oó]mo va)\b", re.IGNORECASE)
 REACTION_AFTER_S = 0.9  # said only if the conductor has not answered by then
 # The cameras by name, since their numbers change when one is plugged in: the MS5 microscope's USB id (its name,
-# "USB CAMERA", is too common) and the Sony ZV-E10 II that sees the whole work area.
-MICROSCOPE, BENCH_CAMERA = "vid_1224&pid_2825", "ZV-E10M2"
+# "USB CAMERA", is too common) and the 4K webcam that sees the whole work area.
+MICROSCOPE, BENCH_CAMERA = "vid_1224&pid_2825", "EMEET"
 # Creating this file closes Lunes from outside, to restart it: "Lunes, adiós" needs a working ear, Ctrl+C cannot
 # reach a main thread waiting for the ear on Windows, and killing the process while it holds the CNC's port left the
 # port jammed for minutes.
@@ -423,13 +423,13 @@ def main():
     index = None if args.banco.lower() == "no" else find_camera(args.banco)
     if index is not None:
         try:
-            bench = Camera(index, size=(1920, 1080))  # what the Sony sends depends on its USB Streaming setting
+            bench = Camera(index, size=(3840, 2160))  # the EMEET gives this at 19 fps over USB; a Sony what it is set to
             h, w = bench.frame().shape[:2]
             print(f"cámara del banco: {args.banco}, {w}x{h}")
         except RuntimeError as e:
             print(f"(la cámara del banco {args.banco} no da imagen: {e}; sigo sin ella)")
     elif args.banco.lower() != "no":
-        print(f"(la cámara del banco {args.banco} no está; si es la Sony, ponla en USB Streaming)")
+        print(f"(la cámara del banco {args.banco} no está; revisa su cable USB)")
     try:
         kinect = Kinect()
     except RuntimeError as e:
@@ -479,6 +479,22 @@ def main():
                       bench=bench, lab=lambda: lab_state(hume))
     hume.on_image = lambda image, what: board.set_seen(image, what)
     print(f"página en vivo: {board.url}")
+
+    def watch_supply():  # always knows what the supply shows, and says when it changes
+        last = None
+        while True:
+            try:
+                seen = hume.supply_look()
+            except Exception as e:
+                seen = {"ok": False, "why": str(e)}
+            now = (seen.get("volts"), seen.get("amps"), seen.get("out")) if seen.get("ok") else None
+            if now != last:
+                log("info", f"fuente: {now[0]:.2f} V, {now[1]:.3f} A, salida {'encendida' if now[2] else 'apagada'}"
+                    if now else f"fuente: {seen.get('why')}")
+                last = now
+            time.sleep(5)
+    if bench:
+        threading.Thread(target=watch_supply, daemon=True).start()
     ear = None
     if not args.text:
         print("cargando los oídos (Omnilingual ASR de Meta, en esta PC)...")
@@ -553,9 +569,9 @@ def main():
         # looking
         if bench:
             _, problem = hume.bench_picture()
-            parts.append("cámara del banco (una Sony): conectada pero da la imagen en negro (¿tapa del lente puesta, o "
+            parts.append("cámara del banco: conectada pero da la imagen en negro (¿tapa del lente puesta, o "
                          "se apagó?)" if problem else
-                         "cámara del banco (una Sony): conectada y apuntando a toda el área de trabajo, con mejor "
+                         "cámara del banco: conectada y apuntando a toda el área de trabajo, con mejor "
                          "imagen que el Kinect (lo que hay ahora, solo mirando)")
         else:
             parts.append("cámara del banco: no conectada")
@@ -570,6 +586,12 @@ def main():
             parts.append("Arduino: SIMULADO, lee el circuito simulado (no el banco)")
         elif hume.mcu_port:
             parts.append(f"Arduino: programado en {hume.mcu_port}")
+        power = hume.supply_state()
+        if power["seen_now"]:
+            parts.append(f"fuente KORAD: la ves en {power['volts']:.2f} V y {power['amps']:.3f} A, salida "
+                         f"{'encendida' if power['out'] else 'apagada'}")
+        else:
+            parts.append(f"fuente KORAD: {power['why']}; {power['note']}")
         parts.append("simulador de circuitos (ngspice): " + ("listo" if simulator_ok["ok"] else
                                                              f"con problemas ({simulator_ok.get('problem')})"))
         parts.append("Kinect: conectado y apuntando a la CNC de frente y desde arriba; sirve para la profundidad y "

@@ -90,6 +90,13 @@ def diagnosis_session(hume, board):
     tool("circuit_design astable_555")
     hume.run_tool("circuit_design", {"template": "astable_555", "params": {"frequency_hz": 1000, "duty": 0.55,
                                                                          "supply_v": 5, "led_color": "red"}})
+    tool("breadboard_plan")
+    hume.run_tool("breadboard_plan", {})
+    hume.run_tool("breadboard_place", {"hole_a": "a1", "x_a": 80, "y_a": -165, "hole_b": "a63", "x_b": 237.48, "y_b": -165})
+    for _ in range(3):
+        step, _ = hume.run_tool("guide_step", {})
+        say(step["says"])
+        time.sleep(2)
     tool("diagnose_start")
     board.status = "Calculando lo que leería cada falla"
     current, _ = hume.run_tool("diagnose_start", {})
@@ -102,7 +109,7 @@ def diagnosis_session(hume, board):
 
     while "next" in current and not current.get("clear") and len(current.get("readings", [])) < 6:
         net = current["next"]["net"]
-        say(f"Pon la punta en {net}, que toca {', '.join(current['next']['touches'][:3])}.")
+        say(hume.run_tool("guide_net", {"net": net})[0]["says"])
         board.status = f"Midiendo {net}"
         time.sleep(2.5)
         hume.scope = SimulatedScope({"CH1": signal(net), "CH2": lambda t: np.zeros_like(t)})
@@ -133,6 +140,12 @@ def main():
     hume = Hume(machine, Camera(picture, step=0.25), scope=scope, bench=Camera(picture, (1280, 720)),
                 kinect=Camera(picture))
     hume.board = dict(BOARD)
+
+    def supply_look():  # the made-up bench's supply, already at the circuit's 5 V
+        hume.supply_seen = {"ok": True, "volts": 5.0, "amps": 0.1, "out": False, "cc": False, "cv": False, "at": time.time()}
+        return hume.supply_seen
+    hume.supply_look = supply_look
+    hume._laser_point = lambda args: ({"ok": True}, None)  # no machine here: the page shows where the dot would be
     hume.focus_z = 7.0
     hume.last_kinect_check = {"at": time.time(), "agrees": True, "off_mm": 0.6}
     board = Dashboard(camera=hume.cam, bench=hume.bench, kinect=hume.kinect, port=args.port, lab=lambda: state(hume))

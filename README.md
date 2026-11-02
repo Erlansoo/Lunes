@@ -26,8 +26,12 @@ Then open http://127.0.0.1:8765: the web lab diagnoses a 555 with a planted faul
 `.venv\Scripts\python tests/run_all.py` runs every test that needs no hardware.
 
 With the bench: copy `.env.example` to `.env`, paste your Meta Model API key from dev.meta.ai, and run
-`python tools/talk.py COM8 --spark --mic <part of your microphone's name>`. To try Lunes' voice and tools without the
-scope or an Arduino, add `--osciloscopio simulado --arduino simulado`. The CNC, the microscope and the Ollama model are
+`python tools/talk.py COM8 --spark --mic <part of your microphone's name>`. The work is done by Muse Wonder
+reasoning at medium effort (`--brain muse-spark-1.3 --effort low` for the faster, smaller model); the conductor of
+the conversation stays on Muse Spark so it answers in a couple of seconds. To try Lunes' voice and tools without the
+scope or an Arduino, add `--osciloscopio simulado --arduino simulado`. Never turn the microscope's focus wheel:
+Lunes focuses by moving Z, and every height it knows (the table, a board, the laser's landing, the bench camera's
+ring height) hangs on the lens' working distance. The CNC, the microscope and the Ollama model are
 set up as this README describes.
 
 ## Where it stands
@@ -142,8 +146,12 @@ set up as this README describes.
     Calibrated on two surfaces (the table, and a 4 mm block measured with a caliper), Lunes knows the slant, and it
     works both ways:
     - `laser_point` puts the dot on what Lunes means: a point of a microscope picture, of the board's mosaic, or in
-      mm. The microscope then checks where the dot really landed, and the head moves again for the height of what
-      it hit.
+      mm. It focuses on the surface first (the beam is slanted, so its landing depends on the height), the
+      microscope then checks where the dot really landed, the head moves again for what is left, and the answer
+      says `confirmed` only when the dot was seen on the point; otherwise it says how far it is, and Lunes must say
+      so. For a chip's pin 1, `chip_pin: 1` makes the code find the chip and its leg (`see_chip`, from the DIP's
+      2.54 mm grid), put the dot on the chip's flat top beside that leg and confirm it is seen on the body; the leg
+      itself is lower and shiny, so the dot stays where it can be checked. The model never picks a pin by eye.
     - `laser_height` tells how high the surface under the dot is, with no focusing and no fourth axis. It measured
       the 4 mm block as 4.02 mm.
   - Measured error on a board: 0.12 mm.
@@ -231,12 +239,14 @@ set up as this README describes.
     outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own
     tools, and the 555 blinker's 24 faults.
-- **Measured with Muse Spark at the wheel** (`tools/reliability.py`, record in [docs/reliability.md](docs/reliability.md)):
+- **Measured with the model at the wheel** (`tools/reliability.py`, record in [docs/reliability.md](docs/reliability.md)):
   the same seven cases, but the model drives the tools from a job in Spanish, as it does with Erlan (design the
   circuit, program the made-up board, read it, ask for the probe net by net, name the fault). Three rounds on
   Nov 2, 2026: 21 runs, 18 found, 3 unsure, 0 wrong. The three unsure are the divider's lower resistor open, which
   reads the same as it being ten times larger at the nets the board can reach: the engine stays at 76 % and Lunes
-  says so, pointing at R2, instead of guessing. About 133 k tokens a run.
+  says so, pointing at R2, instead of guessing. Muse Spark at low effort and Muse Wonder at medium scored the same,
+  because the verdict comes from the engine and the simulation, not from the model: Spark about 27 s and 133 k
+  tokens a run, Wonder about 38 s and 164 k.
 - **Being built:** the probe held by the machine.
 
 ## Built from scratch

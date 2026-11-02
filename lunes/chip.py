@@ -24,6 +24,9 @@ MAX_BODY_MM = 60.0  # longer than this is not a chip in one picture
 MAX_SHARE = 0.75  # a body filling more of the picture than this is the whole board or the bench, not a chip
 
 
+BESIDE_PIN_MM = 2.3  # from the long axis: inside the flat top of a body 6.35 mm wide, clear of its bevelled rim
+
+
 def body_mask(frame):
     """The dark, flat grey of a chip's epoxy: low saturation and darker than most of the picture. The darkness is judged
     against the picture itself, since under the microscope's light a white breadboard can come out as dark as 70 of 255
@@ -126,6 +129,24 @@ def notch_end(frame, chip):
     drawn = drawn_right - drawn_left
     if abs(drawn) > 0.002 and max(drawn_left, drawn_right) > 2.5 * min(drawn_left, drawn_right):
         votes.append(("right" if drawn > 0 else "left", min(1.0, abs(drawn) / 0.008), "the notch's outline"))
+    # a notch moulded in relief on a speckled body (the real 555): the body goes on behind it and the speckle
+    # litters the edge counts, but after a strong blur the speckle is gone and the notch's arc stays, a half circle
+    # sitting on the middle of one end, which Hough finds there and nowhere else
+    big = cv2.GaussianBlur(gray, (9, 9), 0)
+    arcs = {}
+    for side in ("left", "right"):
+        band_w = max(8, int(0.3 * w))
+        band = big[:, :band_w] if side == "left" else big[:, w - band_w:]
+        circles = cv2.HoughCircles(band, cv2.HOUGH_GRADIENT, dp=1, minDist=h, param1=60, param2=12,
+                                   minRadius=max(3, int(0.08 * h)), maxRadius=max(4, int(0.22 * h)))
+        for cx, cy, rr in ([] if circles is None else circles[0]):
+            x_abs = cx if side == "left" else w - band_w + cx
+            on_end = x_abs <= 0.08 * w if side == "left" else x_abs >= 0.92 * w
+            if on_end and abs(cy - h / 2) <= 0.2 * h:
+                arcs[side] = float(rr)
+                break
+    if len(arcs) == 1:
+        votes.append((next(iter(arcs)), 0.7, "the notch's arc"))
     dent = dent_contrast > 18
     if dent:
         votes.append((dent_side, min(1.0, dent_contrast / 45), "the pin-1 dent"))
@@ -141,22 +162,47 @@ def notch_end(frame, chip):
     return side, round(sure, 2), why
 
 
-def pin1(chip, end):
-    """Pin 1's place in the picture, in pixels, from the body's corners. Seen from above with the notch to the left,
-    pin 1 is the lower left corner; with the notch to the right it is the upper right one (the chip turned half a
-    turn). "Lower" is in the straightened body's frame, which the dent confirms when it was seen."""
+def _pin1_place(chip, end, across_mm=None):
+    """A point at pin 1's place along the body, across_mm from its long axis (the leg's row if None), in pixels. Seen
+    from above with the notch to the left, pin 1 is on the lower side; with the notch to the right, on the upper one
+    (the chip turned half a turn). "Lower" is in the straightened body's frame, which the dent confirms when it was
+    seen. A body's corner is not its pin: the pins stand on the 2.54 mm grid, so pin 1 of a DIP-8 is 3.81 mm from the
+    centre along the body and 3.81 mm across it (rows 7.62 mm apart)."""
     corners = np.array(chip["corners"], np.float32)
     angle = math.radians(chip["angle_deg"])
     along = np.array([math.cos(angle), math.sin(angle)])
     across = np.array([-math.sin(angle), math.cos(angle)])  # the straightened body's "down"
     center = np.array(chip["center"])
-    proj_along = (corners - center) @ along
-    proj_across = (corners - center) @ across
-    want_along = proj_along.min() if end == "left" else proj_along.max()
+    length_px = float(np.ptp((corners - center) @ along))
+    length_mm, width_mm = chip["size_mm"]
+    px_per_mm = length_px / length_mm
+    down_body = 3.81 if length_mm < 12 else length_mm / 2 - 1.27  # the longer DIPs: the first pin near the end
+    if across_mm is None:
+        across_mm = 3.81 if width_mm < 10 else width_mm / 2 + 0.6  # a wide DIP has its rows 15.24 mm apart
     row = chip.get("dent_row") or ("low" if end == "left" else "high")
-    want_across = proj_across.max() if row == "low" else proj_across.min()
-    k = int(np.argmin((proj_along - want_along) ** 2 + (proj_across - want_across) ** 2))
-    return float(corners[k][0]), float(corners[k][1])
+    side = -1.0 if end == "left" else 1.0
+    point = center + side * down_body * px_per_mm * along + (1.0 if row == "low" else -1.0) * across_mm * px_per_mm * across
+    return float(point[0]), float(point[1])
+
+
+def pin1(chip, end):
+    """Pin 1's leg in the picture, in pixels."""
+    return _pin1_place(chip, end)
+
+
+def beside_pin1(chip, end):
+    """The point on the body's flat top right beside pin 1's leg, in pixels: where a laser's dot can be seen and
+    checked. The leg itself is a few mm lower and shiny, and the slanted beam misses it or the camera loses it."""
+    return _pin1_place(chip, end, across_mm=BESIDE_PIN_MM)
+
+
+def on_body(frame, x, y):
+    """Whether a point of a picture lies on the chip: on the biggest patch of the body's mask, since a breadboard's
+    holes show as small dark patches too and a dot lost in one must not pass for a dot on the chip."""
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(body_mask(frame))
+    if n < 2:
+        return False
+    return int(labels[int(y), int(x)]) == 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
 
 
 def orientation(chip, end):

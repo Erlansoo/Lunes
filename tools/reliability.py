@@ -16,6 +16,7 @@ import argparse
 import json
 import re
 import sys
+import tempfile
 import time
 import types
 from datetime import datetime
@@ -25,6 +26,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from lunes import hume as hume_module  # noqa: E402
 from lunes import mcu  # noqa: E402
 from lunes.circuit import with_fault  # noqa: E402
 from lunes.designs import TEMPLATES  # noqa: E402
@@ -32,6 +34,10 @@ from lunes.hantek import SimulatedScope  # noqa: E402
 from lunes.hume import Hume  # noqa: E402
 from lunes.meta_api import LOG, tokens_today  # noqa: E402
 from lunes.simulator import periodic_signal, waveform  # noqa: E402
+
+hume_module.MEMORY = Path(tempfile.gettempdir()) / "lunes_reliability_memory.jsonl"  # a made-up bench is not to be remembered
+if hasattr(sys.stdout, "reconfigure"):  # the models write ohm signs; a Windows console would crash on them
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # the same cases the no-hardware test drives from code (tests/test_simulated_bench.py)
 CASES = [("arduino_pwm_rc", {"duty": 0.3}, None), ("arduino_pwm_rc", {"duty": 0.3}, "R1:open"),
@@ -103,9 +109,9 @@ def verdict(truth, answers, engine, parts):
     return "unsure"
 
 
-def run_case(template, params, fault, spark, think):
+def run_case(template, params, fault, spark, think, brain=None, effort=None):
     machine = types.SimpleNamespace(s=types.SimpleNamespace(port="COM8"), config={})
-    hume = Hume(machine, None, mcu=mcu.SimulatedBoard(fault), spark=spark, think=think)
+    hume = Hume(machine, None, mcu=mcu.SimulatedBoard(fault), spark=spark, think=think, brain_model=brain, effort=effort)
     on_bench = {"circuit": None}
     calls = []
 
@@ -123,13 +129,14 @@ def run_case(template, params, fault, spark, think):
     lines_before, t0 = LOG.read_text(encoding="utf-8").count("\n") if LOG.exists() else 0, time.time()
     answers = [hume.handle(build_job(template, params), on_tool)]
     answers.append(hume.handle(diagnose_job(), on_tool))
-    for _ in range(PROBE_TURNS):  # Erlan, played by the script: the probe is wherever the model asked
+    for _ in range(PROBE_TURNS):  # Erlan, played by the script: the probe is on the net the engine asked for
         state = hume.diagnosis.state() if hume.diagnosis is not None else None
         if state is None or state.get("clear") or "next" not in state:
             break
-        if not re.search(r"\?|punta|sonda|probe", answers[-1], re.I):
+        if not re.search(r"\?|punta|sonda|probe|net|red", answers[-1], re.I):
             break
-        answers.append(hume.handle("Listo, la punta ya está ahí. Mide y sigue.", on_tool))
+        net = state["next"]["net"]
+        answers.append(hume.handle(f"Listo, la punta CH1 está en la red {net}. Mide y sigue.", on_tool))
     engine = hume.diagnosis.state() if hume.diagnosis is not None else None
     rows = LOG.read_text(encoding="utf-8").splitlines()[lines_before:] if LOG.exists() else []
     tokens = sum((json.loads(r).get("usage") or {}).get("total_tokens") or 0 for r in rows if r.strip())
@@ -138,7 +145,8 @@ def run_case(template, params, fault, spark, think):
             "verdict": verdict(fault, answers, engine, parts), "parts": parts,
             "answers": answers, "tools": calls, "engine": engine and {"clear": engine.get("clear"),
                                                                        "likely": engine.get("likely", [])[:2]},
-            "tokens": tokens, "seconds": round(time.time() - t0, 1), "brain": hume.brain}
+            "tokens": tokens, "seconds": round(time.time() - t0, 1), "brain": hume.brain,
+            "model": hume.spark.model if hume.spark else "glimmer", "effort": hume.effort}
 
 
 def rescored(row):
@@ -149,6 +157,8 @@ def rescored(row):
 
 
 def table(results, when, brain):
+    fell_back = [r for r in results if r["brain"] == "spark" and not r["tokens"]]  # the day's budget spent: Glimmer answered
+    results = [r for r in results if r not in fell_back]
     counts = {}
     for r in results:
         c = counts.setdefault(r["truth"], {"found": 0, "unsure": 0, "wrong": 0, "tokens": 0, "runs": 0})
@@ -180,6 +190,9 @@ def table(results, when, brain):
     lines.append(f"| **all** | | {total['runs']} | **{total['found']}** | {total['unsure']} | **{total['wrong']}** | "
                  f"{total['tokens'] // max(1, total['runs']):,} |")
     lines += ["", f"Tokens in all: {total['tokens']:,} ({len(results)} runs)."]
+    if fell_back:
+        lines.append(f"{len(fell_back)} more run(s) are left out: the day's token budget was spent and the local Muse "
+                     f"Glimmer answered instead of the model under test.")
     return "\n".join(lines) + "\n"
 
 
@@ -189,13 +202,27 @@ def main():
     ap.add_argument("--cases", default=None, help="comma-separated template:fault (fault 'healthy' for none)")
     ap.add_argument("--glimmer", action="store_true", help="the local model instead of Muse Spark")
     ap.add_argument("--think", default="low")
-    ap.add_argument("--rescore", default=None, help="a runs/reliability_*.jsonl to judge again, no model calls")
+    ap.add_argument("--brain", default=None, help="the Meta model at the wheel, e.g. muse-wonder-1.0 or muse-spark-1.3")
+    ap.add_argument("--effort", default=None, help="how much it reasons per step: low, medium, high")
+    ap.add_argument("--rescore", nargs="*", default=None,
+                    help="runs/reliability_*.jsonl files to judge again, no model calls; several make one record "
+                         "with a table each")
     args = ap.parse_args()
     if args.rescore:
-        src = Path(args.rescore)
-        results = [rescored(json.loads(line)) for line in src.read_text(encoding="utf-8").splitlines() if line.strip()]
-        stamp = src.stem.replace("reliability_", "")  # 2026-11-02_0907
-        when = f"{stamp[:10]} {stamp[11:13]}:{stamp[13:15]}" if len(stamp) == 15 else stamp
+        reports = []
+        for name in args.rescore:
+            src = Path(name)
+            results = [rescored(json.loads(line)) for line in src.read_text(encoding="utf-8").splitlines() if line.strip()]
+            stamp = src.stem.replace("reliability_", "")  # 2026-11-02_0907
+            when = f"{stamp[:10]} {stamp[11:13]}:{stamp[13:15]}" if len(stamp) == 15 else stamp
+            model = results[0].get("model", "muse-spark-1.3") if results else "?"
+            effort = results[0].get("effort", "low") if results else "?"
+            reports.append(table(results, when, f"{'Muse Wonder' if 'wonder' in model else 'Muse Spark' if 'spark' in model else 'Muse Glimmer'} "
+                                                f"({model}, effort {effort})"))
+        report = "\n".join(reports)
+        (ROOT / "docs" / "reliability.md").write_text(report, encoding="utf-8")
+        print("\n" + report)
+        return
     else:
         cases = CASES
         if args.cases:
@@ -208,7 +235,7 @@ def main():
         print(f"{len(cases)} cases x {args.rounds} rounds; tokens today so far {tokens_today():,}", flush=True)
         for k in range(args.rounds):
             for template, params, fault in cases:
-                r = run_case(template, params, fault, not args.glimmer, args.think)
+                r = run_case(template, params, fault, not args.glimmer, args.think, args.brain, args.effort)
                 results.append(r)
                 with out.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(r, ensure_ascii=False, default=float) + "\n")
@@ -216,8 +243,10 @@ def main():
                       f"{r['seconds']:5.0f} s tools {' '.join(r['tools'])}", flush=True)
                 print(f"      said: {r['answers'][-1][:220]}", flush=True)
         print("rows:", out)
-    brain = results[0]["brain"] if results else "?"
-    report = table(results, when, "Muse Spark" if brain == "spark" else "Muse Glimmer")
+    model = results[0].get("model", results[0]["brain"]) if results else "?"
+    effort = results[0].get("effort", "low") if results else "?"
+    report = table(results, when, f"{'Muse Wonder' if 'wonder' in model else 'Muse Spark' if 'spark' in model else 'Muse Glimmer'} "
+                                  f"({model}, effort {effort})")
     (ROOT / "docs" / "reliability.md").write_text(report, encoding="utf-8")
     print("\n" + report)
 

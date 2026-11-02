@@ -51,22 +51,22 @@
       480
     ],
     "px_per_mm": {
-      "X": 43.009,
-      "Y": 41.776
+      "X": 36.268,
+      "Y": 37.607
     },
     "image_shift_px_per_mm": {
       "X": [
-        -0.702,
-        43.003
+        -0.211,
+        36.268
       ],
       "Y": [
-        -41.721,
-        2.142
+        -37.607,
+        -0.22
       ]
     },
-    "x_axis_angle_deg": 90.94,
-    "angle_between_axes_deg": 86.13,
-    "calibrated_at": "2026-10-29T21:02:52"
+    "x_axis_angle_deg": 90.33,
+    "angle_between_axes_deg": 90.0,
+    "calibrated_at": "2026-11-02T10:30:53"
   },
   "workspace_mm": {
     "X": [
@@ -92,35 +92,46 @@
     "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
   },
   "laser": {
-    "pwm": 30,
-    "at": "2026-11-02T08:55",
+    "pwm": 32,
+    "at": "2026-11-02T11:13",
     "surfaces": [
       {
-        "z": 1.619,
-        "pwm": 30,
-        "dot_mm": 0.401,
+        "z": 17.05,
+        "pwm": 32,
+        "dot_mm": 0.77,
         "offset_mm": {
-          "X": 3.164,
-          "Y": -3.345
+          "X": 4.843,
+          "Y": -4.014
         },
-        "at": "2026-11-02T08:55",
+        "at": "2026-11-02T11:13",
+        "surface": "chip"
+      },
+      {
+        "z": 12.85,
+        "pwm": 31,
+        "dot_mm": 0.503,
+        "offset_mm": {
+          "X": 2.561,
+          "Y": -2.451
+        },
+        "at": "2026-11-02T11:13",
         "surface": "protoboard"
       },
       {
-        "z": -5.68,
+        "z": 5.65,
         "pwm": 30,
-        "dot_mm": 0.698,
+        "dot_mm": 0.54,
         "offset_mm": {
-          "X": -0.678,
-          "Y": -0.526
+          "X": -0.838,
+          "Y": -0.226
         },
-        "at": "2026-11-02T08:54",
+        "at": "2026-11-02T11:13",
         "surface": "mesa"
       }
     ],
     "slant_mm_per_mm": {
-      "X": 0.5264,
-      "Y": -0.3862
+      "X": 0.4955,
+      "Y": -0.3298
     }
   },
   "kinect_head": {
@@ -210,13 +221,13 @@
     ],
     "model": "camera",
     "pairs": 16,
-    "ring_above_mm": 90.59,
+    "ring_above_mm": 103.39,
     "taught": {
       "u": 2007.0000000000002,
       "v": 1517.0,
       "X": 61.0003,
       "Y": -160.49187438963625,
-      "Z": 4.25
+      "Z": 17.05
     },
     "errors_mm": [
       0.3,
@@ -350,7 +361,7 @@
         47.30024915682342
       ]
     ],
-    "at": "2026-11-02T08:44",
+    "at": "2026-11-02T11:13",
     "typical_error_mm": 0.3,
     "held_out_mm": 0.46,
     "note": "the bench camera's 3 x 4 projection over the whole work area, from the ring light seen at two heights (calibrate_bench); ring_above_mm is the ring's height over the surface in focus, taught from one thing seen by both (teach_bench_height); the heights are focus heights"

@@ -183,9 +183,13 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   culpar al circuito, y system_restart para la parte que falle; dile a Erlan qué pasó.
 - El láser del cabezal es tu dedo para señalarle cosas a Erlan: el punto rojo es lo que él ve, así que apunta a la
   cosa misma con laser_point (un punto de la foto del microscopio con picture_x/picture_y, del mosaico con
-  mosaic_x/mosaic_y, o en mm) y dile qué le señalas. El láser va en el carro, no en el Z, y su haz va inclinado: el
-  punto cae corrido del centro del microscopio, y más corrido cuanto más alta es la superficie. El código corrige las
-  dos cosas y mide la altura con el propio punto; tú no calcules distancias. laser_height dice qué tan alta está la
+  mosaic_x/mosaic_y, o en mm) y dile qué le señalas. Para el pin 1 de un chip, laser_point con chip_pin 1: el código
+  encuentra el chip y su pin, enfoca y pone el punto sobre el chip, justo al lado de la pata 1, y comprueba que cayó
+  sobre el chip; dile que está al lado de la pata, no encima. Nunca elijas un pin a ojo en la foto. Toda
+  respuesta de laser_point trae confirmed: si es false, di que no pudiste confirmarlo y dónde cayó el punto, nunca
+  que está sobre la cosa. El láser va en el carro, no en el Z, y su haz va inclinado: el
+  punto cae corrido del centro del microscopio, y más corrido cuanto más alta es la superficie. El código enfoca
+  primero, corrige las dos cosas y mide la altura con el propio punto; tú no calcules distancias. laser_height dice qué tan alta está la
   superficie bajo el punto (la placa sobre la mesa, la protoboard), sin cuarto eje. laser_calibrate se hace con el
   microscopio enfocado en cada superficie (surface: mesa, placa, protoboard), al menos dos a distinta altura; si
   Erlan movió el láser, con fresh=true. Nunca apuntes el láser a una persona ni hacia las cámaras.
@@ -662,14 +666,20 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "laser_point",
         "description": "Put the laser dot exactly on a point to show it to Erlan (the red dot is what he sees, so "
-                       "point at the thing itself): picture_x, picture_y for a point of the last microscope picture, "
-                       "mosaic_x, mosaic_y for a point of the last survey mosaic (fractions, 0 to 1, like "
-                       "center_on_point and go_to_mosaic_point), x, y in machine mm, or here=true for the middle of "
-                       "the microscope's view. The machine moves so the dot, not the microscope, lands there: the code "
-                       "corrects the distance between the laser and the microscope and, with the laser calibrated on "
-                       "two heights, the height of what is pointed at, measured with the dot itself. The laser comes "
-                       "on at its calibrated brightness. Needs laser_calibrate.",
+                       "point at the thing itself). To point at a chip's pin 1: chip_pin 1, and the code finds the "
+                       "chip and its pin (see_chip), focuses, puts the dot on the chip's top right beside pin 1's leg "
+                       "(the leg itself is lower and shiny) and confirms it is seen on the chip: tell Erlan it is "
+                       "beside the leg, not on it. Never pick a pin by eye in the picture. Otherwise picture_x, picture_y for a point of the "
+                       "last microscope picture, mosaic_x, mosaic_y for a point of the last survey mosaic "
+                       "(fractions, 0 to 1), x, y in machine mm, or here=true for the middle of the view. The "
+                       "microscope is put in focus on the surface first (the beam is slanted: its landing depends "
+                       "on the height), the machine moves so the dot lands there, and the dot is looked for: the "
+                       "answer's confirmed says whether it was seen on the point. If confirmed is false, say so to "
+                       "Erlan in those words and where the dot is; never say the dot is on something unconfirmed. "
+                       "Needs laser_calibrate.",
         "parameters": {"type": "object", "properties": {
+            "chip_pin": {"type": "integer", "description": "1: the pin 1 of the DIP under the microscope"},
+            "ref": {"type": "string", "description": "the chip's ref in the circuit, if any"},
             "picture_x": {"type": "number"}, "picture_y": {"type": "number"},
             "mosaic_x": {"type": "number"}, "mosaic_y": {"type": "number"},
             "x": {"type": "number"}, "y": {"type": "number"}, "here": {"type": "boolean"}}}}},
@@ -828,7 +838,7 @@ def with_cross(frame, mark=None):
 
 class Hume:
     def __init__(self, machine, microscope, kinect=None, show=None, model=MODEL, think=THINK, on_think=None,
-                 spark=False, about="", bench=None, scope=None, mcu=None):
+                 spark=False, about="", bench=None, scope=None, mcu=None, brain_model=None, effort=None):
         """think: False, "low", "medium" or "high", how much Glimmer reasons before it answers (it is not spoken).
         on_think(text) gets the reasoning of each step, for the session log. spark=True lets Lunes send pictures
         to Muse Spark over the internet (with free credits Meta may use them), so only when Erlan allows it.
@@ -881,15 +891,17 @@ class Hume:
         # session; the microscope against the mosaic still does.
         self.hold, self.kinect_waived = None, False
         self.spark = None
+        self.effort = effort or SPARK_EFFORT  # how much the Meta model reasons per step
         if spark:
             try:
                 from lunes.meta_api import MetaModels
-                self.spark = MetaModels()
+                self.spark = MetaModels(model=brain_model) if brain_model else MetaModels()
             except Exception:  # no key or no network: Lunes works locally without Muse Spark
                 self.spark = None
-        # Muse Spark is the brain whenever it is allowed and reachable; Glimmer otherwise
+        # the Meta model (Muse Wonder or Muse Spark) is the brain whenever it is allowed and reachable; Glimmer otherwise
         self.brain = "spark" if self.spark else "glimmer"
-        brain = ("Muse Spark, el modelo de Meta, por su API (si no hay internet, Muse Glimmer en esta PC)"
+        self.brain_name = ("Muse Wonder" if self.spark and "wonder" in self.spark.model else "Muse Spark") if self.spark else "Muse Glimmer"
+        brain = (f"{self.brain_name}, el modelo de Meta, por su API (si no hay internet, Muse Glimmer en esta PC)"
                  if self.brain == "spark" else f"Muse Glimmer, el modelo abierto de Meta, en la RTX 3090 de esta PC")
         # what Lunes runs on, so it can say it when asked instead of guessing
         made_of = f"\nCon qué funcionas: tu cerebro es {brain}. {about}\n"
@@ -1168,7 +1180,27 @@ class Hume:
         result["design_notes"] = notes
         result["parts"] = [{k: v for k, v in part.items() if k in ("ref", "kind", "value", "model", "color", "pins")}
                            for part in circuit["parts"]]
+        pot = next((p for p in circuit["parts"] if p["kind"] == "POT"), None)
+        if pot is not None and self.expected is not None:
+            result["pot_sweep"] = self._pot_sweep(circuit, pot)
+            result["note_on_range"] = ("the simulation ran at the pot's set position; pot_sweep is the simulation at its "
+                                       "two ends: tell Erlan that range as simulated. design_notes' numbers are by formula")
         return result, view
+
+    def _pot_sweep(self, circuit, pot):
+        """The simulation with the pot at each end, so a range said aloud is simulated, not only worked out."""
+        from lunes.simulator import SimulationError, expected
+        out = []
+        for position in (0.0, 1.0):
+            turned = json.loads(json.dumps(circuit))
+            next(p for p in turned["parts"] if p["ref"] == pot["ref"])["position"] = position
+            try:
+                m = expected(turned)["nets"].get("OUT", {})
+            except SimulationError as e:
+                out.append({"position": position, "error": str(e)})
+                continue
+            out.append({"position": position, **{k: m[k] for k in ("frequency_hz", "duty", "mean_v") if m.get(k) is not None}})
+        return out
 
     def _circuit_guide(self, topic):
         text = GUIDE.read_text(encoding="utf-8")
@@ -1571,63 +1603,138 @@ class Hume:
             out["warning"] = warning
         return out, view
 
+    def _focus_here(self):
+        """The microscope in focus on what is under it, if it is not already: a fine search a few tenths around
+        here, and when the sharpest is at that window's edge a wide one, from a millimetre up down to the floor.
+        The laser's offset and the picture's scale both depend on the surface's height, so pointing starts here.
+        Returns (Z, sharpness)."""
+        here, top, floor = self.m.position()["Z"], WORKSPACE["Z"][1], self._z_floor()
+        hi, lo = min(here + 1.0, top), floor
+        best = (-1.0, here)
+        z = hi
+        while z >= lo - 1e-9:  # a millimetre at a time over the whole range: a blurred chip looks sharpish up close
+            self.m.move_to(Z=z)
+            s = sharpness(self.cam.fresh_gray(2))
+            self.show(self.cam.frame(), f"enfocando  Z {z:+.2f}  nitidez {s:.0f}")
+            best = max(best, (s, z))
+            z -= 1.0
+        z, s = self._scan_focus(min(best[1] + 0.75, top), max(best[1] - 0.75, floor))  # then fine around the best
+        self.m.move_to(Z=z)
+        return z, s
+
     def _laser_point(self, args):
+        """The dot on a point, with the microscope first in focus on the surface there (the laser's offset depends
+        on its height), the dot looked for after the move at rising brightness, and the answer saying whether it was
+        confirmed: seen by the microscope within half a millimetre of the point. With chip_pin, the point is on the
+        chip's flat top right beside pin 1's leg, found by the code (see_chip): the leg itself is lower and shiny, and
+        the dot is confirmed only when it is also seen on the chip's body, in a last look with the laser on."""
+        from lunes import chip as chips
         from lunes.laser import height_from, offset_at, slant
         cal = self.m.config.get("laser")
         if not cal or not cal.get("surfaces"):
             return {"ok": False, "error": "the laser is not calibrated: laser_calibrate first"}, None
-        at = self.m.position()  # its Z, with the surface in focus, is the surface's height until the dot says
-        if args.get("picture_x") is not None and args.get("picture_y") is not None:
-            got, problem = self._last_picture_point(float(args["picture_x"]), float(args["picture_y"]))
-            if problem:
-                return {"ok": False, "error": problem}, None
-            taken, _, ((u, v),) = got
-            vx, vy, _, _ = geometry(self.m.config["microscope"])
-            x, y = (float(w[0]) for w in pixels_to_mm(taken, vx, vy, [u], [v]))
-        elif args.get("mosaic_x") is not None and args.get("mosaic_y") is not None:
-            if self.last_survey is None:
-                return {"ok": False, "error": "survey_board first, then give a point of its mosaic"}, None
-            x, y = mosaic_point_to_mm(self.last_survey, float(args["mosaic_x"]), float(args["mosaic_y"]))
-        elif args.get("x") is not None and args.get("y") is not None and not args.get("here"):
-            x, y = float(args["x"]), float(args["y"])
+        pin, view = None, None
+        if args.get("chip_pin") is not None:
+            pin = int(args["chip_pin"])
+            if pin != 1:
+                return {"ok": False, "error": "the code finds pin 1 only: point at pin 1 with chip_pin 1 and tell "
+                                              "Erlan to count from it (pins run from the notch down one side and "
+                                              "back up the other)"}, None
+            seen, view = self._see_chip(args.get("ref"))  # in focus on the chip, its pin 1 found by the code
+            if not seen.get("ok") or not seen.get("pin1_mm"):
+                return dict(seen, ok=False, error=seen.get("error") or seen.get("note") or "pin 1 not seen"), view
+            x, y = seen["beside_pin1_mm"]["X"], seen["beside_pin1_mm"]["Y"]
         else:
-            x, y = at["X"], at["Y"]
+            at = self.m.position()
+            if args.get("picture_x") is not None and args.get("picture_y") is not None:
+                got, problem = self._last_picture_point(float(args["picture_x"]), float(args["picture_y"]))
+                if problem:
+                    return {"ok": False, "error": problem}, None
+                taken, _, ((u, v),) = got
+                vx, vy, _, _ = geometry(self.m.config["microscope"])
+                x, y = (float(w[0]) for w in pixels_to_mm(taken, vx, vy, [u], [v]))
+            elif args.get("mosaic_x") is not None and args.get("mosaic_y") is not None:
+                if self.last_survey is None:
+                    return {"ok": False, "error": "survey_board first, then give a point of its mosaic"}, None
+                x, y = mosaic_point_to_mm(self.last_survey, float(args["mosaic_x"]), float(args["mosaic_y"]))
+            elif args.get("x") is not None and args.get("y") is not None and not args.get("here"):
+                x, y = float(args["x"]), float(args["y"])
+            else:
+                x, y = at["X"], at["Y"]
+            # the surface's height is the head's Z in focus on it; high over it the beam lands millimetres off
+            self._focus_here()
+        at = self.m.position()
+        nearest = min(cal["surfaces"], key=lambda s: abs(s["z"] - at["Z"]))
+        levels = (nearest["pwm"], min(255, nearest["pwm"] * 3), min(255, nearest["pwm"] * 8))  # a dark part swallows the fine dot
         dx, dy = offset_at(cal, at["Z"])
         moved = self._move(x - dx, y - dy, at["Z"])
         if not moved.get("ok"):
             return moved, None
-        nearest = min(cal["surfaces"], key=lambda s: abs(s["z"] - at["Z"]))
         # the microscope sees where the dot really landed (on a part's top, on the bed through a gap: the slanted
         # beam lands further the higher the surface), so the head moves again by what is left, until it fits
-        seen, corrected = None, 0
-        for _ in range(3):
-            offset = self._laser_offset(nearest["pwm"])
-            seen = offset is not None
-            if not seen or math.hypot(offset[0] - dx, offset[1] - dy) > 6:  # none, or not this laser's dot
+        seen_dot, corrected, off, level = False, 0, None, levels[0]
+        for _ in range(4):
+            offset = None
+            for level in levels:
+                offset = self._laser_offset(level)
+                if offset is not None:
+                    break
+            if offset is None:
                 break
-            if math.hypot(offset[0] - dx, offset[1] - dy) < 0.04:
+            seen_dot = True
+            off = math.hypot(offset[0] - dx, offset[1] - dy)
+            if off > 6 or off < 0.04:  # not this laser's dot (some other red thing), or close enough
                 break
             dx, dy = offset
             moved = self._move(x - dx, y - dy, at["Z"])
             if not moved.get("ok"):
                 return moved, None
             corrected += 1
-        self.m.laser(nearest["pwm"])  # the brightness that made the finest dot on the surface nearest in height
-        out = {"ok": True, "dot_at_mm": {"X": round(x, 2), "Y": round(y, 2)},
-               "head_at_mm": moved["position_mm"], "level": nearest["pwm"],
-               "note": "the dot is on the point, checked with the microscope" + (
-                   f" and moved {corrected} time(s) for the height of what it landed on" if corrected else "") +
-                       "; it goes off by itself in a minute"}
-        known = height_from(cal, (dx, dy)) if slant(cal) is not None else None
-        if seen and known and known[1] <= 0.3:
-            out["surface_z_mm"] = round(known[0], 2)  # the height of what the dot is on, from where it landed
-        if not seen:
-            out["warning"] = "the dot was not seen after the move (over a hole, off a surface, or too shiny): it " \
-                             "points where the calibration says, unchecked"
+        confirmed = bool(seen_dot and off is not None and off <= 0.5)
+        on_body = None
+        if pin is not None and confirmed:  # a last look: the dot must be on the chip, not just where the numbers put it
+            self.m.laser(0)
+            time.sleep(0.3)
+            dark = self._frames()
+            dot, _, _ = self._laser_dot(level, dark)
+            on_body = dot is not None and chips.on_body(dark, dot["x"], dot["y"])
+            confirmed = on_body
+        self.m.laser(level)  # the brightness that showed the dot here; off by itself in a minute
+        out = {"ok": True, "confirmed": confirmed, "dot_at_mm": {"X": round(x, 2), "Y": round(y, 2)},
+               "head_at_mm": moved["position_mm"], "level": level, "focus_z_mm": round(at["Z"], 2)}
+        if pin is not None:
+            leg = seen["pin1_mm"]
+            out.update(pin=1, pin1_mm=leg, notch=seen.get("notch"), sure=seen.get("sure"),
+                       leg_from_dot_mm=round(math.hypot(leg["X"] - x, leg["Y"] - y), 1))
+        if confirmed:
+            out["note"] = (f"the dot is on the chip's top right beside pin 1's leg ({seen.get('notch')}), seen on the body "
+                           f"by the microscope; the leg is {out['leg_from_dot_mm']} mm further out, past the body's edge; "
+                           "say it that way, beside the leg, not on it" if pin else
+                           "the dot is on the point, seen there by the microscope" +
+                           (f" after {corrected} correction(s)" if corrected else "") +
+                           "; it goes off by itself in a minute")
+            if pin and seen.get("sure", 1.0) < 0.6:
+                out["note"] += f"; only {seen['sure']:.0%} sure of the notch end: have Erlan confirm it"
+        elif on_body is False:
+            out.update(ok=False, error="the dot is near the point but the microscope does not see it on the chip's body: "
+                                       "NOT confirmed; look_microscope shows where it is")
+        elif seen_dot:
+            out.update(ok=False, off_mm=round(off, 2),
+                       error=f"the dot landed {off:.1f} mm from the point and could not be brought onto it: NOT "
+                             f"confirmed; look_microscope shows where it is")
+        else:
+            out["warning"] = ("the dot was not seen after the move (over a hole, off a surface, or too shiny): it "
+                              "points where the calibration says, NOT confirmed" +
+                              (f"; pin 1 is {seen.get('notch')}" if pin else ""))
             if slant(cal) is None and abs(at["Z"] - nearest["z"]) >= 0.3:
                 out["warning"] += (f"; calibrated only on a surface at Z {nearest['z']:.2f} and the head is at Z "
                                    f"{at['Z']:.2f}, so the slanted beam may land off")
-        return out, None
+        known = height_from(cal, (dx, dy)) if slant(cal) is not None and seen_dot else None
+        if known and known[1] <= 0.3:
+            out["surface_z_mm"] = round(known[0], 2)  # the height of what the dot is on, from where it landed
+        if view is not None:
+            self.last_image = view
+        return out, view
 
     # The laser as a guide on the breadboard -------------------------------------------------------------------------
     def _breadboard_plan(self):
@@ -1699,16 +1806,20 @@ class Hume:
             chips = [p for p in chips if p["ref"] == ref]
         return chips[0]["ref"] if len(chips) == 1 else None
 
+    def _picture_mm(self, px, py, at):
+        """Machine mm of a pixel of a picture taken at `at`: one frame, or a mosaic (at carries its summary)."""
+        if isinstance(at, dict) and "_mosaic" in at:
+            summary = at["_mosaic"]
+            return mosaic_point_to_mm(summary, px / summary["size_px"][0], py / summary["size_px"][1])
+        vx, vy, _, _ = geometry(self.m.config["microscope"])
+        x, y = (float(w[0]) for w in pixels_to_mm(at, vx, vy, [px], [py]))
+        return x, y
+
     def _pin1_report(self, px, py, at, how, sure, why, ref=None):
         """What pin 1 at a pixel of a picture taken at `at` means: its machine mm, its hole, and the plan's verdict.
         The picture is one frame, or a mosaic (at carries its summary) whose pixels are placed by its own geometry."""
         from lunes.breadboard import chip_pin1_hole, nearest_hole
-        if isinstance(at, dict) and "_mosaic" in at:
-            summary = at["_mosaic"]
-            x, y = mosaic_point_to_mm(summary, px / summary["size_px"][0], py / summary["size_px"][1])
-        else:
-            vx, vy, _, _ = geometry(self.m.config["microscope"])
-            x, y = (float(w[0]) for w in pixels_to_mm(at, vx, vy, [px], [py]))
+        x, y = self._picture_mm(px, py, at)
         out = {"pin1_mm": {"X": round(x, 2), "Y": round(y, 2)}, "how": how, "sure": sure, "why": why}
         if self.placement is not None:
             hole = nearest_hole(self.placement, x, y)
@@ -1730,6 +1841,7 @@ class Hume:
 
     def _see_chip(self, ref=None):
         from lunes import chip as chips
+        self._focus_here()  # a blurred chip measures wrong; its pin 1 in mm needs the picture's true scale
         frame = self._look()
         at = self.last_look[0]
         ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
@@ -1749,7 +1861,9 @@ class Hume:
                                         stop=self.stop.is_set, register=True)
             self.m.move_to(X=at["X"], Y=at["Y"])
             self.m.move_to(Z=at["Z"])
-            at = {"X": summary["home_mm"][0], "Y": summary["home_mm"][1], "Z": at["Z"], "_mosaic": summary}
+            home = summary["home_mm"]
+            hx, hy = (home["X"], home["Y"]) if isinstance(home, dict) else (home[0], home[1])
+            at = {"X": hx, "Y": hy, "Z": at["Z"], "_mosaic": summary}
             frame, found = mosaic, chips.find_chip(mosaic, ppm)
             view = mosaic.copy()
             if found is None:
@@ -1769,6 +1883,8 @@ class Hume:
         px, py = chips.pin1(found, end)
         cv2.circle(view, (int(px), int(py)), 12, (0, 0, 255), 2)
         cv2.putText(view, "1", (int(px) + 14, int(py) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+        bx, by = self._picture_mm(*chips.beside_pin1(found, end), at)
+        out["beside_pin1_mm"] = {"X": round(bx, 2), "Y": round(by, 2)}  # the flat top next to the leg, for the laser
         angle, words = chips.orientation(found, end)
         out.update(notch=words, notch_deg=angle, pin1_in_picture=[round(px / frame.shape[1], 3), round(py / frame.shape[0], 3)],
                    **self._pin1_report(px, py, at, "seen by the microscope", sure, why, ref))
@@ -2945,7 +3061,7 @@ class Hume:
         messages = [{"role": "system", "content": system}] + to_openai(self.messages[1:])
         tools = [{"type": "function", "function": t["function"]} for t in self.tools()]
         t0 = time.time()
-        msg = self.spark.chat(messages, tools, purpose="Lunes brain", effort=SPARK_EFFORT)
+        msg = self.spark.chat(messages, tools, purpose="Lunes brain", effort=self.effort)
         content = msg.content or ""
         if on_text and not self.stop.is_set():
             for sentence in re.split(r"(?<=[.!?])\s+", content.strip()):
@@ -2955,7 +3071,7 @@ class Hume:
         with LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "model": self.spark.model,
                                 "where": "Meta Model API (api.meta.ai)", "seconds": round(time.time() - t0, 2),
-                                "effort": SPARK_EFFORT}) + "\n")
+                                "effort": self.effort}) + "\n")
         out = {"role": "assistant", "content": content}
         if msg.tool_calls:
             out["tool_calls"] = [{"id": c.id, "function": {"name": c.function.name,

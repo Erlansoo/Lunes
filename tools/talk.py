@@ -428,8 +428,14 @@ def main():
     ap.add_argument("--model", default=MODEL, help="Ollama model for the conductor and the local worker")
     ap.add_argument("--think", default=THINK, help="how much the local worker reasons: false, low, medium, high")
     ap.add_argument("--spark", action="store_true",
-                    help="the worker uses the Meta Model API: Muse Spark sees the pictures (with free credits Meta "
+                    help="the worker uses the Meta Model API: the Meta model sees the pictures (with free credits Meta "
                          "may use them)")
+    ap.add_argument("--brain", default="muse-wonder-1.0",
+                    help="with --spark, the Meta model at the wheel of the work: muse-wonder-1.0 (the big one) or "
+                         "muse-spark-1.3 (faster); the conductor of the conversation stays on Muse Spark")
+    ap.add_argument("--effort", default="medium",
+                    help="with --spark, how much the worker reasons per step: low, medium or high (medium takes a "
+                         "few seconds more a step and thinks things through)")
     ap.add_argument("--mic", default=None, help="part of the microphone's name, e.g. fifine (Windows' default if left out)")
     ap.add_argument("--audifonos", action="store_true",
                     help="Lunes speaks into headphones, so the microphone never hears it: everything heard is Erlan, "
@@ -479,26 +485,33 @@ def main():
         print("Arduino: SIMULADO (lee el circuito simulado, no el banco)" +
               (f", con la falla {args.falla} plantada" if args.falla else ""))
     think = False if args.think.lower() in ("false", "no", "0") else args.think
+    worker_name = "Muse Wonder" if "wonder" in args.brain else "Muse Spark"
     brain = ("Muse Spark por la API de Meta (Muse Glimmer en esta PC si no hay internet)" if args.spark
              else "Muse Glimmer en esta PC")
     about = (f"Con qué funcionas: tu oído es Omnilingual ASR de Meta y tu voz es MMS-TTS de Meta, los dos en esta PC; "
-             f"tú piensas con {brain}, y el equipo que trabaja también. Tu memoria, Hume, guarda en esta PC lo que "
+             f"tú piensas con {brain}, y el equipo que trabaja con "
+             f"{worker_name + ' por la API de Meta' if args.spark else brain}. Tu memoria, Hume, guarda en esta PC lo que "
              f"observaste.")
     hume = Hume(machine, cam, kinect, show=show, model=args.model, think=think,
                 on_think=lambda t: log("think", "   (pensó) " + " ".join(t.split())[:300]), spark=args.spark,
-                about=about, bench=bench, scope=scope, mcu=mcu_board)
+                about=about, bench=bench, scope=scope, mcu=mcu_board, brain_model=args.brain, effort=args.effort)
     from lunes import simulator
     simulator_ok = simulator.selftest()
     simulator_ok["hanging_runs_ended"] = simulator.kill_strays()
     print("simulador: ngspice " + (f"listo ({simulator_ok['seconds']} s)" if simulator_ok["ok"] else
                                    f"CON PROBLEMAS: {simulator_ok.get('problem')}"))
-    print("trabajador y conductor: " + ("Muse Spark por la API de Meta (si falla, Muse Glimmer local)"
-                                        if hume.brain == "spark"
-                                        else f"Muse Glimmer local ({args.model}); a Muse Spark no se le manda nada"))
+    print("trabajador: " + (f"{hume.brain_name} ({hume.spark.model}, esfuerzo {hume.effort}) por la API de Meta; "
+                            f"conductor: Muse Spark (si falla, Muse Glimmer local)"
+                            if hume.brain == "spark"
+                            else f"Muse Glimmer local ({args.model}); a la API de Meta no se le manda nada"))
     print(f"ubicación por el último mosaico: {hume.relocate() or 'no me encontré en el mosaico'}")
     if kinect and machine.config.get("kinect_head"):
         print(f"posición según el Kinect: {hume.check_position()}")
-    conductor = Conductor(hume.spark, args.model, about=about)
+    conductor_model = hume.spark  # the conductor answers in a few seconds: Muse Spark, even when Wonder does the work
+    if hume.spark is not None and "wonder" in hume.spark.model:
+        from lunes.meta_api import MetaModels
+        conductor_model = MetaModels()
+    conductor = Conductor(conductor_model, args.model, about=about)
     warming = threading.Thread(target=conductor.warm, daemon=True)  # the first load takes most of a minute
     warming.start()
     voice = Voice()

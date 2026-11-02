@@ -53,9 +53,11 @@ def dip(angle_deg=0.0, notch="left", dent=True, center=(320, 240), pins=8):
     turned = cv2.warpAffine(body, m, (640, 480), borderValue=(0, 0, 0))
     mask = cv2.warpAffine(np.full(body.shape[:2], 255, np.uint8), m, (640, 480))
     img[mask > 0] = turned[mask > 0]
-    # where pin 1's corner (lower left with the notch left, in the body's own frame) lands
-    corner = np.array([cx - w / 2, cy + h / 2]) if notch == "left" else np.array([cx + w / 2, cy + h / 2])
-    pin1 = m @ np.array([corner[0], corner[1], 1.0])
+    # where pin 1's leg lands: 3.81 mm from the centre each way. The notch left: lower left. The notch right: the chip
+    # turned half a turn, upper right, unless the dent drawn (lower right here) says otherwise, and the dent wins
+    low = notch == "left" or dent
+    leg = np.array([cx + (-3.81 if notch == "left" else 3.81) * PPM, cy + (3.81 if low else -3.81) * PPM])
+    pin1 = m @ np.array([leg[0], leg[1], 1.0])
     return cv2.GaussianBlur(img, (3, 3), 0), (float(pin1[0]), float(pin1[1]))
 
 
@@ -79,10 +81,22 @@ def pin_one():
         p = chip.pin1(found, end) if end else None
         off = math.dist(p, truth) / PPM if p else 99
         ok(end is not None and off < 0.8, f"turned {angle:g}, notch {notch}: pin 1 {off:.2f} mm off ({why}, sure {sure})")
+        if end:
+            b = chip.beside_pin1(found, end)
+            bx, by = int(round(b[0])), int(round(b[1]))
+            ok(chip.on_body(img, bx, by), f"turned {angle:g}, notch {notch}: the point beside pin 1 is on the body, "
+                                          f"{math.dist(b, p) / PPM:.1f} mm from the leg")
+            ok(not chip.on_body(img, int(p[0] + (p[0] - b[0])), int(p[1] + (p[1] - b[1]))) if 0 <= p[0] + (p[0] - b[0]) < 640
+               and 0 <= p[1] + (p[1] - b[1]) < 480 else True, f"turned {angle:g}, notch {notch}: past the leg is not the body")
     img, _ = dip(0.0, "left", dent=False)
     found = chip.find_chip(img, PPM)
     end, sure, why = chip.notch_end(img, found)
     ok(end == "left", f"with the notch alone: {end} ({why})")
+    img, truth = dip(0.0, "right", dent=False)  # the 555 on the bench: a notch, no dent
+    found = chip.find_chip(img, PPM)
+    end, sure, why = chip.notch_end(img, found)
+    off = math.dist(chip.pin1(found, end), truth) / PPM if end else 99
+    ok(end == "right" and off < 0.8, f"notch right and no dent: pin 1 upper right, {off:.2f} mm off the leg")
     plain = breadboard_picture()
     cv2.rectangle(plain, (160, 120), (480, 330), (52, 50, 48), -1)
     found = chip.find_chip(plain, PPM)

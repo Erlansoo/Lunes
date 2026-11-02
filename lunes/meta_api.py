@@ -23,9 +23,10 @@ ROOT = Path(__file__).resolve().parent.parent
 BASE_URL = "https://api.meta.ai/v1"
 DEFAULT_MODEL = "muse-spark-1.3"
 LOG = ROOT / "runs" / "api_calls.jsonl"
-DAILY_TOKENS = 6_000_000  # all calls of one day together (at most about US$12); raise it knowingly. Erlan set it on
+DAILY_TOKENS = 12_000_000  # all calls of one day together (at most about US$25); raise it knowingly. Erlan set it on
 # 2026-10-28: 300 000 ran out in an afternoon of tests and left the conversation to slow, guessing Glimmer; raised to
-# 6 000 000 on 2026-11-02 for the recording days, with free credits to spare
+# 6 000 000 on 2026-11-02 for the recording days, and to 12 000 000 the same day when two measured batches of 21
+# diagnoses (2.7 million each) and the bench spent it by noon, with free credits to spare
 
 
 class OverBudget(RuntimeError):

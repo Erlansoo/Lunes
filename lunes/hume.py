@@ -62,7 +62,7 @@ GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' 
 LIFT_MM = 3.0
 # what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
 MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
-                "guide_step", "guide_net", "see_chip",
+                "guide_step", "guide_net", "see_chip", "calibrate_bench", "reach_in_bench",
                 "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
 MAX_ROUNDS = 10
 MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
@@ -96,9 +96,18 @@ La cámara del banco (una webcam 4K) ve toda el área de trabajo, con mucho mejo
 ver qué hay en el banco, dónde está la placa, los cables y las herramientas (look_bench, find_in_bench).
 El Kinect te da la profundidad: la distancia en milímetros desde el Kinect hasta cada punto, con unos milímetros de
 error a un metro (kinect_distance), y comprueba dónde está el cabezal (check_position).
-La cámara del banco no está calibrada a las coordenadas del banco. El Kinect sí, como cámara: find_in_kinect te da
-dónde está algo sobre la mesa en mm (machine_mm, con un centímetro de error), lo justo para llegar a una placa que el
-microscopio no tiene debajo (move_to ahí y measure_board). Los tamaños y las posiciones finas salen del microscopio y
+Las dos cámaras están calibradas a las coordenadas del banco cuando Erlan lo pidió (calibrate_bench, calibrate_kinect).
+A la cámara del banco le falta un dato después de calibrarla, una sola vez: a qué altura cuelga el anillo sobre lo
+que enfoca el microscopio. Se lo enseñas con una cosa que vean las dos: centras el microscopio en algo que la cámara
+del banco también distinga (el chip negro de la protoboard), enfocado, find_in_bench lo encuentra en la foto del
+banco y teach_bench_height con ese x, y.
+Para llegar rápido a algo que el microscopio no tiene debajo: find_in_bench lo encuentra en la foto de la cámara del
+banco y reach_in_bench lleva el cabezal encima: la cámara del banco da los mm, el Kinect comprueba que el cabezal
+llegó, y abajo, a la altura de la superficie, el láser pone el punto y el microscopio lo ve: por dónde cae sabe a qué
+altura está lo que hay ahí, que debe ser la esperada; si el punto cae en un agujero o en el costado de una pieza lo
+prueba 4 mm al lado. Es una aproximación (la CNC es artesanal, con sus errores de escuadra y tensión): deja el
+cabezal a pocos mm y el microscopio remata. Si algo no coincide te lo dice y tú se lo dices a Erlan. find_in_kinect
+también da machine_mm (con un centímetro de error). Los tamaños y las posiciones finas salen del microscopio y
 measure_board, nunca de las cámaras.
 
 Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, no pasitos.
@@ -227,8 +236,44 @@ TOOLS = [
         "name": "find_in_bench",
         "description": "Find every instance of one thing in a fresh picture of the bench camera with SAM 3.1: where it "
                        "is in the picture (x, y from 0 to 1) and how sure. For what is on the bench: 'circuit board', "
-                       "'cable', 'screwdriver', 'multimeter'. It gives no machine millimetres.",
+                       "'cable', 'screwdriver', 'multimeter'. With the bench camera calibrated (calibrate_bench) each "
+                       "thing also comes with machine_mm, where it is on the table taking it to lie at the table's "
+                       "height: to go there, reach_in_bench with its x, y.",
         "parameters": {"type": "object", "properties": {"concept": {"type": "string"}}, "required": ["concept"]}}},
+    {"type": "function", "function": {
+        "name": "calibrate_bench",
+        "description": "Teaches the bench camera (the 4K webcam) the table's millimetres: the head goes to a grid over "
+                       "the whole work area a few mm over the lowest focus, then the four corners at the top of Z, and "
+                       "the camera finds the microscope's ring light at each place (about three minutes). Then "
+                       "teach_bench_height once, and reach_in_bench takes the head straight to anything the bench "
+                       "camera sees. Only when Erlan asks, with nothing on the table taller than the head's clearance "
+                       "(the ring hangs some 90 mm over what the microscope focuses on).",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "teach_bench_height",
+        "description": "After calibrate_bench, once: tells the bench camera how high the ring light hangs over what the "
+                       "microscope focuses on, from one thing seen by both. First centre the microscope on a thing "
+                       "the bench camera tells apart too (the black chip on the breadboard, a board's corner) with "
+                       "center_on_point, in focus (autofocus); then find it in the bench picture (find_in_bench, or "
+                       "Erlan says where it is in look_bench's picture) and give its x, y (0 to 1) here. height_mm is "
+                       "the thing's focus height, the head's Z by default. The one height that fits is kept and "
+                       "checked against the camera's geometry: a point that is not the thing is refused.",
+        "parameters": {"type": "object", "properties": {
+            "x": {"type": "number"}, "y": {"type": "number"}, "height_mm": {"type": "number"}}, "required": ["x", "y"]}}},
+    {"type": "function", "function": {
+        "name": "reach_in_bench",
+        "description": "Go straight to a point of the bench camera's picture (x, y from 0 to 1, from find_in_bench or "
+                       "from a point Erlan names in look_bench's picture): the calibrated bench camera turns it into "
+                       "millimetres at height_mm (the table's by default; a breadboard's top or a board's surface if "
+                       "it lies on one, as the head's Z in focus on it), the head goes over it high, the Kinect "
+                       "checks the head got there, then it comes down to height_mm and the laser's dot is put on "
+                       "the point and seen by the microscope: where it lands tells the height of the surface there, "
+                       "which must be height_mm. A dot lost in a hole or on a part's side is tried 4 mm beside the "
+                       "point. A disagreement is reported, never corrected on its own. An approximation, a few mm "
+                       "(the machine is hand-built): look_microscope and center_on_point settle the rest.",
+        "parameters": {"type": "object", "properties": {
+            "x": {"type": "number"}, "y": {"type": "number"}, "height_mm": {"type": "number"},
+            "check_laser": {"type": "boolean"}}, "required": ["x", "y"]}}},
     {"type": "function", "function": {
         "name": "find_in_kinect",
         "description": "Find every instance of one thing in a fresh Kinect picture with SAM 3.1: where it is in the "
@@ -758,6 +803,8 @@ class Hume:
         (lunes.hantek), if it is plugged in; mcu: a lunes.mcu.SimulatedBoard to try the microcontroller tools
         without a board (a real board is reached by its USB port)."""
         self.m, self.cam, self.kinect, self.bench, self.scope = machine, microscope, kinect, bench, scope
+        from lunes.bench import BenchCamera
+        self.bench_cal = BenchCamera.from_config(machine.config.get("bench_camera"))  # the webcam's mm, if taught
         self.mcu, self.mcu_port, self.mcu_sketch = mcu, None, None  # the board, its port, the sketch put on it
         self.last_scope = None  # {"at", "result"} of the last scope_measure
         self.last_trace = None  # its waveforms, for the web lab
@@ -1958,7 +2005,19 @@ class Hume:
         frame, problem = self.bench_picture()
         if problem:
             return {"ok": False, "error": problem}, None
-        return self._find_in_picture(frame, concept, "bench camera")
+        locate = None
+        if self.bench_cal is not None and self.bench_cal.ring_above_mm is not None:
+            z = self._z_floor()  # taken to lie on the table: a thing on a board or a breadboard is a little off
+
+            def locate(x1, y1, x2, y2):
+                x, y = self.bench_cal.locate((x1 + x2) / 2, (y1 + y2) / 2, z)
+                return {"X": round(x, 1), "Y": round(y, 1), "at_height_mm": round(z, 2)}
+        result, view = self._find_in_picture(frame, concept, "bench camera", locate=locate)
+        if locate and result["found"]:
+            result["note"] = ("x, y are where it is in the bench camera's picture (0 to 1). machine_mm is where it is "
+                              "on the table from the bench camera, taking it to lie at the table's height (a few mm "
+                              "off for what sits higher): reach_in_bench with its x, y goes there")
+        return result, view
 
     def find_in_kinect(self, concept):
         """Every instance of a concept in a fresh Kinect picture, found by SAM 3.1, where it is in the picture (no
@@ -2203,6 +2262,171 @@ class Hume:
         return {"ok": True, "points": len(points), "of": len(plan), "error_mm": errors, "typical_error_mm": typical,
                 "worst_error_mm": max(errors), "tolerance_mm": {a: tolerance[a] for a in "XY"}, "covers_mm": reached,
                 "skipped": skipped}
+
+    # The bench camera tied to the machine ------------------------------------------------------------------
+    def bench_head(self):
+        """(column, row) of the microscope's ring light in a fresh bench camera picture, or None."""
+        from lunes.bench import ring_in_picture
+        frame, problem = self.bench_picture()
+        return None if problem else ring_in_picture(frame)
+
+    def calibrate_bench(self):
+        """Moves over the whole work area at two heights far apart, finds the ring light in the bench camera at each
+        place, and fits the camera's projection to machine millimetres. Comes back to where it started. The ring's
+        height over the surface in focus, taught before, is kept and checked on the new projection."""
+        from lunes.bench import BenchCamera, plan_route
+        if self.bench is None:
+            return {"ok": False, "error": "the bench camera is not connected"}
+        if self.bench_head() is None:  # a look before moving anything
+            return {"ok": False, "error": "the bench camera does not see the microscope's ring light from where it "
+                                          "is: is the light on and the head in its view?"}
+        start, skipped = self.m.position(), []
+        cam = BenchCamera(taught=self.bench_cal.taught if self.bench_cal is not None else None)
+        z_top = WORKSPACE["Z"][1]
+        z_low = max(WORKSPACE["Z"][0] + 8.0, z_top - 45.0)  # far apart: the projection must reach the table, 90 mm down
+        plan = plan_route(WORKSPACE, z_low, z_top)
+        try:
+            for x, y, z in plan:
+                if self.stop.is_set():
+                    raise Interrupted()
+                moved = self._move(x, y, z)
+                if not moved["ok"]:
+                    skipped.append(moved["error"])
+                    continue
+                time.sleep(0.4)  # the carriage settles and the camera sends a picture taken after the move
+                seen = self.bench_head()
+                if seen is None:
+                    skipped.append(f"no ring at X {x:.0f} Y {y:.0f} Z {z:.0f}")
+                    continue
+                cam.add(seen, self.m.position())
+                self.show(self.cam.frame(), f"calibrando la cámara del banco {len(cam.pairs)} de {len(plan)}")
+        finally:
+            self._move(*(min(max(start[a], WORKSPACE[a][0]), WORKSPACE[a][1]) for a in "XY"), start["Z"])
+        result = cam.fit()
+        if not result["ok"]:
+            result["skipped"] = skipped
+            return result
+        self.bench_cal = cam
+        self._save_bench_cal(result)
+        out = dict(result, of=len(plan), skipped=skipped)
+        if cam.ring_above_mm is not None:
+            out["note"] = "reach_in_bench takes the head to anything the bench camera sees"
+        return out
+
+    def _save_bench_cal(self, result):
+        self.m.config["bench_camera"] = dict(self.bench_cal.to_config(), at=datetime.now().isoformat(timespec="minutes"),
+                                             typical_error_mm=result.get("typical_error_mm"),
+                                             held_out_mm=result.get("held_out_mm"),
+                                             note="the bench camera's 3 x 4 projection over the whole work area, from "
+                                                  "the ring light seen at two heights (calibrate_bench); "
+                                                  "ring_above_mm is the ring's height over the surface in focus, "
+                                                  "taught from one thing seen by both (teach_bench_height); the "
+                                                  "heights are focus heights")
+        self.m.config_path.write_text(json.dumps(self.m.config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _teach_bench_height(self, args):
+        """The ring's height over the surface in focus, from the thing under the microscope now (centred, in focus:
+        the head's X, Y, Z are its place) and where the bench camera sees it (x, y of its picture)."""
+        if self.bench_cal is None or self.bench_cal.P is None:
+            return {"ok": False, "error": "the bench camera is not calibrated: calibrate_bench, when Erlan asks"}, None
+        fx, fy = float(args.get("x", -1)), float(args.get("y", -1))
+        if not (0 <= fx <= 1 and 0 <= fy <= 1):
+            return {"ok": False, "error": "x and y are fractions of the bench camera's picture, from 0 to 1"}, None
+        frame, problem = self.bench_picture()
+        if problem:
+            return {"ok": False, "error": problem}, None
+        h, w = frame.shape[:2]
+        here = self.m.position()
+        z = float(args["height_mm"]) if args.get("height_mm") is not None else here["Z"]
+        result = self.bench_cal.teach(fx * (w - 1), fy * (h - 1), here["X"], here["Y"], z)
+        if not result["ok"]:
+            return result, None
+        self._save_bench_cal(self.m.config.get("bench_camera") or {})
+        return dict(result, thing_at_mm={"X": round(here["X"], 2), "Y": round(here["Y"], 2), "Z": round(z, 2)},
+                    note="the bench camera now locates things at any focus height; reach_in_bench goes to them"), None
+
+    def _reach_in_bench(self, args):
+        """To a point of the bench camera's picture: the bench camera's millimetres, the Kinect's check of the head
+        once there, then down to the surface's height, where the laser's dot under the microscope tells the height
+        of what is really there. An approximation (a few mm); disagreements are reported, not corrected."""
+        if self.bench_cal is None:
+            return {"ok": False, "error": "the bench camera is not calibrated: calibrate_bench, when Erlan asks"}, None
+        frame, problem = self.bench_picture()
+        if problem:
+            return {"ok": False, "error": problem}, None
+        fx, fy = float(args.get("x", -1)), float(args.get("y", -1))
+        if not (0 <= fx <= 1 and 0 <= fy <= 1):
+            return {"ok": False, "error": "x and y are fractions of the bench camera's picture, from 0 to 1"}, None
+        h, w = frame.shape[:2]
+        z = float(args["height_mm"]) if args.get("height_mm") is not None else self._z_floor()
+        u, v = fx * (w - 1), fy * (h - 1)
+        try:
+            x, y = self.bench_cal.locate(u, v, z)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}, None
+        here = self.m.position()
+        target = {"X": round(x, 1), "Y": round(y, 1), "at_height_mm": round(z, 2)}
+        moved = self._move(x, y, max(here["Z"], self._z_floor() + LIFT_MM))  # over it first, high
+        if not moved.get("ok"):
+            return dict(moved, target_mm=target), None
+        out = {"ok": True, "target_mm": target, "head_at_mm": moved["position_mm"]}
+        if self.kinect is not None and self.m.config.get("kinect_head"):
+            out["kinect_check"] = self.check_position()
+        cal = self.m.config.get("laser")
+        if args.get("check_laser", True) and cal and cal.get("surfaces") and hasattr(self.m, "laser"):
+            out["laser_check"] = self._laser_check_at(cal, x, y, z)
+            self._move(x, y, z)  # the microscope back over the point, in focus on the expected surface
+            self.m.laser(0)
+            out["head_at_mm"] = _mm(self.m.position())
+        checks = [c for c in (out.get("kinect_check", {}).get("agrees"), out.get("laser_check", {}).get("agrees"))
+                  if c is not None]
+        out["note"] = (("every check agrees: " if checks and all(checks) else
+                        "a check DISAGREES: tell Erlan before trusting it; " if checks else "unchecked: ") +
+                       "the microscope is over the point to a few mm (the machine is hand-built: this is an "
+                       "approximation); autofocus, look_microscope and center_on_point settle the rest")
+        return out, None
+
+    def _laser_check_at(self, cal, x, y, z):
+        """The laser's dot on the point, seen by the microscope at the point's focus height: where it lands gives
+        the height of the surface there, which must be the expected one. A dot lost in a hole or on a part's side
+        is tried 4 mm beside the point, on flat ground, and the result says where."""
+        from lunes.laser import height_from, offset_at, slant
+        dx, dy = offset_at(cal, z)  # the beam is slanted: where it lands depends on the surface's height
+        nearest = min(cal["surfaces"], key=lambda s: abs(s["z"] - z))
+        on_edge = None  # the first dot seen that no height explains (an edge, a notch): kept if nothing better comes
+        for sx, sy in ((x, y), (x + 4.0, y), (x - 4.0, y), (x, y + 4.0), (x, y - 4.0)):
+            aimed = self._move(sx - dx, sy - dy, z)
+            if not aimed.get("ok"):
+                continue
+            offset = None
+            for level in (nearest["pwm"], min(255, nearest["pwm"] * 3), min(255, nearest["pwm"] * 8)):
+                offset = self._laser_offset(level)  # a dark part (a chip's top) swallows the fine dot: brighter, then
+                if offset is not None:
+                    break
+            if offset is None:
+                continue
+            check = {"seen": True, "beside_mm": round(math.hypot(sx - x, sy - y), 1),
+                     "dot_at_mm": {"X": round(sx, 1), "Y": round(sy, 1)}}
+            known = height_from(cal, offset) if slant(cal) is not None else None
+            if known is None:
+                check["note"] = "the laser knows one surface only, so no height from the dot; seen is all it says"
+                return check
+            surface_z, off_line = known
+            check.update(surface_z_mm=round(surface_z, 2), expected_z_mm=round(z, 2),
+                         agrees=bool(off_line <= 0.5 and abs(surface_z - z) <= 3.0))
+            if off_line > 0.5:  # on an edge, a notch, a pin's side: flat ground 4 mm beside says more
+                check["note"] = "the dot is not where any height would put it: on an edge, or not this laser's dot"
+                on_edge = on_edge or check
+                continue
+            if not check["agrees"]:
+                check["note"] = (f"the surface under the dot is {abs(surface_z - z):.1f} mm "
+                                 f"{'higher' if surface_z > z else 'lower'} than expected: something else lies there, "
+                                 "or height_mm was wrong")
+            return check
+        if on_edge is not None:
+            return dict(on_edge, note=on_edge["note"] + "; 4 mm around it was no better")
+        return {"seen": False, "note": "the microscope did not see the dot on the point nor 4 mm around it (a hole, a "
+                                       "part's side, or not in focus at height_mm): look_microscope to see what is there"}
 
     # Skills ------------------------------------------------------------------------------------------------
     def _calibrate_here(self, z):
@@ -2454,6 +2678,12 @@ class Hume:
             if result.get("ok"):  # a freshly calibrated Kinect is trusted again
                 self.hold, self.kinect_waived = None, False
             return result, None
+        if name == "calibrate_bench":
+            return self.calibrate_bench(), None
+        if name == "reach_in_bench":
+            return self._reach_in_bench(args)
+        if name == "teach_bench_height":
+            return self._teach_bench_height(args)
         if name in ("move_to", "move_by"):
             here = self.m.position()
             if name == "move_to":

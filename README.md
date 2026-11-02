@@ -40,6 +40,17 @@ set up as this README describes.
     code finds the board's edges and turns pixels into millimetres, and checks where it landed with a last picture.
   - **Wide view:** a camera beside the bench (an EMEET S800, 4K over USB) sees the whole work area,
     which the microscope cannot; the Kinect adds depth.
+  - **Reaching a thing fast, with every camera** (`lunes/bench.py`). The bench camera is calibrated to the
+    machine's millimetres by itself (`calibrate_bench`): the head's ring light is found in its picture over the whole
+    table at two heights far apart and a camera projection is fitted. One thing seen by both then teaches it how
+    high the ring hangs over what the microscope focuses on (about 90 mm): the microscope centred on the chip, SAM
+    3.1 finding the same chip in the bench picture, `teach_bench_height` (a point that is not the thing is refused).
+    `reach_in_bench` then takes the head to anything the bench camera sees (a point of its picture, or what
+    `find_in_bench` finds): the bench camera gives the millimetres, the Kinect checks that the head got there, and
+    down at the surface the laser's dot is put on the point and seen by the microscope, where it lands telling the
+    height of what is really there (a dot lost in a hole or on a part's side is tried 4 mm beside). An approximation
+    by design, a few mm on a hand-built machine; a disagreement is reported, never corrected on its own, and the
+    microscope settles the rest.
   - **Self-check:** the Kinect checks every move against where the machine thinks it is. Lunes drives the Kinect
     with its own USB driver, written for this project.
     - It is calibrated as a camera over the whole table (`lunes/head.py`). The Kinect measures no depth on the
@@ -179,7 +190,7 @@ set up as this README describes.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs seven files:
+- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs eight files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -193,6 +204,9 @@ set up as this README describes.
   - `test_supply.py`: every digit of the panel on drawn panels, unreadable panels, and the check before powering.
   - `test_chip.py`: drawn DIPs turned any way, the notch end and pin 1, a body with no notch refused, a pointer's tip.
   - `test_breadboard.py`: every design laid out and rebuilt from its holes, holes in mm with the board turned, the guide.
+  - `test_bench.py`: the ring light and the laser's dot found in a drawn webcam picture (the supply's digits refused),
+    the bench camera fitted from the ring and the dots with the ring's height found by itself and a dot on a
+    breadboard dropped, points on the table and above it located, and what is refused.
   - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
     outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own

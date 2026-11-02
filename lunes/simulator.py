@@ -134,13 +134,19 @@ def _devices(lines, circuit):
         if m and m.group(1) in refs:
             out[f"{m.group(1)}.{m.group(2)}"] = f"@{name.lower()}[i]"
             continue
+        m = re.fullmatch(r"R(\w+?)([ab])", name)  # a potentiometer's two halves
+        if m and refs.get(m.group(1)) == "POT":
+            out[f"{m.group(1)}.{m.group(2)}"] = f"@{name.lower()}[i]"
+            continue
         if ref in refs:
-            if letter == "R" and refs[ref] == "R":
+            if letter == "R" and refs[ref] in ("R", "SW", "LDR", "NTC"):
                 out[ref] = f"@r{ref.lower()}[i]"
-            elif letter == "D" and refs[ref] in ("D", "LED"):
+            elif letter == "D" and refs[ref] in ("D", "ZENER", "LED"):
                 out[ref] = f"@d{ref.lower()}[id]"
             elif letter == "Q" and refs[ref] in ("NPN", "PNP"):
                 out[ref] = f"@q{ref.lower()}[ic]"
+            elif letter == "M" and refs[ref] in ("NMOS", "PMOS"):
+                out[ref] = f"@m{ref.lower()}[id]"
     return out
 
 
@@ -313,12 +319,21 @@ def expected(circuit, stop_s=0.02):
                     f"source): its mean is where it got to, not where it ends")
     currents = {}
     resistors = {p["ref"]: value(p["value"]) for p in circuit["parts"] if p["kind"] == "R" and "value" in p}
+    pots = {p["ref"]: (value(p["value"]), float(p.get("position", 0.5))) for p in circuit["parts"] if p["kind"] == "POT"}
     for key, i in waves.items():
         if key.startswith("@"):
             ref, i = key[1:], np.abs(i[len(i) // 3:])
             currents[ref] = {"peak_a": float(f"{i.max():.4g}"), "mean_a": float(f"{i.mean():.4g}")}
             if ref in resistors:
                 currents[ref]["power_w"] = float(f"{float(np.mean(i * i)) * resistors[ref]:.4g}")
+            elif "." in ref and ref.split(".")[0] in pots:  # a pot's half: its heat adds up on the whole part
+                base, half = ref.split(".")
+                r, pos = pots[base]
+                watts = float(np.mean(i * i)) * (r * pos if half == "a" else r * (1 - pos))
+                whole = currents.setdefault(base, {"peak_a": 0.0, "mean_a": 0.0, "power_w": 0.0})
+                whole["peak_a"] = max(whole["peak_a"], currents[ref]["peak_a"])
+                whole["mean_a"] = max(whole["mean_a"], currents[ref]["mean_a"])
+                whole["power_w"] = float(f"{whole.get('power_w', 0.0) + watts:.4g}")
     out["GND"] = {"touches": nets.get("GND", []), "mean_v": 0.0, "vpp_v": 0.0, "shape": "dc", "min_v": 0.0,
                   "max_v": 0.0}
     boards = {p["ref"]: mcu.expectations(p, out) for p in circuit["parts"] if p["kind"] in mcu.BOARDS}

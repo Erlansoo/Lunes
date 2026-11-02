@@ -50,6 +50,56 @@ is for judgement, not for arithmetic.
 - A relay or a motor needs a diode across it (cathode to +V), or its kick kills the transistor.
 - PNP switches the high side: its emitter goes to VCC, and the base is pulled low to turn it on.
 
+## mosfet
+- An N-channel MOSFET as a low-side switch: source to GND, the load between VCC and the drain, the gate from the
+  pin through 100 ohm, and 100 k from gate to GND so it never floats (a floating gate half turns on and heats).
+- It is voltage driven: no base current, so a pin drives even a 20 A one. What matters is the gate voltage: a
+  2N7000, BS170 or IRLZ44N switches fully from 5 V (logic level); an IRF540 or IRF9540 wants about 10 V, from
+  5 V it only half turns on and heats.
+- 2N7000 and BS170: 200 to 500 mA, TO-92 with the legs S-G-D, flat face to you. IRLZ44N, IRF540: tens of amps,
+  TO-220 with the legs G-D-S, the tab away from you.
+- The body diode conducts from source to drain: a reversed MOSFET is always on.
+- A motor or a relay on the drain needs its diode across it (cathode to +V), the same as with a transistor.
+- PMOS switches the high side: source to VCC, the gate pulled low to turn it on.
+
+## potentiometer
+- Three legs: the ends A and B are the whole track, the middle leg is the wiper (W). Across the supply with the
+  wiper out, it is an adjustable divider: Vout = V x position.
+- As a variable resistor (a rheostat), use one end and the wiper, and tie the wiper to the other end: a worn
+  wiper then cannot leave the circuit open.
+- A trimmer takes a tenth of a watt; a panel pot a quarter. 10 k across 5 V draws half a milliamp, fine; 100 ohm
+  across 12 V burns.
+- Tuning a 555: a pot in series with R2 moves the frequency; the duty moves a little with it.
+
+## zener
+- A zener holds its voltage in reverse (cathode to the positive side), always through a series resistor:
+  R = (Vin − Vz) / (I_load + 5 mA). With the load off, the zener takes all that current: check its watts
+  (Vz x I), 500 mW for the BZX55, 1 W for the 1N47xx.
+- Under a milliamp it does not hold its voltage; past its watts it burns. The 1N4733A is 5.1 V, the 1N4742A 12 V.
+- It is a reference or a small regulator (tens of mA); for more, a regulator chip.
+- The banded end is the cathode, as on any diode. Schottky diodes (1N5817, 1N5819, 1N5822, BAT85) drop about
+  0.3 V instead of 0.7 V: for reverse-polarity protection and fast switching.
+
+## regulator
+- 7805 and 7812: IN, GND, OUT left to right with the marking towards you; they need about 2 V more in than out
+  (7 V for a 7805) and give 1 A with a heatsink. The LM1117-3.3 and LM1117-5 drop only 1.2 V and give 0.8 A; their
+  legs are GND, OUT, IN.
+- Capacitors close to the pins: 0.33 uF in and 0.1 uF out for a 78xx; 10 uF on both for an LM1117, or it
+  oscillates.
+- The heat is (Vin − Vout) x I: a 7805 from 12 V at 200 mA makes 1.4 W, too much without a heatsink; feed it from
+  less, or use a switching module for big currents.
+- A dead regulator gives nothing on OUT; one with its pass element shorted puts the full input on OUT: measure
+  OUT before trusting what is behind it.
+
+## switches and sensors
+- A switch or push button in the simulation has a state, closed or open; a dead one never closes, a welded one
+  never opens, dirty contacts add tens of ohms.
+- A button on an input needs a pull-down (or a pull-up with the button to GND), or the input floats when it is
+  open.
+- An LDR drops its resistance with light (1 M dark, 10 k lit are typical); an NTC drops it with heat. Over a
+  resistor they make a divider an analogue input reads: pick the resistor near the geometric mean of the two
+  values for the biggest swing. A sensor "fault" is often just its condition: covered, or warm from a finger.
+
 ## opamp
 - Non-inverting gain = 1 + Rf / Rg. Inverting gain = −Rf / Rin.
 - An LM358 on one supply reaches ground at its inputs and output. Its output tops out about 1.5 V below the
@@ -95,8 +145,10 @@ is for judgement, not for arithmetic.
 - "No DC path to ground": a net reached only through capacitors or chip inputs. Connect it, or add a resistor
   to GND (1 M is enough).
 - "Loop of sources or coils": a coil or a second source straight across a source. A coil at DC is a short.
-- "Unknown model or chip": only the parts Lunes models are known: R, C, L, D (1N4148, 1N4007, 1N5819), LED, NPN
-  (2N2222, 2N3904, BC547), PNP (2N3906, BC557), NE555, OPAMP and sources.
+- "Unknown model or chip": only the parts Lunes models are known: R, C, L, D (1N4148, 1N4007, 1N5819, 1N5817,
+  1N5822, BAT85), ZENER (BZX55C3V3 to BZX55C12, 1N4733A, 1N4742A), LED, NPN (2N2222, 2N3904, BC547), PNP (2N3906,
+  BC557), NMOS (2N7000, BS170, IRLZ44N, IRF540), PMOS (IRF9540), POT, SW, LDR, NTC, REG (7805, 7812, LM1117-3.3,
+  LM1117-5), NE555, OPAMP and sources.
 - "Could not follow the circuit in time": an edge too fast, or values that make it race. Check for a missing
   timing capacitor or absurd values.
 - "Simulated with relaxed settings": the numbers are a little less exact; fine for a bench comparison.

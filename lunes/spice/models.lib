@@ -87,3 +87,38 @@ Bo drive vn V = min(max(v(x,vn), 0.02), max(v(vp,vn) - 1.5, 0.02))
 Ro drive out 50
 Rsupply vp vn 2k
 .ends OPAMP
+
+* ---- Schottky diodes --------------------------------------------------------------------------------------------
+.model 1N5817 D(Is=31.7u Rs=0.051 N=1.373 Cjo=110p M=0.35 Bv=20 Ibv=1m)
+.model 1N5822 D(Is=56u Rs=0.03 N=1.4 Cjo=200p M=0.35 Bv=40 Ibv=1m)
+.model BAT85 D(Is=0.2u Rs=0.3 N=1.1 Cjo=10p M=0.4 Bv=30 Ibv=1u)
+
+* ---- zener diodes: Bv is the zener voltage, Ibv the knee current; the BZX55 are 500 mW, the 1N47 1 W ----------
+.model BZX55C3V3 D(Is=1n Rs=2 N=1.5 Bv=3.3 Ibv=5m Cjo=50p)
+.model BZX55C4V7 D(Is=1n Rs=1.5 N=1.5 Bv=4.7 Ibv=5m Cjo=50p)
+.model BZX55C5V1 D(Is=1n Rs=1 N=1.5 Bv=5.1 Ibv=5m Cjo=50p)
+.model BZX55C6V2 D(Is=1n Rs=0.8 N=1.5 Bv=6.2 Ibv=5m Cjo=40p)
+.model BZX55C9V1 D(Is=1n Rs=0.6 N=1.5 Bv=9.1 Ibv=5m Cjo=30p)
+.model BZX55C12 D(Is=1n Rs=0.5 N=1.5 Bv=12 Ibv=5m Cjo=25p)
+.model 1N4733A D(Is=1n Rs=0.5 N=1.5 Bv=5.1 Ibv=49m Cjo=100p)
+.model 1N4742A D(Is=1n Rs=0.3 N=1.5 Bv=12 Ibv=21m Cjo=60p)
+
+* ---- MOSFETs, level 1: Vto and Kp set from the datasheets' threshold and on-resistance; the bulk is on the source,
+* so the body diode is there too. The IRF540 wants 10 V on its gate; the IRLZ44N, 2N7000 and BS170 switch from 5 V.
+.model 2N7000 NMOS(Level=1 Vto=2.0 Kp=0.12 Lambda=0.01 Rd=1.0 Rs=0.2 Cbd=20p)
+.model BS170 NMOS(Level=1 Vto=2.1 Kp=0.2 Lambda=0.01 Rd=0.8 Rs=0.2 Cbd=20p)
+.model IRLZ44N NMOS(Level=1 Vto=1.6 Kp=25 Lambda=0.005 Rd=0.01 Rs=0.005 Cbd=500p)
+.model IRF540 NMOS(Level=1 Vto=3.5 Kp=10 Lambda=0.005 Rd=0.03 Rs=0.01 Cbd=500p)
+.model IRF9540 PMOS(Level=1 Vto=-3.5 Kp=6 Lambda=0.005 Rd=0.08 Rs=0.02 Cbd=500p)
+
+* ---- linear regulator, behavioural: the output follows the input less the dropout, up to its voltage; 5 mA of its
+* own. vreg and drop come from the part (lunes.circuit.REG_V, REG_DROPOUT). A dead one has nothing on its output.
+.subckt REG in out gnd vreg=5 drop=2
+Iq in gnd 5m
+Bo drive gnd V = min(max(v(in,gnd) - drop, 0), vreg)
+Ro drive out 0.05
+.ends REG
+.subckt REG_DEAD in out gnd
+Ri in gnd 1Meg
+Ro out gnd 1Meg
+.ends REG_DEAD

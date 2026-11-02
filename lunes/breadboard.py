@@ -21,8 +21,14 @@ LEFT, RIGHT = "abcde", "fghij"
 COLUMN = {c: i for i, c in enumerate(LEFT)} | {c: 7 + i for i, c in enumerate(RIGHT)}  # the channel takes two pitches
 RAIL_COLUMN = {"-": -3, "+": -2}  # beyond column a; a board with other rails only moves these
 OPAMP_PINS = {"OUT": 1, "IN-": 2, "IN+": 3, "V-": 4, "V+": 8}  # an LM358's first amplifier
-# the legs of a TO-92 as they stand with its flat face towards you, left to right
-TRANSISTOR_LEGS = {"BC547": "CBE", "BC557": "CBE", "2N3904": "EBC", "2N3906": "EBC", "2N2222": "EBC"}
+# the legs of a TO-92 as they stand with its flat face towards you, left to right; a TO-220 with its tab away
+TRANSISTOR_LEGS = {"BC547": "CBE", "BC557": "CBE", "2N3904": "EBC", "2N3906": "EBC", "2N2222": "EBC",
+                   "2N7000": "SGD", "BS170": "SGD", "IRLZ44N": "GDS", "IRF540": "GDS", "IRF9540": "GDS"}
+REG_LEGS = {"7805": ("IN", "GND", "OUT"), "7812": ("IN", "GND", "OUT"), "LM1117-3.3": ("GND", "OUT", "IN"),
+            "LM1117-5": ("GND", "OUT", "IN")}  # left to right, the marking towards you
+THREE_LEGS = ("NPN", "PNP", "NMOS", "PMOS", "POT", "REG")
+TWO_LEADS = ("R", "C", "L", "SW", "LDR", "NTC")
+DIODES = ("D", "ZENER", "LED")
 RAIL_OF = {"VCC": "+", "GND": "-"}
 
 
@@ -133,10 +139,20 @@ def _chips(layout, part):
     _dip(layout, part, pins)
 
 
+def legs_of(part):
+    """The pins of a three-legged part in the order its legs stand, left to right."""
+    kind = part["kind"]
+    if kind == "POT":
+        return ("A", "W", "B")  # the wiper is the middle leg of a trimmer and of a panel pot
+    if kind == "REG":
+        return REG_LEGS.get(part.get("model"), ("IN", "GND", "OUT"))
+    return tuple(TRANSISTOR_LEGS.get(part.get("model"), "EBC" if kind in ("NPN", "PNP") else "GDS"))
+
+
 def _transistor(layout, part):
-    order = TRANSISTOR_LEGS.get(part.get("model"), "EBC")
+    """Any three-legged part down one side, a row per leg, in the order its legs stand."""
     top = layout.row
-    for k, leg in enumerate(order):
+    for k, leg in enumerate(legs_of(part)):
         layout.take(top + k, "L", part["pins"][leg])
         layout.used.add(f"e{top + k}")
         layout.holes.setdefault(part["ref"], {})[leg] = f"e{top + k}"
@@ -151,7 +167,7 @@ def plan(circuit, sim=None):
         if part["kind"] in ("NE555", "OPAMP"):
             _chips(layout, part)
     for part in parts:
-        if part["kind"] in ("NPN", "PNP"):
+        if part["kind"] in THREE_LEGS:
             _transistor(layout, part)
     layout.row += 1
     # strips of one net are joined, and a strip of a supply net goes to its rail
@@ -165,11 +181,11 @@ def plan(circuit, sim=None):
             for other in strips[1:]:
                 layout.wire(layout.free(first), layout.free(other), net)
     for part in parts:
-        if part["kind"] in ("R", "C", "L"):
+        if part["kind"] in TWO_LEADS:
             a, b = part["pins"]
             hole_a = layout.hole_on(a)
             layout.holes[part["ref"]] = {"1": hole_a, "2": layout.hole_on(b, int(hole_a[1:]))}
-        elif part["kind"] in ("D", "LED"):
+        elif part["kind"] in DIODES:
             hole_a = layout.hole_on(part["pins"]["A"])
             layout.holes[part["ref"]] = {"A": hole_a, "K": layout.hole_on(part["pins"]["K"], int(hole_a[1:]))}
     external = []
@@ -191,8 +207,12 @@ def plan(circuit, sim=None):
 
 
 def _named(part):
-    words = {"R": "resistencia", "C": "capacitor", "L": "bobina", "D": "diodo", "LED": "LED"}
+    words = {"R": "resistencia", "C": "capacitor", "L": "bobina", "D": "diodo", "ZENER": "zener", "LED": "LED",
+             "SW": "interruptor", "LDR": "fotorresistencia", "NTC": "termistor", "POT": "potenciómetro",
+             "NMOS": "MOSFET", "PMOS": "MOSFET", "REG": "regulador", "NPN": "transistor", "PNP": "transistor"}
     detail = part.get("value", part.get("model", part.get("color", "")))
+    if part["kind"] in ("LDR", "NTC"):
+        detail = "/".join(str(part.get(k, "?")) for k in (("dark", "lit") if part["kind"] == "LDR" else ("cold", "hot")))
     return f"{words[part['kind']]} {part['ref']} ({detail})"
 
 
@@ -215,22 +235,25 @@ def _steps(circuit, layout, external, sim):
             steps.append({"kind": "chip", "ref": ref, "holes": [hole],
                           "says": f"Pon el chip {ref} sobre el canal central, con el pin 1 (la muesca a la izquierda) en "
                                   f"{hole}."})
-        elif part["kind"] in ("NPN", "PNP"):
+        elif part["kind"] in THREE_LEGS:
             holes = layout.holes[ref]
             order = " ".join(f"{leg} en {hole}" for leg, hole in holes.items())
+            hint = {"POT": " El cursor es la pata del medio.", "REG": " Con la marca hacia ti, de izquierda a derecha.",
+                    "NMOS": " Revisa su hoja de datos.", "PMOS": " Revisa su hoja de datos."}.get(part["kind"],
+                                                                                                   " Revisa su hoja de datos.")
             steps.append({"kind": "transistor", "ref": ref, "holes": list(holes.values()),
-                          "says": f"Pon el transistor {ref} ({part.get('model')}): {order}. Revisa su hoja de datos."})
+                          "says": f"Pon {_named(part)}: {order}.{hint}"})
     for part in circuit["parts"]:
         ref = part["ref"]
-        if part["kind"] in ("R", "C", "L"):
+        if part["kind"] in TWO_LEADS:
             a, b = layout.holes[ref]["1"], layout.holes[ref]["2"]
             extra = _capacitor_note(part, sim) if part["kind"] == "C" else ""
             steps.append({"kind": "part", "ref": ref, "holes": [a, b], "says": f"Pon {_named(part)} de {a} a {b}{extra}."})
-        elif part["kind"] in ("D", "LED"):
+        elif part["kind"] in DIODES:
             a, k = layout.holes[ref]["A"], layout.holes[ref]["K"]
             leg = "la pata larga" if part["kind"] == "LED" else "el lado sin banda"
             steps.append({"kind": "part", "ref": ref, "holes": [a, k],
-                          "says": f"Pon {_named(part)}: {leg} (ánodo) en {a} y el otro lado en {k}."})
+                          "says": f"Pon {_named(part)}: {leg} (ánodo) en {a} y el otro lado{' (el de la banda)' if part['kind'] != 'LED' else ''} en {k}."})
     for wire in layout.wires:
         steps.append({"kind": "wire", "holes": [wire["from"], wire["to"]],
                       "says": f"Pon un cable de {wire['from']} a {wire['to']} ({wire['net']})."})
@@ -264,7 +287,7 @@ def verify(circuit, result):
         holes = result["holes"].get(ref, {})
         for pin, net in items:
             key = PIN_NUMBER["NE555"][pin] if part["kind"] == "NE555" else OPAMP_PINS[pin] if part["kind"] == "OPAMP" \
-                else pin[0] if part["kind"] in ("NPN", "PNP") else pin
+                else pin
             hole = holes.get(key)
             if hole is None:
                 problems.append(f"{ref} {pin} has no hole")

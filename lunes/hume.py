@@ -142,7 +142,8 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   scope_selftest con la punta en la salida de calibración del osciloscopio. Si el ambiente cambió mucho de temperatura
   o Erlan lo pide, scope_zero mide de nuevo el cero de cada rango, con las puntas en 0 V.
 - Para trabajar con un circuito (armarlo en la protoboard, comprobarlo o encontrar su falla): si es uno de los
-  usuales (LED, 555, transistor como interruptor, divisor, filtro RC, amplificador), diséñalo con circuit_design: el
+  usuales (LED, 555 fijo o ajustable con potenciómetro, transistor o MOSFET como interruptor, divisor fijo o con
+  potenciómetro, filtro RC, amplificador, regulador lineal o zener, sensor de luz, pulsador), diséñalo con circuit_design: el
   código calcula los valores con fórmulas y los verifica en la simulación. Si no, escríbelo con circuit_set y dale
   sus metas (spec). Solo propónselo a Erlan cuando todas las metas pasen y la revisión no avise nada serio; si
   avisa, corrígelo. Para el criterio (patillajes, fallas típicas, límites) consulta circuit_guide. Si el simulador
@@ -486,9 +487,17 @@ TOOLS = [
                        "ngspice: returns what the scope should read at each net (DC volts, or frequency, peak to "
                        "peak and duty for nets that move) and which pins and parts touch each net. Format: {name, "
                        "supply_v, parts: [{ref, kind, value or model or color, pins}]}. kind R, C or L: value "
-                       "('10k', '68n', '4k7'), pins [netA, netB]. D: model 1N4148, 1N4007 or 1N5819, pins {A, K}. "
-                       "LED: color red/yellow/green/blue/white, pins {A, K}. NPN or PNP: model 2N2222, 2N3904, "
-                       "BC547, 2N3906 or BC557, pins {C, B, E}. NE555: pins {GND, TRIG, OUT, RESET, CTRL, THRES, "
+                       "('10k', '68n', '4k7'), pins [netA, netB]. D: model 1N4148, 1N4007, 1N5819, 1N5817, 1N5822 "
+                       "or BAT85, pins {A, K}. ZENER: model BZX55C3V3/4V7/5V1/6V2/9V1/12 (500 mW) or 1N4733A (5.1 V, "
+                       "1 W), 1N4742A (12 V, 1 W), pins {A, K}, always with a series resistor. LED: color "
+                       "red/yellow/green/blue/white, pins {A, K}. NPN or PNP: model 2N2222, 2N3904, BC547, 2N3906 "
+                       "or BC557, pins {C, B, E}. NMOS: model 2N7000, BS170, IRLZ44N (logic level) or IRF540 "
+                       "(wants 10 V on the gate); PMOS: IRF9540; pins {D, G, S}. POT (potentiometer): value the "
+                       "whole track, position 0 to 1 of the wiper from A to B, pins {A, W, B}. SW (switch or "
+                       "button): state 'closed' or 'open', pins [a, b]. LDR: dark and lit values, condition 'lit' "
+                       "or 'dark', pins [a, b]. NTC: cold and hot values, condition 'cold' or 'hot', pins [a, b]. "
+                       "REG (linear regulator): model 7805, 7812, LM1117-3.3 or LM1117-5, pins {IN, OUT, GND}. "
+                       "NE555: pins {GND, TRIG, OUT, RESET, CTRL, THRES, "
                        "DISCH, VCC}. OPAMP: pins {OUT, IN-, IN+, V+, V-}. V (an extra source): value '3.3' or "
                        "{sine: [offset, amplitude, hz]} or {square: [low, high, hz]}, pins {+, -}. ARDUINO_UNO, "
                        "ARDUINO_NANO or BLUEPILL (a microcontroller board in the circuit): pins {pin: net} with GND "
@@ -518,12 +527,19 @@ TOOLS = [
                        "ARDUINO_UNO by default, ARDUINO_NANO or BLUEPILL): arduino_blink {pin, hz, color, "
                        "current_ma, board}; arduino_pwm_rc {pin, duty, adc, board} (PWM through an RC read back on "
                        "an analogue input: the board checks itself); arduino_transistor {pin, load_current_ma, hz, "
-                       "color, model, board}; arduino_read_divider {vin, adc, board}. Returns the parts, the "
-                       "formulas used, each goal with what the simulation gave, and the review.",
+                       "color, model, board}; arduino_read_divider {vin, adc, board}. More: astable_555_adjustable "
+                       "{f_min_hz, f_max_hz, supply_v, led_color} (a pot tunes the 555 over the range); "
+                       "mosfet_switch {load_current_ma, supply_v, logic_v, model, input_hz}; zener_regulator {vz, "
+                       "vin, load_ma}; linear_regulator {vout 3.3|5|12, vin, load_ma}; pot_divider {supply_v, pot, "
+                       "position}; light_sensor {supply_v, dark, lit} (an LDR); pushbutton_led {supply_v, color, "
+                       "current_ma}. Returns the parts, the formulas used, each goal with what the simulation "
+                       "gave, and the review.",
         "parameters": {"type": "object", "properties": {
-            "template": {"type": "string", "enum": ["led_resistor", "astable_555", "npn_switch", "divider",
-                                                    "rc_filter", "opamp_noninverting", "arduino_blink",
-                                                    "arduino_pwm_rc", "arduino_transistor",
+            "template": {"type": "string", "enum": ["led_resistor", "astable_555", "astable_555_adjustable",
+                                                    "npn_switch", "mosfet_switch", "divider", "pot_divider",
+                                                    "rc_filter", "opamp_noninverting", "zener_regulator",
+                                                    "linear_regulator", "light_sensor", "pushbutton_led",
+                                                    "arduino_blink", "arduino_pwm_rc", "arduino_transistor",
                                                     "arduino_read_divider"]},
             "params": {"type": "object"}}, "required": ["template"]}}},
     {"type": "function", "function": {

@@ -49,6 +49,29 @@ def templates():
             ok(mcu.compile_sketch(board, circuit["name"])["ok"], f"{name} {params} sketch compiles")
 
 
+def new_parts():
+    print("The designs with the newer parts meet their goals in ngspice, and their faults simulate")
+    for name, params in [("astable_555_adjustable", {"f_min_hz": 10e3, "f_max_hz": 15e3}), ("mosfet_switch", {}),
+                         ("zener_regulator", {}), ("linear_regulator", {}), ("pot_divider", {}),
+                         ("light_sensor", {}), ("pushbutton_led", {})]:
+        circuit, spec, _ = TEMPLATES[name](**params)
+        sim = expected(circuit)
+        goals = verify(sim, spec)
+        ok(not check(circuit) and all(g["ok"] for g in goals),
+           f"{name}: " + "; ".join(f"{g['goal']} -> {g['measured']}" for g in goals))
+    # from a 5 V pin an IRF540 only half turns on: the goal fails and the review says why
+    from lunes import review
+    circuit, spec, _ = TEMPLATES["mosfet_switch"](model="IRF540")
+    sim = expected(circuit)
+    warnings = review.after(circuit, sim)
+    ok(any("gate" in w for w in warnings), f"an IRF540 from 5 V is called out: {warnings[:1]}")
+    for name in ("zener_regulator", "mosfet_switch"):
+        circuit = TEMPLATES[name]()[0]
+        table = fault_dictionary(circuit)
+        blind = [f for f, e in table.items() if e["nets"] is None]
+        ok(not blind, f"{name}: every one of its {len(table)} faults simulates" + (f"; not: {blind}" if blind else ""))
+
+
 def bench(template, params, fault):
     """Hume on a simulated board with fault planted; returns the diagnosis' last state."""
     machine = types.SimpleNamespace(s=types.SimpleNamespace(port="COM8"), config={})
@@ -120,6 +143,7 @@ def diagnosis_555():
 if __name__ == "__main__":
     t0 = time.time()
     templates()
+    new_parts()
     arduino_diagnosis()
     diagnosis_555()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'} in {time.time() - t0:.0f} s")

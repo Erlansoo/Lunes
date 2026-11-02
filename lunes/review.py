@@ -8,15 +8,19 @@ milliamp, a resistor past a quarter watt, a transistor past its rating, a supply
 gives, a net beyond the supply rails.
 """
 from lunes import mcu
-from lunes.circuit import PINS, _net, nets_of, value
+from lunes.circuit import (MOS_MAX_A, MOS_VGS_FULL, PINS, REG_DROPOUT, REG_V, ZENER_V, ZENER_W, _net, nets_of,
+                           value)
 
-# which pins of a part conduct DC between them (inputs of chips do not)
+# which pins of a part conduct DC between them (inputs of chips, and a MOSFET's gate, do not)
 DC_LINKS = {"NE555": [("GND", "VCC"), ("CTRL", "VCC"), ("CTRL", "GND"), ("OUT", "GND"), ("DISCH", "GND")],
             "OPAMP": [("OUT", "V-"), ("IN+", "IN-"), ("V+", "V-")],
-            "NPN": [("C", "E"), ("B", "E")], "PNP": [("C", "E"), ("B", "E")]}
+            "NPN": [("C", "E"), ("B", "E")], "PNP": [("C", "E"), ("B", "E")],
+            "NMOS": [("D", "S")], "PMOS": [("D", "S")], "POT": [("A", "W"), ("W", "B")],
+            "REG": [("IN", "GND"), ("OUT", "GND")]}
 CHIP_INPUTS = {"NE555": ("TRIG", "THRES", "RESET"), "OPAMP": ("IN+", "IN-")}
 IC_MAX_A = {"2N2222": 0.6, "2N3904": 0.2, "2N3906": 0.2, "BC547": 0.1, "BC557": 0.1}
-DIODE_MAX_A = {"1N4148": 0.3, "1N4007": 1.0, "1N5819": 1.0}
+DIODE_MAX_A = {"1N4148": 0.3, "1N4007": 1.0, "1N5819": 1.0, "1N5817": 1.0, "1N5822": 3.0, "BAT85": 0.2}
+TWO_LEAD_DC = ("R", "L", "D", "ZENER", "LED", "V", "LDR", "NTC")  # conduct DC between their two leads
 
 
 def _pins(part):
@@ -43,17 +47,30 @@ def before(circuit):
             for net in pins.values():
                 link(net, "GND")
             continue
-        if kind in ("R", "L", "D", "LED", "V"):
+        if kind in TWO_LEAD_DC or (kind == "SW" and p.get("state", "closed") == "closed"):
             a, b = list(pins.values())
             link(a, b)
             if kind == "L" and {a, b} == {"VCC", "GND"}:
                 errors.append(f"{p['ref']} sits straight across the supply: at DC a coil is a short")
+            if kind == "SW" and {a, b} == {"VCC", "GND"}:
+                errors.append(f"{p['ref']} closed straight across the supply: a dead short")
+            if kind == "ZENER" and {a, b} == {"VCC", "GND"} and pins["K"] == "VCC":
+                errors.append(f"{p['ref']} sits straight across the supply with no series resistor: a zener "
+                              f"takes whatever current the supply gives and burns; feed it through a resistor")
         for x, y in DC_LINKS.get(kind, []):
             link(pins[x], pins[y])
         values = list(pins.values())
-        if kind in ("R", "C", "L", "D", "LED") and values[0] == values[1]:
+        if kind in ("R", "C", "L", "D", "ZENER", "LED", "SW", "LDR", "NTC") and values[0] == values[1]:
             warnings.append(f"{p['ref']} has both leads in net {values[0]}: it does nothing (both in the same "
                             f"breadboard row?)")
+        if kind == "REG":
+            need = REG_V[p["model"]] + REG_DROPOUT[p["model"]]
+            if pins["IN"] == "VCC" and value(circuit.get("supply_v", 5)) < need:
+                warnings.append(f"{p['ref']} ({p['model']}) needs at least {need:g} V in to give {REG_V[p['model']]:g} V "
+                                f"out, and the supply is {value(circuit.get('supply_v', 5)):g} V: it will not regulate")
+            if pins["IN"] == "VCC" and value(circuit.get("supply_v", 5)) - REG_V[p["model"]] > 10:
+                warnings.append(f"{p['ref']} drops {value(circuit.get('supply_v', 5)) - REG_V[p['model']]:g} V: at "
+                                f"100 mA that is over a watt of heat, it needs a heatsink or a lower input")
         if kind == "V" and {values[0], values[1]} == {"VCC", "GND"}:
             errors.append(f"{p['ref']} is a second source straight across the supply: two sources fight")
         if kind in ("R",) and value(p["value"]) < 1:
@@ -115,6 +132,37 @@ def after(circuit, sim):
         if kind in ("NPN", "PNP") and peak > IC_MAX_A.get(p.get("model"), 0.2):
             warnings.append(f"{p['ref']} collector carries {peak:.2f} A, past the {p.get('model')}'s "
                             f"{IC_MAX_A.get(p.get('model'), 0.2):g} A")
+        if kind == "ZENER":
+            watts = peak * ZENER_V[p["model"]]
+            if watts > ZENER_W[p["model"]]:
+                warnings.append(f"{p['ref']} ({p['model']}) dissipates {watts:.2f} W, past its {ZENER_W[p['model']]:g} W: "
+                                f"a bigger series resistor, or a 1 W zener")
+            elif c.get("mean_a", 0) < 0.001:
+                warnings.append(f"{p['ref']} gets only {c.get('mean_a', 0) * 1e3:.2f} mA: under a milliamp a zener does "
+                                f"not hold its voltage; a smaller series resistor")
+        if kind in ("NMOS", "PMOS"):
+            if peak > MOS_MAX_A.get(p.get("model"), 0.2):
+                warnings.append(f"{p['ref']} drain carries {peak:.2f} A, past the {p.get('model')}'s "
+                                f"{MOS_MAX_A.get(p.get('model'), 0.2):g} A on a breadboard")
+            pins = _pins(p)
+            gate, source = sim.get("nets", {}).get(pins["G"], {}), sim.get("nets", {}).get(pins["S"], {})
+            if gate and source and peak > 0.01:
+                drive = ((gate.get("max_v", gate["mean_v"]) - source["mean_v"]) if kind == "NMOS" else
+                         (source["mean_v"] - gate.get("min_v", gate["mean_v"])))
+                full = MOS_VGS_FULL.get(p.get("model"), 4.5)
+                if drive < full:
+                    warnings.append(f"{p['ref']} ({p.get('model')}) gets {drive:.1f} V on its gate and wants {full:g} V "
+                                    f"to switch fully: half on it heats; drive it with more, or use a logic-level "
+                                    f"MOSFET (IRLZ44N, 2N7000)")
+        if kind == "POT" and c.get("power_w", 0) > 0.1:
+            warnings.append(f"{p['ref']} dissipates {c['power_w']:.2f} W: a trimmer takes a tenth of a watt; a bigger "
+                            f"value, or a 1/2 W pot")
+    for p in circuit["parts"]:
+        if p["kind"] == "REG":
+            out = sim.get("nets", {}).get(_pins(p)["OUT"], {})
+            if out and out.get("mean_v", 0) < 0.95 * REG_V[p["model"]]:
+                warnings.append(f"{p['ref']} gives {out.get('mean_v', 0):.2f} V instead of {REG_V[p['model']]:g}: its "
+                                f"input is too low for its dropout, or it is overloaded")
     s = currents.get("supply")
     if s and s.get("mean_a", 0) > 0.5:
         warnings.append(f"the circuit takes {s['mean_a']:.2f} A from the supply: more than a USB port gives")

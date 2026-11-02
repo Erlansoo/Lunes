@@ -19,7 +19,10 @@ from lunes.hume import Hume  # noqa: E402
 FAILED = []
 CASES = [("led_resistor", {}), ("astable_555", {"frequency_hz": 1000, "duty": 0.55, "led_color": "red"}), ("npn_switch", {}),
          ("divider", {"vout": 2.5}), ("rc_filter", {"cutoff_hz": 1000}), ("opamp_noninverting", {"gain": 3}),
-         ("arduino_blink", {}), ("arduino_pwm_rc", {}), ("arduino_transistor", {}), ("arduino_read_divider", {})]
+         ("arduino_blink", {}), ("arduino_pwm_rc", {}), ("arduino_transistor", {}), ("arduino_read_divider", {}),
+         ("astable_555_adjustable", {"f_min_hz": 10e3, "f_max_hz": 15e3}), ("mosfet_switch", {}),
+         ("zener_regulator", {}), ("linear_regulator", {}), ("pot_divider", {}), ("light_sensor", {}),
+         ("pushbutton_led", {})]
 
 
 def ok(condition, what):

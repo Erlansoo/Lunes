@@ -8,7 +8,9 @@ on faith.
 """
 import math
 
-from lunes.circuit import value
+from lunes.circuit import REG_DROPOUT, REG_MAX_A, REG_V, ZENER_V, ZENER_W, value
+
+POT_VALUES = (1e3, 2e3, 5e3, 10e3, 20e3, 50e3, 100e3, 200e3, 500e3, 1e6)  # the tracks sold
 
 E12 = (1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2)
 E6 = (1.0, 1.5, 2.2, 3.3, 4.7, 6.8)
@@ -196,8 +198,170 @@ def opamp_noninverting(gain, supply_v=5.0, input_offset_v=1.0, input_amplitude_v
     return {"name": f"non-inverting amplifier, gain {g:.3g}", "supply_v": supply_v, "parts": parts}, spec, notes
 
 
-TEMPLATES = {"led_resistor": led_resistor, "astable_555": astable_555, "npn_switch": npn_switch, "divider": divider,
-             "rc_filter": rc_filter, "opamp_noninverting": opamp_noninverting}
+def astable_555_adjustable(f_min_hz, f_max_hz, supply_v=5.0, led_color=None):
+    """A 555 astable tuned with a pot from f_min to f_max: f = 1.44 / ((R1 + 2 (R2 + P)) C1), P being the part of
+    the pot's track in the path (its wiper tied to one end, so a worn wiper cannot leave the timing open). R1, R2
+    and C1 are the fixed astable's at f_max; the pot adds what f_min needs, rounded up to a track sold."""
+    f_min, f_max = sorted((float(f_min_hz), float(f_max_hz)))
+    if f_max / f_min < 1.05:
+        raise ValueError("give a range at least 5 % wide, or astable_555 for one frequency")
+    base, _, _ = astable_555(f_max, 0.55, supply_v)
+    parts = {p["ref"]: p for p in base["parts"]}
+    r1, r2, c = value(parts["R1"]["value"]), value(parts["R2"]["value"]), value(parts["C1"]["value"])
+    need = (1.44 / (f_min * c) - r1 - 2 * r2) / 2  # the whole track in the path gives f_min
+    pot = min((v for v in POT_VALUES if v >= need * 0.999), default=None)
+    if pot is None:
+        raise ValueError(f"{f_min:g} to {f_max:g} Hz would need a pot over 1 M: ask for a narrower range")
+    f_top = 1.44 / ((r1 + 2 * r2) * c)
+    f_low = 1.44 / ((r1 + 2 * (r2 + pot)) * c)
+    f_mid = 1.44 / ((r1 + 2 * (r2 + pot / 2)) * c)
+    parts["R2"]["pins"] = ["DIS", "R2P"]
+    new = [parts["U1"], parts["R1"], parts["R2"],
+           {"ref": "P1", "kind": "POT", "value": text(pot), "position": 0.5, "pins": {"A": "R2P", "W": "TH", "B": "TH"}},
+           parts["C1"], parts["C2"]]
+    notes = [f"f = 1.44 / ((R1 + 2 (R2 + P1)) C1) with R1 {text(r1)}, R2 {text(r2)}, C1 {text(c, 'F')}: "
+             f"{hz(f_top)} with the pot at zero, {hz(f_low)} with its {text(pot)} all in; halfway {hz(f_mid)}",
+             "P1's wiper (W) is tied to its B end: turning it adds track between R2 and the capacitor, and a worn "
+             "wiper can never leave the timing open",
+             "pin 4 (RESET) to VCC so it never stops; 10 nF on pin 5 (CTRL) keeps noise out of the timing"]
+    if f_low > f_min * 1.02:
+        notes.append(f"the bottom lands at {hz(f_low)}, above the {hz(f_min)} asked: the next track sold would "
+                     f"overshoot more; a bigger C1 lowers both ends")
+    spec = [{"net": "OUT", "frequency_hz": f_mid, "tolerance": 0.08}]
+    if led_color:
+        lp, _, ln = led(supply_v - 1.5, led_color, 10.0, ref="D1", resistor="R3", source="OUT", anode="LED_A")
+        new += lp
+        notes += [n.replace(f"{supply_v - 1.5:g} V", f"{supply_v - 1.5:g} V (the 555's output when high)") for n in ln]
+    else:
+        new.append({"ref": "R3", "kind": "R", "value": "10k", "pins": ["OUT", "GND"]})
+        notes.append("R3 (10 k) stands for what the output drives: the scope's probe, the next stage")
+    return {"name": f"555 astable adjustable from {hz(f_low)} to {hz(f_top)}" + (f" with a {led_color} LED" if led_color else ""),
+            "supply_v": supply_v, "parts": new}, spec, notes
+
+
+def hz(f):
+    return f"{f / 1e6:.3g} MHz" if f >= 1e6 else f"{f / 1e3:.3g} kHz" if f >= 1e3 else f"{f:.3g} Hz"
+
+
+def zener_regulator(vz=5.1, vin=12.0, load_ma=10.0):
+    """A zener shunt regulator: R1 from the input feeds the zener and the load, R1 = (Vin - Vz) / (I_load + 5 mA)
+    rounded down, so the zener keeps at least 5 mA with the load on; with the load off it takes it all, which
+    decides between a 500 mW and a 1 W part. R2 stands for the load."""
+    model = min(ZENER_V, key=lambda m: (abs(ZENER_V[m] - float(vz)), m.startswith("1N")))  # nearest; BZX55 first
+    vz = ZENER_V[model]
+    if vin < vz + 1.5:
+        raise ValueError(f"vin must be at least {vz + 1.5:g} V to hold {vz:g} V")
+    i_load = load_ma / 1000
+    rs = nearest((vin - vz) / (i_load + 0.005), mode="down")
+    i_rs = (vin - vz) / rs
+    if i_rs * vz > ZENER_W[model]:  # the load off: the zener takes all of R1's current
+        bigger = next((m for m in ZENER_V if m.startswith("1N") and ZENER_V[m] == vz), None)
+        if bigger is None or i_rs * vz > ZENER_W[bigger]:
+            raise ValueError(f"with the load off the zener would dissipate {i_rs * vz:.2f} W: a smaller load, or a "
+                             f"lower vin, or a regulator chip (linear_regulator)")
+        model = bigger
+    rl = nearest(vz / i_load)
+    parts = [{"ref": "R1", "kind": "R", "value": text(rs), "pins": ["VCC", "OUT"]},
+             {"ref": "D1", "kind": "ZENER", "model": model, "pins": {"A": "GND", "K": "OUT"}},
+             {"ref": "R2", "kind": "R", "value": text(rl), "pins": ["OUT", "GND"]}]
+    notes = [f"R1 = ({vin:g} V - {vz:g} V) / ({load_ma:g} mA + 5 mA) rounded down to {text(rs)}: {i_rs * 1e3:.1f} mA, "
+             f"the zener keeps {(i_rs - i_load) * 1e3:.1f} mA with the load on",
+             f"with the load off the {model} takes {i_rs * 1e3:.1f} mA, {i_rs * vz:.2f} W of its {ZENER_W[model]:g} W",
+             f"R1 dissipates {i_rs * i_rs * rs:.2f} W", f"R2 ({text(rl)}) stands for the {load_ma:g} mA load"]
+    spec = [{"net": "OUT", "mean_v": vz, "tolerance": 0.08}]
+    return {"name": f"{vz:g} V zener regulator from {vin:g} V for {load_ma:g} mA", "supply_v": vin,
+            "parts": parts}, spec, notes
+
+
+def mosfet_switch(load_current_ma=100.0, supply_v=12.0, logic_v=5.0, model="IRLZ44N", input_hz=1.0):
+    """A MOSFET switching a load low side from a logic pin: R1 of 100 ohm in the gate against ringing, R2 of
+    100 k pulling the gate down so it never floats, R3 standing for the load (a lamp, a motor, a relay coil)."""
+    i = load_current_ma / 1000
+    rl = nearest(supply_v / i, mode="up")
+    il = supply_v / rl
+    parts = [{"ref": "V1", "kind": "V", "value": {"square": [0, logic_v, input_hz]}, "pins": {"+": "IN", "-": "GND"}},
+             {"ref": "R1", "kind": "R", "value": "100", "pins": ["IN", "G"]},
+             {"ref": "R2", "kind": "R", "value": "100k", "pins": ["G", "GND"]},
+             {"ref": "Q1", "kind": "NMOS", "model": model, "pins": {"D": "D", "G": "G", "S": "GND"}},
+             {"ref": "R3", "kind": "R", "value": text(rl), "pins": ["VCC", "D"]}]
+    notes = [f"R3 = {supply_v:g} V / {load_current_ma:g} mA rounded up to {text(rl)}: {il * 1e3:.0f} mA when on; it "
+             f"stands for the load (a lamp, a motor with its diode, a relay with its diode)",
+             f"the {model} switches from {logic_v:g} V on its gate" if model in ("IRLZ44N", "2N7000", "BS170") else
+             f"a {model} wants about 10 V on its gate: from {logic_v:g} V it only half turns on",
+             "V1 stands for the pin that drives it (an Arduino pin, a 555)"]
+    spec = [{"current_of": "R3", "target_a": il, "tolerance": 0.3}, {"net": "D", "min_v_below": 0.5}]
+    return {"name": f"{model} switching {il * 1e3:.0f} mA from a {logic_v:g} V pin", "supply_v": supply_v,
+            "parts": parts}, spec, notes
+
+
+def linear_regulator(vout=5.0, vin=12.0, load_ma=100.0):
+    """A three-pin regulator with its capacitors and a resistor standing for the load: a 7805 or 7812 from 2 V
+    over, an LM1117 for 3.3 V or when the input is closer than that."""
+    model = {3.3: "LM1117-3.3", 5.0: "7805" if vin >= 7.0 else "LM1117-5", 12.0: "7812"}.get(float(vout))
+    if model is None:
+        raise ValueError("vout must be 3.3, 5 or 12")
+    if vin < REG_V[model] + REG_DROPOUT[model]:
+        raise ValueError(f"a {model} needs at least {REG_V[model] + REG_DROPOUT[model]:g} V in")
+    if load_ma / 1000 > REG_MAX_A[model]:
+        raise ValueError(f"a {model} gives {REG_MAX_A[model]:g} A at most")
+    rl = nearest(vout / (load_ma / 1000))
+    cin, cout = ("10u", "10u") if model.startswith("LM1117") else ("330n", "100n")
+    parts = [{"ref": "U1", "kind": "REG", "model": model, "pins": {"IN": "VCC", "OUT": "OUT", "GND": "GND"}},
+             {"ref": "C1", "kind": "C", "value": cin, "pins": ["VCC", "GND"]},
+             {"ref": "C2", "kind": "C", "value": cout, "pins": ["OUT", "GND"]},
+             {"ref": "R1", "kind": "R", "value": text(rl), "pins": ["OUT", "GND"]}]
+    heat = (vin - vout) * load_ma / 1000
+    notes = [f"{model}: {vout:g} V out from {vin:g} V in; it drops {vin - vout:g} V at {load_ma:g} mA, {heat:.2f} W of heat"
+             + (" (a heatsink, or a lower input)" if heat > 1 else ""),
+             f"C1 {cin} at the input and C2 {cout} at the output, close to the pins, keep it stable",
+             f"R1 ({text(rl)}) stands for the {load_ma:g} mA load"]
+    spec = [{"net": "OUT", "mean_v": vout, "tolerance": 0.05}]
+    return {"name": f"{model} regulator, {vout:g} V from {vin:g} V", "supply_v": vin, "parts": parts}, spec, notes
+
+
+def pot_divider(supply_v=5.0, pot="10k", position=0.5):
+    """An adjustable voltage: the pot across the supply, its wiper the output, Vout = V x position."""
+    position = float(position)
+    if not 0.02 <= position <= 0.98:
+        raise ValueError("position is the wiper's place from 0 (at GND) to 1 (at VCC); give 0.02 to 0.98")
+    r, rl = value(pot), nearest(100 * value(pot))  # R1 stands for what reads OUT, a hundred times the pot
+    parts = [{"ref": "P1", "kind": "POT", "value": text(r), "position": position,
+              "pins": {"A": "GND", "W": "OUT", "B": "VCC"}},
+             {"ref": "R1", "kind": "R", "value": text(rl), "pins": ["OUT", "GND"]}]
+    low = r * position * rl / (r * position + rl)  # the wiper-to-GND part, with R1 across it
+    v = supply_v * low / (low + r * (1 - position))
+    notes = [f"Vout = {supply_v:g} V x {position:g} = {supply_v * position:.3f} V at this setting ({v:.3f} V with R1 on "
+             f"it); the pot draws {supply_v / r * 1e3:.2f} mA all the time",
+             f"R1 ({text(rl)}) stands for what reads OUT: a load much smaller than that pulls the voltage down"]
+    return {"name": f"adjustable divider, {v:.2f} V from {supply_v:g} V", "supply_v": supply_v, "parts": parts}, \
+        [{"net": "OUT", "mean_v": v, "tolerance": 0.05}], notes
+
+
+def light_sensor(supply_v=5.0, dark="1M", lit="10k"):
+    """An LDR over a resistor: OUT rises with light. R2 is the geometric mean of the dark and lit resistances,
+    which gives the biggest swing between the two."""
+    r = nearest(math.sqrt(value(dark) * value(lit)))
+    parts = [{"ref": "R1", "kind": "LDR", "dark": dark, "lit": lit, "condition": "lit", "pins": ["VCC", "OUT"]},
+             {"ref": "R2", "kind": "R", "value": text(r), "pins": ["OUT", "GND"]}]
+    v_lit, v_dark = supply_v * r / (value(lit) + r), supply_v * r / (value(dark) + r)
+    notes = [f"R2 = sqrt({dark} x {lit}) rounded to {text(r)}: OUT is {v_lit:.2f} V lit and {v_dark:.2f} V dark",
+             "OUT goes to an analogue input (an Arduino's A0) or a comparator"]
+    return {"name": f"light sensor, {v_dark:.1f} V dark to {v_lit:.1f} V lit", "supply_v": supply_v, "parts": parts}, \
+        [{"net": "OUT", "mean_v": v_lit, "tolerance": 0.05}], notes
+
+
+def pushbutton_led(supply_v=5.0, color="red", current_ma=10.0):
+    """A push button lighting an LED through its resistor; simulated pressed (the switch closed)."""
+    lp, ls, ln = led(supply_v, color, current_ma, source="SWO")
+    parts = [{"ref": "SW1", "kind": "SW", "state": "closed", "pins": ["VCC", "SWO"]}] + lp
+    return {"name": f"a button lighting a {color} LED", "supply_v": supply_v, "parts": parts}, ls, \
+        ln + ["SW1 is simulated pressed (closed); open, nothing flows"]
+
+
+TEMPLATES = {"led_resistor": led_resistor, "astable_555": astable_555, "astable_555_adjustable": astable_555_adjustable,
+             "npn_switch": npn_switch, "mosfet_switch": mosfet_switch, "divider": divider, "pot_divider": pot_divider,
+             "rc_filter": rc_filter, "opamp_noninverting": opamp_noninverting, "zener_regulator": zener_regulator,
+             "linear_regulator": linear_regulator, "light_sensor": light_sensor, "pushbutton_led": pushbutton_led}
 
 
 def verify(sim, spec):

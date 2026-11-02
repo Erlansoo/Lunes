@@ -101,8 +101,15 @@ set up as this README describes.
     measurements, not from pictures.
 - **Design and review, like a senior engineer:**
   - The model decides what is wanted; the code designs it by formula with standard values (E12 resistors, E6
-    capacitors) and the simulation must meet its goals (`lunes/designs.py`). Templates: an LED, a 555 astable,
-    a transistor switch, a divider, an RC filter, an op-amp amplifier. All twelve test designs meet their goals.
+    capacitors) and the simulation must meet its goals (`lunes/designs.py`). Templates: an LED, a 555 astable
+    fixed or tuned over a range with a pot, a transistor or MOSFET switch, a fixed or adjustable divider, an RC
+    filter, an op-amp amplifier, a zener or three-pin linear regulator, a light sensor, a button lighting an LED.
+    Every test design meets its goals.
+  - The parts it knows (`lunes/circuit.py`, models in `lunes/spice/models.lib`): resistors, capacitors, coils,
+    diodes and Schottky diodes, zeners, LEDs, bipolar transistors, MOSFETs (logic level and not), potentiometers,
+    switches, light and heat sensors, 7805/7812/LM1117 regulators, the 555, an op-amp, extra sources and Arduino
+    boards. Each breaks the way it does on a bench (a pot turned all the way or with a worn wiper, a welded
+    switch, a sensor covered, a regulator with its input on its output) so the diagnosis can tell them apart.
   - Every other number is worked out by the code too (`lunes/calc.py`, the `calculate` tool): the model writes what
     an engineer writes on paper ("12 V / 20 mA", "1/(2*pi*10 kohm*100 nF)") and Pint works it out with units, in
     the unit that fits (600 Ω, 159.2 Hz); a formula is solved for its unknown by SymPy ("P = V**2 / R" for R) with
@@ -196,7 +203,7 @@ set up as this README describes.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs nine files:
+- **Tests with no hardware:** `python tests/run_all.py`, about three minutes. It runs ten files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -217,6 +224,9 @@ set up as this README describes.
   - `test_calc.py`: expressions with units as written on paper (600 Ω, 159.2 Hz, 2 sqrt(2) V), units that do not
     add up refused, Python in the text refused, and formulas solved for their unknown (an RC cutoff for C, a
     quadratic's two roots, a missing value asked for).
+  - `test_parts.py`: the newer parts accepted when written right and refused when not, their SPICE lines healthy
+    and with each fault, the review catching a zener across the supply, a floating gate, a regulator fed too
+    little and a MOSFET half driven, and every new design laid out on the breadboard.
   - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
     outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own

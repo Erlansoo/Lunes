@@ -135,6 +135,27 @@ def milestone(name, result):
 
 stop_requested = threading.Event()
 board = None  # the dashboard page, once it is up
+OPEN = []  # how to close what is open on the bench, in the order it was opened; closed on any exit
+
+
+def shut_down():
+    """Closes the CNC's port, the cameras, the Kinect and the scope, each on its own, and ends the process whatever
+    happens: a Ctrl-C while Lunes starts used to leave the process hanging, since libusb's clean-up at exit waits
+    forever for the Kinect's transfers nobody cancelled, with the CNC's port still taken."""
+    guard = threading.Timer(8.0, lambda: os._exit(0))  # whichever close hangs, the process still ends
+    guard.daemon = True
+    guard.start()
+    for close in reversed(OPEN):
+        try:
+            close()
+        except Exception:  # noqa: BLE001 - already closed, or unplugged: the next one still gets closed
+            pass
+    try:
+        cv2.destroyAllWindows()
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(0)
 
 
 def log(kind, text):
@@ -421,12 +442,14 @@ def main():
     if index is None:
         sys.exit(f"no encuentro el microscopio ({args.camera}); las cámaras conectadas son: {cameras()}")
     machine, cam = Machine(args.port), Camera(index)
+    OPEN.extend([machine.close, cam.cap.release])
     print(f"posición en el banco: { {k: round(v, 2) for k, v in machine.position().items()} }")
     bench = None
     index = None if args.banco.lower() == "no" else find_camera(args.banco)
     if index is not None:
         try:
             bench = Camera(index, size=(3840, 2160))  # the EMEET gives this at 19 fps over USB; a Sony what it is set to
+            OPEN.append(bench.release)
             h, w = bench.frame().shape[:2]
             print(f"cámara del banco: {args.banco}, {w}x{h}")
         except RuntimeError as e:
@@ -435,6 +458,7 @@ def main():
         print(f"(la cámara del banco {args.banco} no está; revisa su cable USB)")
     try:
         kinect = Kinect()
+        OPEN.append(kinect.close)
     except RuntimeError as e:
         kinect = None
         print(f"(sin Kinect: {e})")
@@ -445,6 +469,7 @@ def main():
     elif args.osciloscopio.lower() != "no":
         try:
             scope = Scope(probe=probe)
+            OPEN.append(scope.close)
             print(f"osciloscopio: Hantek 6022BE, firmware {scope.firmware_version:#06x}, puntas {scope.probe}")
         except RuntimeError as e:
             print(f"(sin osciloscopio: {e})")
@@ -803,4 +828,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:  # while Lunes starts (waiting for the microphone, loading the ears): before main's own
+        pass
+    finally:
+        shut_down()

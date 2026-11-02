@@ -2,6 +2,8 @@ pyserial==3.5
 opencv-python==4.12.0.88
 numpy==2.2.6
 openai==3.40.0
+pint==0.26.2  # arithmetic with units, so no number Lunes says is done in the model's head (lunes.calc)
+sympy==1.14.0  # solving a formula for its unknown, the same
 # voice: microphone and speakers, and Meta's Omnilingual ASR ears and MMS-TTS Spanish voice run on the PC.
 # sherpa-onnx's GPU build, for the fast ear: pip install -r requirements.txt -f https://k2-fsa.github.io/sherpa/onnx/cuda.html
 # The NVIDIA wheels bring the CUDA libraries it needs, so no CUDA toolkit has to be installed.

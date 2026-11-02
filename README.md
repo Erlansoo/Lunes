@@ -103,6 +103,12 @@ set up as this README describes.
   - The model decides what is wanted; the code designs it by formula with standard values (E12 resistors, E6
     capacitors) and the simulation must meet its goals (`lunes/designs.py`). Templates: an LED, a 555 astable,
     a transistor switch, a divider, an RC filter, an op-amp amplifier. All twelve test designs meet their goals.
+  - Every other number is worked out by the code too (`lunes/calc.py`, the `calculate` tool): the model writes what
+    an engineer writes on paper ("12 V / 20 mA", "1/(2*pi*10 kohm*100 nF)") and Pint works it out with units, in
+    the unit that fits (600 Ω, 159.2 Hz); a formula is solved for its unknown by SymPy ("P = V**2 / R" for R) with
+    the known values' units carried through. A mix of units that makes no sense is an error, not a number, and
+    nothing but arithmetic is ever run. The model never does arithmetic in its head, and the verifier removes any
+    number that came from no tool.
   - A review before simulating catches nets with no DC path to ground, a shorted supply and parts in one row
     (`lunes/review.py`). One after simulating catches an LED past 30 mA, a resistor past 1/4 W, a transistor past
     its rating, and a net outside the supply.
@@ -190,7 +196,7 @@ set up as this README describes.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs eight files:
+- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs nine files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -208,6 +214,9 @@ set up as this README describes.
     fitted from the ring at two heights, the ring's height learnt from one thing seen by both (a point that is not
     the thing refused), points on the table and above it located, the height kept through a new fit, and what is
     refused.
+  - `test_calc.py`: expressions with units as written on paper (600 Ω, 159.2 Hz, 2 sqrt(2) V), units that do not
+    add up refused, Python in the text refused, and formulas solved for their unknown (an RC cutoff for C, a
+    quadratic's two roots, a missing value asked for).
   - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
     outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own

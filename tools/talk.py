@@ -101,7 +101,8 @@ STEPS = {"measure_board": "mido la placa", "survey_board": "recorro la placa con
          "laser_calibrate": "calibro el láser", "laser_point": "apunto el láser", "laser_height": "mido la altura con el láser", "laser": "prendo el láser",
          "calibrate_bench": "calibro la cámara del banco", "teach_bench_height": "le enseño la altura a la cámara del banco",
          "reach_in_bench": "voy a lo que ve la cámara del banco",
-         "circuit_guide": "repaso mis notas", "system_check": "reviso mis partes", "system_restart": "reinicio una parte",
+         "circuit_guide": "repaso mis notas", "calculate": "hago la cuenta",
+         "system_check": "reviso mis partes", "system_restart": "reinicio una parte",
          "ask_spark": "le pregunto a Muse Spark", "remember": "lo anoto en la memoria", "where": "veo dónde estoy"}
 TOLD_AT_START = {"measure_board", "survey_board", "inspect_component", "look_kinect"}
 

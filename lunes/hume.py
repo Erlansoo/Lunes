@@ -147,7 +147,9 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   sus metas (spec). Solo propónselo a Erlan cuando todas las metas pasen y la revisión no avise nada serio; si
   avisa, corrígelo. Para el criterio (patillajes, fallas típicas, límites) consulta circuit_guide. Si el simulador
   rechaza un circuito, su mensaje dice por qué: corrige eso, no repitas lo mismo. Hasta un valor suelto (la
-  resistencia de un LED) se calcula con circuit_design, nunca a mano: antes de que hables, un verificador quita todo
+  resistencia de un LED) se calcula con circuit_design, nunca a mano, y cualquier otra cuenta (una potencia, una
+  constante RC, un divisor, una conversión de unidades, despejar una fórmula) con calculate, que la hace el código
+  con unidades: tú nunca haces aritmética de cabeza. Antes de que hables, un verificador quita todo
   número que no venga de una herramienta. Para comprobarlo o diagnosticarlo: diagnose_start, y en cada paso dile a Erlan dónde poner la punta en
   palabras de banco ("el pin 3 del 555", "la pata de R2 que va al capacitor") y, cuando diga que está, llama
   diagnose_measure. El motor decide qué medir y qué falla es; tú lo explicas con los números. Solo nombra una falla
@@ -530,6 +532,21 @@ TOOLS = [
                        "555, led, transistor, opamp, rc, divider, diodes, supply, breadboard, simulation, diagnosis, "
                        "measurement, arduino. For judgement (pinouts, typical faults, limits), not for arithmetic.",
         "parameters": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]}}},
+    {"type": "function", "function": {
+        "name": "calculate",
+        "description": "Arithmetic and physics with units, done by the code, never in your head: every number you "
+                       "tell Erlan that no instrument read comes from here, from circuit_design or from the "
+                       "simulator. Either an expression with units as written on paper ('12 V / 20 mA', "
+                       "'1/(2*pi*10 kohm*100 nF)', 'sqrt(2) * 230 V', '(5 V - 2 V) * 20 mA'), with 'to' for the unit "
+                       "wanted ('kohm', 'mA'); or a formula with one '=' solved for one unknown ('P = V**2 / R', "
+                       "solve_for 'R', values {'P': '0.25 W', 'V': '5 V'}). Units: V, mV, A, mA, uA, ohm, kohm, "
+                       "Mohm, W, mW, F, uF, nF, pF, H, mH, uH, Hz, kHz, MHz, s, ms, us, degree, degC. Functions: "
+                       "sqrt, log, log10, exp, sin, cos, tan, atan, abs. A mix of units that makes no sense is an "
+                       "error, not a number; say the result as it comes back.",
+        "parameters": {"type": "object", "properties": {
+            "expression": {"type": "string"}, "to": {"type": "string"},
+            "formula": {"type": "string"}, "solve_for": {"type": "string"},
+            "values": {"type": "object", "description": "the known values with their units, by name"}}}}},
     {"type": "function", "function": {
         "name": "system_check",
         "description": "How Lunes' own parts are doing: the simulator (a self-test on two known circuits, and any "
@@ -2855,6 +2872,9 @@ class Hume:
             if result.get("ok") and self.kinect is not None and self.m.config.get("kinect_head"):
                 result["kinect_check"] = self.check_position()  # like every move: checked once, never acted on
             return result, None
+        if name == "calculate":
+            from lunes.calc import run as calculate
+            return calculate(args), None
         if name == "remember":
             MEMORY.parent.mkdir(exist_ok=True)
             note = {"at": datetime.now().isoformat(timespec="seconds"), "fact": args["fact"],

@@ -204,13 +204,20 @@ set up as this README describes.
   - `test_supply.py`: every digit of the panel on drawn panels, unreadable panels, and the check before powering.
   - `test_chip.py`: drawn DIPs turned any way, the notch end and pin 1, a body with no notch refused, a pointer's tip.
   - `test_breadboard.py`: every design laid out and rebuilt from its holes, holes in mm with the board turned, the guide.
-  - `test_bench.py`: the ring light and the laser's dot found in a drawn webcam picture (the supply's digits refused),
-    the bench camera fitted from the ring and the dots with the ring's height found by itself and a dot on a
-    breadboard dropped, points on the table and above it located, and what is refused.
+  - `test_bench.py`: the ring light found in a drawn webcam picture (the supply's digits refused), the bench camera
+    fitted from the ring at two heights, the ring's height learnt from one thing seen by both (a point that is not
+    the thing refused), points on the table and above it located, the height kept through a new fit, and what is
+    refused.
   - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
     outside the PC.
   - `test_simulated_bench.py`: the Arduino templates and their sketches, the simulated board through Lunes' own
     tools, and the 555 blinker's 24 faults.
+- **Measured with Muse Spark at the wheel** (`tools/reliability.py`, record in [docs/reliability.md](docs/reliability.md)):
+  the same seven cases, but the model drives the tools from a job in Spanish, as it does with Erlan (design the
+  circuit, program the made-up board, read it, ask for the probe net by net, name the fault). Three rounds on
+  Nov 2, 2026: 21 runs, 18 found, 3 unsure, 0 wrong. The three unsure are the divider's lower resistor open, which
+  reads the same as it being ten times larger at the nets the board can reach: the engine stays at 76 % and Lunes
+  says so, pointing at R2, instead of guessing. About 133 k tokens a run.
 - **Being built:** the probe held by the machine.
 
 ## Built from scratch

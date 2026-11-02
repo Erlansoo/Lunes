@@ -12,6 +12,24 @@ Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Pu
 
 > Status: work in progress. The hackathon runs Oct 26 – Nov 4, 2026.
 
+## Try it
+
+No hardware and no API key: on Windows with Python 3.14, and ngspice as in [Installing ngspice](#installing-ngspice-once-per-pc):
+
+```bash
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python tools/lab_preview.py
+```
+
+Then open http://127.0.0.1:8765: the web lab diagnoses a 555 with a planted fault on a simulated bench.
+`.venv\Scripts\python tests/run_all.py` runs every test that needs no hardware.
+
+With the bench: copy `.env.example` to `.env`, paste your Meta Model API key from dev.meta.ai, and run
+`python tools/talk.py COM8 --spark --mic <part of your microphone's name>`. To try Lunes' voice and tools without the
+scope or an Arduino, add `--osciloscopio simulado --arduino simulado`. The CNC, the microscope and the Ollama model are
+set up as this README describes.
+
 ## Where it stands
 
 - **Works today:**
@@ -265,6 +283,11 @@ The design is in [docs/diseno-conversacion.md](docs/diseno-conversacion.md).
 ## Development tools
 
 Claude Code (Anthropic) is used as a coding assistant while building. The AI inside the product runs on Meta models.
+
+## License
+
+[MIT](LICENSE). The Hantek 6022BE's firmware in `firmware/hantek6022be` is the OpenHantek6022 project's and stays under
+its own GPL-3.0 license; it is a separate program that Lunes loads into the scope.
 
 ## Author
 

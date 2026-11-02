@@ -478,6 +478,7 @@ def main():
     board = Dashboard(camera=cam, kinect=kinect, speaking=lambda: voice.speaking,
                       bench=bench, lab=lambda: lab_state(hume))
     hume.on_image = lambda image, what: board.set_seen(image, what)
+    board.on_tap = lambda x, y: hume.taps.append((x, y))
     print(f"página en vivo: {board.url}")
 
     def watch_supply():  # always knows what the supply shows, and says when it changes

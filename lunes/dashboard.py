@@ -35,6 +35,7 @@ class Dashboard:
         safe from any thread); speaking: tells whether Lunes is talking now; lab: gives the bench's state for the page
         (lunes.lab.state)."""
         self.camera, self.bench, self.kinect, self.speaking, self.lab = camera, bench, kinect, speaking, lab
+        self.on_tap = None  # on_tap(x, y) for a tap on the microscope's picture, fractions of it
         self.events = deque(maxlen=500)
         self.count = 0
         self.status, self.busy = "", False
@@ -51,6 +52,11 @@ class Dashboard:
         with self._lock:
             self.events.append({"n": self.count, "at": time.strftime("%H:%M:%S"), "kind": kind, "text": text})
             self.count += 1
+
+    def tapped(self, x, y):
+        """Erlan tapped a point of the microscope's picture on the page (fractions); Hume reads it with confirm_pin1."""
+        if self.on_tap:
+            self.on_tap(float(x), float(y))
 
     def set_seen(self, image, label=""):
         with self._lock:
@@ -88,6 +94,14 @@ class Dashboard:
                 path, _, query = self.path.partition("?")
                 if path == "/":
                     return self._send(PAGE, "text/html; charset=utf-8")
+                if path == "/tap":
+                    try:
+                        q = dict(part.split("=") for part in query.split("&") if "=" in part)
+                        board.tapped(q["x"], q["y"])
+                        board.add("info", f"toque en la foto del microscopio: {float(q['x']):.2f}, {float(q['y']):.2f}")
+                        return self._send(b'{"ok": true}', "application/json")
+                    except (KeyError, ValueError):
+                        return self._send(b'{"ok": false}', "application/json")
                 if path == "/events":
                     since = int(query.split("=")[1]) if query.startswith("since=") else 0
                     with board._lock:

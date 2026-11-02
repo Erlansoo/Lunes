@@ -62,7 +62,7 @@ GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' 
 LIFT_MM = 3.0
 # what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
 MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
-                "guide_step", "guide_net",
+                "guide_step", "guide_net", "see_chip",
                 "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
 MAX_ROUNDS = 10
 MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
@@ -148,6 +148,11 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   En un diagnóstico, cuando el motor pide una red, guide_net la señala: dile que ponga la punta donde está el punto.
   GND es donde va el clip de masa, que siempre va a la masa del circuito. La fuente se conecta al final, con su voltaje
   ya revisado.
+- Un chip en la protoboard: see_chip lo mira con el microscopio y dice dónde está su pin 1 (la muesca o el puntito) y
+  si está en el agujero del plan. Si no ve la muesca, o está poco seguro, no adivines: pídele a Erlan que te lo diga
+  (que toque el pin 1 en la foto del laboratorio web, que apoye un palito con la punta en el pin, que mueva el láser
+  hasta el pin, o que nombre el agujero) y confírmalo con confirm_pin1. Si el chip está al revés o en otro sitio del
+  que el plan dice, díselo con los dos agujeros y espera a que lo cambie.
 - La fuente del banco (KORAD KA3010D, sin USB) la lees con la cámara del banco: supply_read. Antes de decirle a Erlan
   que conecte o encienda un circuito, mira qué marca: circuit_set, circuit_design y diagnose_start ya te lo traen en
   supply. Si check dice que no es seguro, díselo con los números y no sigas hasta que lo arregle. Si no la ves, dilo
@@ -400,6 +405,26 @@ TOOLS = [
                        "diagnosis, the net the engine asks for; GND is where the ground clip goes; VCC and GND are also "
                        "where the supply's positive and negative go.",
         "parameters": {"type": "object", "properties": {"net": {"type": "string"}}, "required": ["net"]}}},
+    {"type": "function", "function": {
+        "name": "see_chip",
+        "description": "Look at the DIP chip under the microscope: the code finds its body, its angle, which end has "
+                       "the notch or the pin-1 dent, and where pin 1 is, with how sure it is. With the breadboard "
+                       "placed and a plan, it says which hole pin 1 is in and whether that is the plan's. If it cannot "
+                       "see the chip or its notch it says so: then confirm with Erlan through confirm_pin1, never "
+                       "guess. Returns the picture with what was seen drawn.",
+        "parameters": {"type": "object", "properties": {"ref": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "confirm_pin1",
+        "description": "Erlan tells where pin 1 is, when the code could not see it or to confirm it, one of three "
+                       "ways. 'tap': the point he tapped on the microscope's picture in the web lab (or give "
+                       "picture_x, picture_y as fractions of the last picture). 'pointer': he laid a wooden stick on "
+                       "the board with its tip on pin 1; the code finds the tip in a fresh picture. 'laser': he says "
+                       "the laser's dot is on pin 1 now, so the dot's place is pin 1 (after laser_point moved it "
+                       "where he said). 'hole': he names the hole, like 'e12'. Keeps pin 1 as confirmed by him.",
+        "parameters": {"type": "object", "properties": {
+            "how": {"type": "string", "enum": ["tap", "pointer", "laser", "hole"]},
+            "picture_x": {"type": "number"}, "picture_y": {"type": "number"}, "hole": {"type": "string"},
+            "ref": {"type": "string"}}, "required": ["how"]}}},
     {"type": "function", "function": {
         "name": "supply_read",
         "description": "Read the bench supply (a KORAD KA3010D, no USB) with the bench camera, right now: volts, amps and "
@@ -740,6 +765,8 @@ class Hume:
         self.supply_seen = None  # what the bench camera said the last time it looked: a reading, or why there is none
         self.layout, self.placement = None, None  # the circuit laid out on the breadboard, and where the board lies
         self.guide = {"step": 0, "holes": [], "says": ""}  # what the laser is showing Erlan
+        self.chip_seen = None  # the last chip the microscope saw: body, notch end, pin 1, and how it was confirmed
+        self.taps = []  # points Erlan tapped on the web lab's microscope picture: (x, y) as fractions
         self.last_mcu, self.last_serial = None, None  # the last mcu_read, and the last lines the serial monitor showed
         self.goals, self.lab_diagnosis = None, None  # the circuit's goals, and the diagnosis as the web lab last read it
         self.circuit = self.expected = self.diagnosis = None  # the circuit on the bench, its simulation, a diagnosis
@@ -1584,6 +1611,163 @@ class Hume:
         self.guide = {"step": self.guide["step"], "net": net, "holes": [hole], "at": hole, "says": says}
         return {"ok": True, "net": net, "hole": hole, "says": says, **self._point_at(hole)}, None
 
+    # A chip under the microscope and its pin 1 -----------------------------------------------------------------
+    def _chip_ref(self, ref=None):
+        """The chip of the circuit this is about: the one named, or the only chip in the circuit."""
+        chips = [p for p in (self.circuit or {}).get("parts", []) if p["kind"] in ("NE555", "OPAMP")]
+        if ref:
+            chips = [p for p in chips if p["ref"] == ref]
+        return chips[0]["ref"] if len(chips) == 1 else None
+
+    def _pin1_report(self, px, py, at, how, sure, why, ref=None):
+        """What pin 1 at a pixel of a picture taken at `at` means: its machine mm, its hole, and the plan's verdict.
+        The picture is one frame, or a mosaic (at carries its summary) whose pixels are placed by its own geometry."""
+        from lunes.breadboard import chip_pin1_hole, nearest_hole
+        if isinstance(at, dict) and "_mosaic" in at:
+            summary = at["_mosaic"]
+            x, y = mosaic_point_to_mm(summary, px / summary["size_px"][0], py / summary["size_px"][1])
+        else:
+            vx, vy, _, _ = geometry(self.m.config["microscope"])
+            x, y = (float(w[0]) for w in pixels_to_mm(at, vx, vy, [px], [py]))
+        out = {"pin1_mm": {"X": round(x, 2), "Y": round(y, 2)}, "how": how, "sure": sure, "why": why}
+        if self.placement is not None:
+            hole = nearest_hole(self.placement, x, y)
+            out["pin1_hole"] = hole
+            ref = ref or self._chip_ref()
+            planned = chip_pin1_hole(self.layout, ref) if self.layout and ref else None
+            if planned:
+                out["planned_hole"] = planned
+                out["as_planned"] = hole == planned
+                if hole is None:
+                    out["note"] = "pin 1 is not on a hole of the placed board: the board may have moved, or the chip is loose"
+                elif hole != planned:
+                    out["note"] = (f"the chip is not where the plan put it: pin 1 is in {hole} and the plan has it in "
+                                   f"{planned}. Tell Erlan to turn or move the chip, or re-plan around where it is")
+        else:
+            out["note"] = "the board is not placed (breadboard_place), so only mm are known, not the hole"
+        self.chip_seen = dict(self.chip_seen or {}, **out, at=time.time())
+        return out
+
+    def _see_chip(self, ref=None):
+        from lunes import chip as chips
+        frame = self._look()
+        at = self.last_look[0]
+        ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
+        found = chips.find_chip(frame, ppm)
+        view = with_cross(frame)
+        if found is None:
+            self.chip_seen = {"seen": False, "at": time.time()}
+            return {"ok": False, "seen": False,
+                    "error": "no chip body in this picture: move over it (center_on_point on it in look_microscope's "
+                             "picture, or go_to_mosaic_point), or ask Erlan where it is"}, view
+        if found["cut_by_edge"]:
+            # a DIP with its pins is about as big as one picture: when the body runs off an edge, four pictures
+            # around the chip, lined up by their content, hold it whole (the real 555 on the bench was 10 x 9 mm)
+            if self.m.position()["Z"] != at["Z"]:
+                self.m.move_to(Z=at["Z"])
+            mosaic, _, summary = survey(self.m, self.cam, span=0.15, show=self.show, recalibrate=False, cols=2, rows=2,
+                                        stop=self.stop.is_set, register=True)
+            self.m.move_to(X=at["X"], Y=at["Y"])
+            self.m.move_to(Z=at["Z"])
+            at = {"X": summary["home_mm"][0], "Y": summary["home_mm"][1], "Z": at["Z"], "_mosaic": summary}
+            frame, found = mosaic, chips.find_chip(mosaic, ppm)
+            view = mosaic.copy()
+            if found is None:
+                self.chip_seen = {"seen": False, "at": time.time()}
+                return {"ok": False, "seen": False, "error": "the chip ran off the picture's edge and four pictures "
+                                                              "around it still show no whole body: ask Erlan where it is"}, view
+        end, sure, why = chips.notch_end(frame, found)
+        cv2.polylines(view, [np.array(found["corners"], np.int32)], True, (0, 255, 0), 2)
+        out = {"ok": True, "seen": True, "body_size_mm": found["size_mm"], "angle_deg": found["angle_deg"],
+               "center_in_picture": [round(found["center"][0] / frame.shape[1], 3), round(found["center"][1] / frame.shape[0], 3)]}
+        if end is None:
+            self.chip_seen = {"seen": True, "pin1": None, "body": found, "at": time.time()}
+            out["pin1"] = None
+            out["note"] = (f"the body is seen but not its notch or dent ({why}): ask Erlan where pin 1 is, with "
+                           f"confirm_pin1 (a tap on the picture, a wooden stick on the pin, the laser, or the hole's name)")
+            return out, view
+        px, py = chips.pin1(found, end)
+        cv2.circle(view, (int(px), int(py)), 12, (0, 0, 255), 2)
+        cv2.putText(view, "1", (int(px) + 14, int(py) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+        angle, words = chips.orientation(found, end)
+        out.update(notch=words, notch_deg=angle, pin1_in_picture=[round(px / frame.shape[1], 3), round(py / frame.shape[0], 3)],
+                   **self._pin1_report(px, py, at, "seen by the microscope", sure, why, ref))
+        if sure < 0.6:
+            out["note"] = (out.get("note", "") + f"; only {sure:.0%} sure of the notch end: have Erlan confirm it").strip("; ")
+        return out, view
+
+    def _confirm_pin1(self, args):
+        from lunes import chip as chips
+        how, ref = args.get("how"), args.get("ref")
+        if how == "hole":
+            hole = str(args.get("hole", "")).strip().lower()
+            if self.placement is None:
+                return {"ok": False, "error": "the board is not placed, so a hole's name gives no position: breadboard_place first"}, None
+            try:
+                x, y = self.placement.mm(hole)
+            except (KeyError, ValueError):
+                return {"ok": False, "error": f"no hole {hole} on a breadboard"}, None
+            from lunes.breadboard import chip_pin1_hole
+            ref = ref or self._chip_ref()
+            planned = chip_pin1_hole(self.layout, ref) if self.layout and ref else None
+            out = {"ok": True, "pin1_hole": hole, "pin1_mm": {"X": x, "Y": y}, "how": "Erlan named the hole", "sure": 1.0}
+            if planned:
+                out.update(planned_hole=planned, as_planned=hole == planned)
+            self.chip_seen = dict(self.chip_seen or {}, **out, at=time.time())
+            return out, None
+        if how == "laser":
+            cal = self.m.config.get("laser")
+            if not cal or not cal.get("surfaces"):
+                return {"ok": False, "error": "the laser is not calibrated"}, None
+            from lunes.laser import offset_at
+            at = self.m.position()
+            dx, dy = offset_at(cal, at["Z"])  # where the dot lands relative to the microscope's centre
+            x, y = at["X"] + dx, at["Y"] + dy
+            out = self._pin1_report_mm(x, y, "Erlan said the laser's dot is on pin 1", 1.0, "the dot", ref)
+            return {"ok": True, **out}, None
+        if how == "pointer":
+            frame = self._look()
+            ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
+            tip = chips.pointer_tip(frame, ppm)
+            view = with_cross(frame)
+            if tip is None:
+                return {"ok": False, "error": "no pointer seen in the picture: a wooden stick coming in from the edge, "
+                                              "its tip on the pin, with the microscope over it"}, view
+            (px, py), width = tip
+            cv2.circle(view, (int(px), int(py)), 12, (0, 0, 255), 2)
+            out = self._pin1_report(px, py, self.last_look[0], "Erlan's pointer, its tip seen by the microscope", 0.9,
+                                    f"a stick {width} mm wide", ref)
+            return {"ok": True, **out}, view
+        # a tap on the web lab's picture, or a point of the last picture
+        if args.get("picture_x") is None and self.taps:
+            fx, fy = self.taps[-1]
+        elif args.get("picture_x") is not None:
+            fx, fy = float(args["picture_x"]), float(args.get("picture_y", 0.5))
+        else:
+            return {"ok": False, "error": "no tap yet: ask Erlan to tap pin 1 on the microscope's picture in the web lab, "
+                                          "or give picture_x and picture_y"}, None
+        got, problem = self._last_picture_point(fx, fy)
+        if problem:
+            return {"ok": False, "error": problem}, None
+        at, frame, [(px, py)] = got
+        view = with_cross(frame, (px, py))
+        out = self._pin1_report(px, py, at, "Erlan tapped it on the picture", 1.0, "his tap", ref)
+        return {"ok": True, **out}, view
+
+    def _pin1_report_mm(self, x, y, how, sure, why, ref=None):
+        """_pin1_report for a point already in machine mm."""
+        from lunes.breadboard import chip_pin1_hole, nearest_hole
+        out = {"pin1_mm": {"X": round(x, 2), "Y": round(y, 2)}, "how": how, "sure": sure, "why": why}
+        if self.placement is not None:
+            hole = nearest_hole(self.placement, x, y)
+            out["pin1_hole"] = hole
+            ref = ref or self._chip_ref()
+            planned = chip_pin1_hole(self.layout, ref) if self.layout and ref else None
+            if planned:
+                out.update(planned_hole=planned, as_planned=hole == planned)
+        self.chip_seen = dict(self.chip_seen or {}, **out, at=time.time())
+        return out
+
     # The bench supply --------------------------------------------------------------------------------------------
     def supply_look(self):
         """Looks at the supply's panel now and keeps what it read; returns what the camera said."""
@@ -2294,6 +2478,10 @@ class Hume:
             return self._scope_zero()
         if name == "supply_read":
             return self._supply_read()
+        if name == "see_chip":
+            return self._see_chip(args.get("ref"))
+        if name == "confirm_pin1":
+            return self._confirm_pin1(args)
         if name == "breadboard_plan":
             return self._breadboard_plan()
         if name == "breadboard_place":

@@ -280,3 +280,26 @@ def verify(circuit, result):
                 problems.append(f"nets {net} and {seen[node]} are shorted on the board")
             seen[node] = net
     return problems
+
+
+def nearest_hole(placement, x_mm, y_mm, max_mm=1.5):
+    """The hole of the placed board nearest a machine point, or None if none is within max_mm: the point turned back
+    into the board's frame, then rounded to the grid."""
+    c, s = math.cos(placement.angle), math.sin(placement.angle)
+    dx, dy = x_mm - placement.anchor[0], y_mm - placement.anchor[1]
+    bx = placement.origin[0] + c * dx + s * dy
+    by = placement.origin[1] - s * dx + c * dy
+    row = int(round(bx / PITCH)) + 1
+    across = int(round(by / PITCH))
+    columns = {v: k for k, v in COLUMN.items()} | {v: k for k, v in RAIL_COLUMN.items()}
+    if row < 1 or row > ROWS or across not in columns:
+        return None
+    hole = f"{columns[across]}{row}"
+    hx, hy = placement.mm(hole)
+    return hole if math.hypot(hx - x_mm, hy - y_mm) <= max_mm else None
+
+
+def chip_pin1_hole(layout, ref):
+    """The hole the plan gave a chip's pin 1, or None."""
+    holes = layout["holes"].get(ref, {})
+    return holes.get(1)

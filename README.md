@@ -164,12 +164,22 @@ set up as this README describes.
     the holes alone and refuses a plan that is not the circuit.
   - `guide_step` shows each lead, wire and supply connection with the laser's dot, in words. During a diagnosis,
     `guide_net` shows where the probe goes for the net the engine asks for, and where the ground clip goes.
+- **A chip and its pin 1** (`lunes/chip.py`), tried on the real 555 on the breadboard.
+  - `see_chip` finds the DIP's body, its angle and which end has the notch or the pin-1 dent, by image processing with
+    no model, and says how sure it is. A body that runs off the picture's edge is photographed whole, four pictures
+    lined up by their content. On the real 555 it found the body (10 x 9 mm with its pins) and the notch's end, at 41 %
+    sure: a chip whose notch is moulded in relief, as dark as the body.
+  - Under 60 % sure, or with no notch seen, Lunes asks instead of guessing. `confirm_pin1` takes Erlan's answer four
+    ways: a tap on the microscope's picture in the web lab, a wooden stick laid with its tip on the pin (the code finds
+    the tip), the laser's dot moved onto the pin, or the hole's name.
+  - With the breadboard placed and a plan, it says which hole pin 1 is in and whether that is the plan's; a chip the
+    wrong way round is reported with both holes.
 - **Eyes on the bench supply** (`lunes/supply.py`). The KORAD KA3010D has no USB, so Lunes reads its panel with the bench
   camera, segment by segment, with no model. A panel it cannot read is no reading.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs six files:
+- **Tests with no hardware:** `python tests/run_all.py`, about two minutes. It runs seven files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -181,6 +191,7 @@ set up as this README describes.
     - sines and steady levels;
     - serial data at 9600 and 115200 baud.
   - `test_supply.py`: every digit of the panel on drawn panels, unreadable panels, and the check before powering.
+  - `test_chip.py`: drawn DIPs turned any way, the notch end and pin 1, a body with no notch refused, a pointer's tip.
   - `test_breadboard.py`: every design laid out and rebuilt from its holes, holes in mm with the board turned, the guide.
   - `test_lab.py`: what the web lab receives at each stage of a session, and that the page loads nothing from
     outside the PC.

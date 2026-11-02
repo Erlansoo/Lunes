@@ -88,12 +88,21 @@ def _breadboard(hume):
             "guide": hume.guide}
 
 
+def _chip(hume):
+    seen = hume.chip_seen
+    if not seen:
+        return None
+    out = {k: seen.get(k) for k in ("seen", "pin1_in_picture", "pin1_hole", "planned_hole", "as_planned", "how", "sure")}
+    out["ago_s"] = _ago(seen.get("at"))
+    return out
+
+
 def state(hume):
     machine, scope = _machine(hume), _scope(hume)
     arduino = _arduino(hume)
     return {"machine": machine, "scope": scope, "circuit": _circuit(hume), "diagnosis": _diagnosis(hume),
             "arduino": arduino, "brain": hume.brain, "supply": hume.supply_state(),
-            "breadboard": _breadboard(hume),
+            "breadboard": _breadboard(hume), "chip": _chip(hume),
             "instruments": {"cnc": bool(machine["at_mm"]), "microscope": hume.cam is not None,
                             "bench": hume.bench is not None, "kinect": hume.kinect is not None,
                             "scope": scope["connected"], "arduino": arduino is not None}}

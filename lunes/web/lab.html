@@ -66,6 +66,9 @@ main { display:grid; gap:10px; padding:10px; min-height:0;
 .stage { position:relative; flex:1; min-height:0; background:#000; }
 .stage > img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.stage.tappable > img { cursor:crosshair; }
+.chipline { flex:none; padding:5px 12px; border-top:1px solid var(--line); font-size:12.5px; color:var(--muted); }
+.chipline b { font-family:var(--mono); color:var(--ink); } .chipline.bad { color:var(--bad); } .chipline.good { color:var(--ok); }
 .caption { position:absolute; left:10px; bottom:9px; display:flex; gap:12px; padding:3px 8px; border-radius:4px;
            background:rgba(8,10,12,.78); font-size:12.5px; color:var(--ink); }
 .badge { position:absolute; right:10px; top:9px; padding:2px 8px; border-radius:4px; background:rgba(8,10,12,.78);
@@ -163,6 +166,7 @@ body:not(.details) .detail { display:none; }
       <div class="badge" id="badge" hidden></div>
       <div class="caption num" id="caption" hidden></div>
     </div>
+    <div class="chipline" id="chipline" hidden></div>
   </section>
 
   <section class="panel" id="scope">
@@ -207,7 +211,8 @@ const TEXT = {
       lunes:"Lunes", noSignal:"Sin imagen", models:"Modelos Meta", api:"API", pc:"en la PC", new_:"Imagen nueva", clear:"Clara",
       noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
       remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
-      notPlaced:"falta ubicar la protoboard"},
+      notPlaced:"falta ubicar la protoboard", tapHint:"Toca el pin 1 en la foto del microscopio para decírselo a Lunes",
+      chipSeen:"Chip visto", pin1In:"pin 1 en", asPlanned:"como en el plan", notAsPlanned:"NO como en el plan, que lo tiene en", pin1Unknown:"pin 1 sin ver: tócalo en la foto"},
   en:{subtitle:"Electronics lab", scope:"Oscilloscope", machine:"Machine", benchTitle:"Circuit and diagnosis",
       conversation:"Conversation", listening:"Listening", working:"Working", speaking:"Speaking", microscope:"Microscope",
       bench:"Bench", kinect:"Kinect", analysis:"AI analysis", cnc:"CNC", arduino:"Arduino", noScope:"Oscilloscope not connected",
@@ -222,7 +227,8 @@ const TEXT = {
       lunes:"Lunes", noSignal:"No picture", models:"Meta models", api:"API", pc:"on the PC", new_:"New picture", clear:"Clear",
       noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
       remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
-      notPlaced:"breadboard not located yet"}
+      notPlaced:"breadboard not located yet", tapHint:"Tap pin 1 on the microscope's picture to tell Lunes",
+      chipSeen:"Chip seen", pin1In:"pin 1 in", asPlanned:"as planned", notAsPlanned:"NOT as planned, which has it in", pin1Unknown:"pin 1 not seen: tap it on the picture"}
 };
 // The engine's sentences are in English, as the code is; they read in Spanish on the Spanish page.
 const SPANISH = [
@@ -285,6 +291,7 @@ function buildTabs(){
 }
 function select(){
   document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === view));
+  $("stage").classList.toggle("tappable", view === "microscope"); $("big").title = view === "microscope" ? T.tapHint : "";
   $("big").alt = T[view]; $("badge").hidden = view !== "analysis" || !$("badge").textContent; drawOverlay(); pump();
 }
 let pumpTimer = 0;
@@ -490,7 +497,30 @@ function drawBreadboard(b){
   for (const h of g.holes || []){ const [cx,cy] = at(h); add("circle",{cx,cy,r:h === g.at ? 3.2 : 2.4,fill:"none",stroke:"#e0261c","stroke-width":1.2}); }
   return svg;
 }
-function render(d){ renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); drawOverlay(); }
+function renderChip(c){
+  const line = $("chipline"); line.hidden = !c; if (!c) return;
+  line.className = "chipline" + (c.as_planned === true ? " good" : c.as_planned === false ? " bad" : "");
+  line.replaceChildren();
+  if (c.seen === false){ line.append(el("span","",T.pin1Unknown)); return; }
+  line.append(el("span","",T.chipSeen + " · "));
+  if (c.pin1_hole){ line.append(el("span","",T.pin1In + " "), el("b","",c.pin1_hole)); }
+  else line.append(el("span","",T.pin1Unknown));
+  if (c.as_planned === true) line.append(el("span","", " · " + T.asPlanned));
+  else if (c.as_planned === false) line.append(el("span","", ` · ${T.notAsPlanned} `), el("b","",c.planned_hole));
+  if (c.how) line.append(el("span","", ` · ${c.how}`));
+}
+function render(d){ renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); renderChip(d.chip); drawOverlay(); }
+$("big").addEventListener("click", e => {
+  if (view !== "microscope") return;
+  const img = $("big"), r = img.getBoundingClientRect(), nat = img.naturalWidth / img.naturalHeight || 4/3;
+  let w = r.width, h = r.height, ox = 0, oy = 0;  // the picture is letterboxed inside the stage
+  if (w / h > nat){ w = h * nat; ox = (r.width - w) / 2; } else { h = w / nat; oy = (r.height - h) / 2; }
+  const x = (e.clientX - r.left - ox) / w, y = (e.clientY - r.top - oy) / h;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  fetch(`/tap?x=${x.toFixed(4)}&y=${y.toFixed(4)}`).catch(() => {});
+  const svg = $("overlay"), c = document.createElementNS(NS,"circle");
+  c.setAttribute("cx", r.width * 0 + ox + x * w); c.setAttribute("cy", oy + y * h); c.setAttribute("r", 9); c.setAttribute("fill","none"); c.setAttribute("stroke","#ff3b2e"); c.setAttribute("stroke-width","2"); svg.append(c);
+});
 
 function addEvent(e){
   const log = $("log"), box = $("logBox"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;

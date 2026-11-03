@@ -1,0 +1,81 @@
+{
+ "name": "PC817",
+ "aka": [
+  "PC817C",
+  "EL817",
+  "4N25X"
+ ],
+ "package": "DIP4",
+ "pins": {
+  "1": "A",
+  "2": "K",
+  "3": "E",
+  "4": "C"
+ },
+ "power": [
+  "A",
+  "K"
+ ],
+ "inputs": [],
+ "outputs": [
+  "C"
+ ],
+ "dc_links": [
+  [
+   "A",
+   "K"
+  ],
+  [
+   "C",
+   "E"
+  ]
+ ],
+ "supply_v": null,
+ "notes": "Optocoupler: an LED on pins 1-2 turns on a phototransistor on pins 3-4, with no electrical link between the two sides. Feed the LED through a resistor, 5 to 20 mA.",
+ "source": "Sharp PC817 datasheet",
+ "spice": ".subckt CHIP_PC817 a k e c\nVs a x 0\n.model PC817_LED D(Is=1e-12 N=1.9 Rs=2)\nD1 x k PC817_LED\nRiso k e 1G\nBq c e I = min(max(i(Vs),0)*1.0, max(v(c,e),0)/20)\n.ends CHIP_PC817",
+ "test": {
+  "circuit": {
+   "name": "PC817 on",
+   "supply_v": 5,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "PC817",
+     "pins": {
+      "A": "LED",
+      "K": "GND",
+      "E": "GND",
+      "C": "OUT"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "390",
+     "pins": [
+      "VCC",
+      "LED"
+     ]
+    },
+    {
+     "ref": "R2",
+     "kind": "R",
+     "value": "4k7",
+     "pins": [
+      "VCC",
+      "OUT"
+     ]
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "OUT",
+    "min_v_below": 0.5
+   }
+  ]
+ },
+ "origin": "seed"
+}

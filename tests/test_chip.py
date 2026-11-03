@@ -88,6 +88,27 @@ def pin_one():
                                           f"{math.dist(b, p) / PPM:.1f} mm from the leg")
             ok(not chip.on_body(img, int(p[0] + (p[0] - b[0])), int(p[1] + (p[1] - b[1]))) if 0 <= p[0] + (p[0] - b[0]) < 640
                and 0 <= p[1] + (p[1] - b[1]) < 480 else True, f"turned {angle:g}, notch {notch}: past the leg is not the body")
+    print("Every other pin, from pin 1")
+    for angle, notch in ((0.0, "left"), (0.0, "right"), (90.0, "left"), (-30.0, "right")):
+        img, truth = dip(angle, notch)
+        found = chip.find_chip(img, PPM)
+        end, _, _ = chip.notch_end(img, found)
+        cx, cy = found["center"]
+        one = chip.pin_at(found, end, 1, 8)
+        turned = (2 * cx - one[0], 2 * cy - one[1])  # half a turn about the chip's centre takes pin 1 to pin 5
+        ok(math.dist(chip.pin_at(found, end, 5, 8), turned) / PPM < 0.05, f"turned {angle:g}, notch {notch}: pin 5 faces pin 1 "
+                                                                          f"through the centre")
+        ok(abs(math.dist(chip.pin_at(found, end, 8, 8), one) / PPM - 7.62) < 0.3, f"turned {angle:g}, notch {notch}: pin 8 is "
+                                                                                 f"right across from pin 1, a row away")
+        ok(abs(math.dist(chip.pin_at(found, end, 4, 8), one) / PPM - 7.62) < 0.3, f"turned {angle:g}, notch {notch}: pin 4 is "
+                                                                                 f"at the far end of pin 1's side")
+        ok(chip.on_body(img, *(int(round(v)) for v in chip.beside_pin(found, end, 8, 8))), f"turned {angle:g}, notch {notch}: "
+                                                                                          f"beside pin 8 is on the body")
+    long_chip = {"corners": [[-95.25, -31.75], [95.25, -31.75], [95.25, 31.75], [-95.25, 31.75]], "center": (0.0, 0.0),
+                 "angle_deg": 0.0, "size_mm": (19.05, 6.35)}
+    want = {1: (-76.2, 38.1), 7: (76.2, 38.1), 8: (76.2, -38.1), 14: (-76.2, -38.1)}
+    ok(all(math.dist(chip.pin_at(long_chip, "left", n, 14), at) < 0.01 for n, at in want.items()),
+       "a DIP-14 with the notch left: 1 and 14 by the notch, 7 and 8 at the far end, at 10 px per mm")
     img, _ = dip(0.0, "left", dent=False)
     found = chip.find_chip(img, PPM)
     end, sure, why = chip.notch_end(img, found)
@@ -97,6 +118,10 @@ def pin_one():
     end, sure, why = chip.notch_end(img, found)
     off = math.dist(chip.pin1(found, end), truth) / PPM if end else 99
     ok(end == "right" and off < 0.8, f"notch right and no dent: pin 1 upper right, {off:.2f} mm off the leg")
+    img, truth = dip(0.0, "left")
+    warm = np.clip(img.astype(np.float32) * (0.72, 0.8, 1.25), 0, 255).astype(np.uint8)  # a lamp's warm light from the side
+    found = chip.find_chip(warm, PPM)
+    ok(found is not None, "under a warm lamp the whole picture is tinted, and the chip is still found")
     plain = breadboard_picture()
     cv2.rectangle(plain, (160, 120), (480, 330), (52, 50, 48), -1)
     found = chip.find_chip(plain, PPM)

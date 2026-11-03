@@ -1,0 +1,132 @@
+{
+ "name": "74HC14",
+ "aka": [
+  "74LS14",
+  "CD40106",
+  "SN74HC14"
+ ],
+ "package": "DIP14",
+ "pins": {
+  "1": "A1",
+  "2": "Y1",
+  "3": "A2",
+  "4": "Y2",
+  "5": "A3",
+  "6": "Y3",
+  "7": "GND",
+  "8": "Y4",
+  "9": "A4",
+  "10": "Y5",
+  "11": "A5",
+  "12": "Y6",
+  "13": "A6",
+  "14": "VCC"
+ },
+ "power": [
+  "VCC",
+  "GND"
+ ],
+ "inputs": [
+  "A1",
+  "A2",
+  "A3",
+  "A4",
+  "A5",
+  "A6"
+ ],
+ "outputs": [
+  "Y1",
+  "Y2",
+  "Y3",
+  "Y4",
+  "Y5",
+  "Y6"
+ ],
+ "dc_links": [
+  [
+   "VCC",
+   "GND"
+  ],
+  [
+   "Y1",
+   "GND"
+  ],
+  [
+   "Y2",
+   "GND"
+  ],
+  [
+   "Y3",
+   "GND"
+  ],
+  [
+   "Y4",
+   "GND"
+  ],
+  [
+   "Y5",
+   "GND"
+  ],
+  [
+   "Y6",
+   "GND"
+  ]
+ ],
+ "supply_v": [
+  2,
+  6
+ ],
+ "notes": "Hex Schmitt-trigger inverter: thresholds near 0.6 and 0.4 of the supply. A resistor from output to input and a capacitor from input to ground oscillate at about 1 / (0.8 R C). Unused inputs must not float.",
+ "source": "TI SN74HC14 datasheet",
+ "spice": ".subckt CHIP_74HC14 a1 y1 a2 y2 a3 y3 gnd y4 a4 y5 a5 y6 a6 vcc\nRs vcc gnd 100k\nB1 d1 gnd V = v(vcc,gnd)*lunes_step((0.5+0.1*(2*v(m1,gnd)/max(v(vcc,gnd),0.1)-1))*v(vcc,gnd)-v(a1,gnd),60)\nR1 d1 y1 50\nRm1 d1 m1 1k\nCm1 m1 gnd 1p\nB2 d2 gnd V = v(vcc,gnd)*lunes_step((0.5+0.1*(2*v(m2,gnd)/max(v(vcc,gnd),0.1)-1))*v(vcc,gnd)-v(a2,gnd),60)\nR2 d2 y2 50\nRm2 d2 m2 1k\nCm2 m2 gnd 1p\nB3 d3 gnd V = v(vcc,gnd)*lunes_step((0.5+0.1*(2*v(m3,gnd)/max(v(vcc,gnd),0.1)-1))*v(vcc,gnd)-v(a3,gnd),60)\nR3 d3 y3 50\nRm3 d3 m3 1k\nCm3 m3 gnd 1p\nB4 d4 gnd V = v(vcc,gnd)*lunes_step((0.5+0.1*(2*v(m4,gnd)/max(v(vcc,gnd),0.1)-1))*v(vcc,gnd)-v(a4,gnd),60)\nR4 d4 y4 50\nRm4 d4 m4 1k\nCm4 m4 gnd 1p\nB5 d5 gnd V = v(vcc,gnd)*lunes_step((0.5+0.1*(2*v(m5,gnd)/max(v(vcc,gnd),0.1)-1))*v(vcc,gnd)-v(a5,gnd),60)\nR5 d5 y5 50\nRm5 d5 m5 1k\nCm5 m5 gnd 1p\nB6 d6 gnd V = v(vcc,gnd)*lunes_step((0.5+0.1*(2*v(m6,gnd)/max(v(vcc,gnd),0.1)-1))*v(vcc,gnd)-v(a6,gnd),60)\nR6 d6 y6 50\nRm6 d6 m6 1k\nCm6 m6 gnd 1p\n.ends CHIP_74HC14",
+ "test": {
+  "circuit": {
+   "name": "74HC14 RC oscillator",
+   "supply_v": 5,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "74HC14",
+     "pins": {
+      "VCC": "VCC",
+      "GND": "GND",
+      "A1": "IN",
+      "Y1": "OUT",
+      "A2": "GND",
+      "A3": "GND",
+      "A4": "GND",
+      "A5": "GND",
+      "A6": "GND"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "OUT",
+      "IN"
+     ]
+    },
+    {
+     "ref": "C1",
+     "kind": "C",
+     "value": "100n",
+     "pins": [
+      "IN",
+      "GND"
+     ]
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "OUT",
+    "frequency_hz": 1235,
+    "tolerance": 0.25
+   }
+  ]
+ },
+ "origin": "seed"
+}

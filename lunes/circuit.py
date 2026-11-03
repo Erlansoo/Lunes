@@ -32,12 +32,12 @@ the other condition (covered, hot), a regulator with nothing out or its input st
 import copy
 import re
 
-from lunes import mcu
+from lunes import catalog, mcu
 
 UNITS = {"f": 1e-15, "p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "m": 1e-3, "k": 1e3, "K": 1e3, "M": 1e6,
          "G": 1e9, "R": 1.0}
 KINDS = {"R", "C", "L", "D", "ZENER", "LED", "NPN", "PNP", "NMOS", "PMOS", "POT", "SW", "LDR", "NTC", "REG", "NE555",
-         "OPAMP", "V"} | set(mcu.BOARDS)
+         "OPAMP", "V", "IC"} | set(mcu.BOARDS)
 TWO_LEADS = ("R", "C", "L", "SW", "LDR", "NTC")  # pins as [a, b]
 PINS = {"D": ("A", "K"), "ZENER": ("A", "K"), "LED": ("A", "K"), "NPN": ("C", "B", "E"), "PNP": ("C", "B", "E"),
         "NMOS": ("D", "G", "S"), "PMOS": ("D", "G", "S"), "POT": ("A", "W", "B"), "REG": ("IN", "OUT", "GND"),
@@ -102,6 +102,22 @@ def check(circuit):
             problems.append(f"{ref}: kind {kind!r} is not one of {sorted(KINDS)}")
             continue
         pins = p.get("pins")
+        if kind == "IC":  # any chip of the catalog: its pins by the names the catalog gives them
+            entry = catalog.get(p.get("model"))
+            if entry is None:
+                problems.append(f"{ref}: chip {p.get('model')!r} is not in the catalog ({', '.join(catalog.names())}): "
+                                f"learn it from its datasheet with chip_learn")
+            elif not isinstance(pins, dict) or not pins:
+                problems.append(f"{ref}: pins must map the chip's pins to nets, like {{\"VCC\": \"VCC\"}}")
+            else:
+                known = set(catalog.pin_numbers(entry))
+                unknown = sorted(set(pins) - known)
+                if unknown:
+                    problems.append(f"{ref}: {entry['name']} has no pins {unknown}; its pins are {sorted(known)}")
+                missing = [x for x in entry["power"] if x not in pins]
+                if missing:
+                    problems.append(f"{ref}: {entry['name']} needs {missing} connected")
+            continue
         if kind in mcu.BOARDS:
             if not isinstance(pins, dict) or not pins:
                 problems.append(f"{ref}: pins must map the board's pins to nets, like {{\"D9\": \"OUT\"}}")
@@ -156,6 +172,8 @@ def nets_of(circuit):
                 where = p["ref"]
             elif p["kind"] in mcu.BOARDS:
                 where = f"{p['ref']} pin {pin}"
+            elif p["kind"] == "IC":
+                where = f"{p['ref']} pin {catalog.pin_numbers(catalog.get(p['model']))[pin]} ({pin})"
             elif p["kind"] in PIN_NUMBER:
                 where = f"{p['ref']} pin {PIN_NUMBER[p['kind']][pin]} ({pin})"
             else:
@@ -253,6 +271,20 @@ def netlist(circuit):
                 lines.append(f"X{ref} {i} {o} {g} REG_DEAD")
             else:
                 lines.append(f"X{ref} {i} {o} {g} REG vreg={REG_V[p['model']]:g} drop={REG_DROPOUT[p['model']]:g}")
+        elif kind == "IC":
+            entry = catalog.get(p["model"])
+            if fault == "removed":
+                continue
+            ground = _net(pins[entry["power"][-1]])
+            if fault == "dead":  # no life in it: its supply and its outputs pulled down, its inputs nothing
+                lines.append(f"R{ref}_dead {_net(pins[entry['power'][0]])} {ground} 1k")
+                lines += [f"R{ref}_dead_{i} {_net(pins[x])} {ground} 10"
+                          for i, x in enumerate(entry.get("outputs", [])) if x in pins]
+                continue
+            # a pin left out, or a leg not in its row, is a node of its own that nothing else touches
+            nodes = [_net(pins[x]) if x in pins and fault != f"pin{n}_open" else f"nc_{ref.lower()}_{n}"
+                     for n, x in catalog.ordered_pins(entry)]
+            lines.append(f"X{ref} {' '.join(nodes)} {catalog.spice_name(entry['name'])}")
         elif kind == "NE555":
             order = " ".join(_net(pins[x]) for x in PINS["NE555"])
             lines.append(f"X{ref} {order} {'NE555_DEAD' if fault == 'dead' else 'NE555'}")
@@ -306,6 +338,12 @@ def faults(circuit):
     for p in circuit["parts"]:
         if p["kind"] in mcu.BOARDS:
             out += mcu.faults(p)
+            continue
+        if p["kind"] == "IC":
+            entry, ref = catalog.get(p["model"]), p["ref"]
+            out += [(f"{ref}:removed", SAYS["removed"].format(ref=ref)), (f"{ref}:dead", SAYS["dead"].format(ref=ref))]
+            out += [(f"{ref}:pin{n}_open", f"{ref} pin {n} ({name}) not making contact (a bent leg, or not in its row)")
+                    for n, name in catalog.ordered_pins(entry) if name in p["pins"]]
             continue
         unit = {"R": "ohm", "C": "F", "L": "H", "POT": "ohm"}.get(p["kind"], "")
         for f in FAULTS[p["kind"]]:

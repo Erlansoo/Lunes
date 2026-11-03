@@ -36,6 +36,7 @@ class Dashboard:
         (lunes.lab.state)."""
         self.camera, self.bench, self.kinect, self.speaking, self.lab = camera, bench, kinect, speaking, lab
         self.on_tap = None  # on_tap(x, y) for a tap on the microscope's picture, fractions of it
+        self.mosaic = None  # gives the last mosaic's picture, for the machine's map
         self.events = deque(maxlen=500)
         self.count = 0
         self.status, self.busy = "", False
@@ -69,11 +70,11 @@ class Dashboard:
             return b""
         if time.time() - self._kinect_at < 1.0:
             return self._kinect_jpg
+        self._kinect_at = time.time()  # the next requests take the last picture while this one waits for the Kinect
         try:
             self._kinect_jpg = _jpeg(self.kinect.color(), 640, 75)
-        except RuntimeError:  # unplugged: the tile keeps its last picture
+        except (RuntimeError, OSError):  # unplugged or hung: the tile keeps its last picture
             pass
-        self._kinect_at = time.time()
         return self._kinect_jpg
 
     def _handler(self):
@@ -125,6 +126,10 @@ class Dashboard:
                     jpg = board._kinect_frame()
                     if jpg:
                         return self._send(jpg, "image/jpeg")
+                if path == "/img/mosaic.jpg" and board.mosaic is not None:
+                    image = board.mosaic()
+                    if image is not None:
+                        return self._send(_jpeg(image, 1600, 80), "image/jpeg")
                 if path == "/img/seen.jpg" and board.seen:
                     return self._send(board.seen, "image/jpeg")
                 self.send_response(404)

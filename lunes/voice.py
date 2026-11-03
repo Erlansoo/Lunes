@@ -40,6 +40,13 @@ START_BLOCKS = 5  # ...for this many of the last 8 blocks (150 ms)
 STOP = 2.0  # and ends after silence_s below this many times the noise
 
 
+def latin(text):
+    """Whether what the ear wrote is in Latin letters: Erlan speaks Spanish, so another alphabet is a misheard word
+    (the wide ear once wrote "claro" in Kannada) and must not reach the worker as his exact words."""
+    letters = [c for c in text if c.isalpha()]
+    return bool(letters) and sum(ord(c) < 0x250 for c in letters) >= 0.9 * len(letters)
+
+
 def find_microphone(name):
     """Index of the input device whose name contains name (through Windows' MME, like the default device), or
     None for Windows' default input."""

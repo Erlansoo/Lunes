@@ -31,6 +31,19 @@ def ok(condition, what):
         FAILED.append(what)
 
 
+def straight(a, b):
+    """Two holes on one line of the board: along it, or across it."""
+    (xa, ya), (xb, yb) = breadboard.board_xy(a), breadboard.board_xy(b)
+    return xa == xb or ya == yb
+
+
+def rails():
+    print("The rails stand as on the real board")
+    ok(breadboard.RAIL_COLUMN["-"] > breadboard.RAIL_COLUMN["+"], "next to column a comes the blue one, then the red one at the edge")
+    ok(breadboard.strip_of("-5") != breadboard.strip_of("+5") and breadboard.board_xy("-5")[0] == breadboard.board_xy("+5")[0],
+       "they are two different rails, side by side")
+
+
 def plans():
     print("Every design, laid out and rebuilt from its holes")
     for name, params in CASES:
@@ -42,6 +55,15 @@ def plans():
             twice = len(ends) - len(set(ends))
             ok(not twice, f"{name}: {len(result['steps'])} steps, {len(result['wires'])} wires"
                + (f", {twice} holes used twice" if twice else ""))
+            outside = {item["ref"] for item in result["external"]}
+            aslant = [ref for ref, pins in result["holes"].items()
+                      if len(pins) == 2 and ref not in outside and not straight(*pins.values())]
+            ok(not aslant, f"{name}: every part lies straight {aslant or ''}")
+            rails = [w["to"][1:] for w in result["wires"] if w["net"] in ("VCC", "GND")]
+            ok(len(rails) == len(set(rails)), f"{name}: no two supply wires lie one over the other")
+            colors = {w["net"]: w["color"] for w in result["wires"]}
+            ok(colors.get("VCC", "rojo") == "rojo" and colors.get("GND", "negro") == "negro"
+               and len(set(colors.values())) == len(colors), f"{name}: VCC red, GND black, every other net its own colour")
         except ValueError as e:
             ok(False, f"{name}: {e}")
 
@@ -102,6 +124,7 @@ def guide():
 
 
 if __name__ == "__main__":
+    rails()
     plans()
     faulty()
     placement()

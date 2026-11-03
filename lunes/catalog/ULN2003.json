@@ -1,0 +1,117 @@
+{
+ "name": "ULN2003",
+ "aka": [
+  "ULN2003A",
+  "ULN2003AN"
+ ],
+ "package": "DIP16",
+ "pins": {
+  "1": "IN1",
+  "2": "IN2",
+  "3": "IN3",
+  "4": "IN4",
+  "5": "IN5",
+  "6": "IN6",
+  "7": "IN7",
+  "8": "GND",
+  "9": "COM",
+  "10": "OUT7",
+  "11": "OUT6",
+  "12": "OUT5",
+  "13": "OUT4",
+  "14": "OUT3",
+  "15": "OUT2",
+  "16": "OUT1"
+ },
+ "power": [
+  "GND"
+ ],
+ "inputs": [],
+ "outputs": [
+  "OUT1",
+  "OUT2",
+  "OUT3",
+  "OUT4",
+  "OUT5",
+  "OUT6",
+  "OUT7"
+ ],
+ "dc_links": [
+  [
+   "IN1",
+   "GND"
+  ],
+  [
+   "IN2",
+   "GND"
+  ],
+  [
+   "IN3",
+   "GND"
+  ],
+  [
+   "IN4",
+   "GND"
+  ],
+  [
+   "IN5",
+   "GND"
+  ],
+  [
+   "IN6",
+   "GND"
+  ],
+  [
+   "IN7",
+   "GND"
+  ]
+ ],
+ "supply_v": null,
+ "notes": "Seven Darlington sinks, up to 500 mA each, with 5 V inputs. COM goes to the load's supply when the load is a coil, for its flyback diodes. The output drops about 1 V when on.",
+ "source": "TI ULN2003A datasheet",
+ "spice": ".subckt CHIP_ULN2003 in1 in2 in3 in4 in5 in6 in7 gnd com out7 out6 out5 out4 out3 out2 out1\n.model ULN_D D(Is=2.5n N=1.75)\nRi1 in1 gnd 10k\nBq1 out1 gnd I = max(v(out1,gnd)-0.9,0)/1*lunes_step(v(in1,gnd)-1.7,20)\nD1 out1 com ULN_D\nRi2 in2 gnd 10k\nBq2 out2 gnd I = max(v(out2,gnd)-0.9,0)/1*lunes_step(v(in2,gnd)-1.7,20)\nD2 out2 com ULN_D\nRi3 in3 gnd 10k\nBq3 out3 gnd I = max(v(out3,gnd)-0.9,0)/1*lunes_step(v(in3,gnd)-1.7,20)\nD3 out3 com ULN_D\nRi4 in4 gnd 10k\nBq4 out4 gnd I = max(v(out4,gnd)-0.9,0)/1*lunes_step(v(in4,gnd)-1.7,20)\nD4 out4 com ULN_D\nRi5 in5 gnd 10k\nBq5 out5 gnd I = max(v(out5,gnd)-0.9,0)/1*lunes_step(v(in5,gnd)-1.7,20)\nD5 out5 com ULN_D\nRi6 in6 gnd 10k\nBq6 out6 gnd I = max(v(out6,gnd)-0.9,0)/1*lunes_step(v(in6,gnd)-1.7,20)\nD6 out6 com ULN_D\nRi7 in7 gnd 10k\nBq7 out7 gnd I = max(v(out7,gnd)-0.9,0)/1*lunes_step(v(in7,gnd)-1.7,20)\nD7 out7 com ULN_D\n.ends CHIP_ULN2003",
+ "test": {
+  "circuit": {
+   "name": "ULN2003 sinking",
+   "supply_v": 12,
+   "parts": [
+    {
+     "ref": "V1",
+     "kind": "V",
+     "value": "5",
+     "pins": {
+      "+": "IN",
+      "-": "GND"
+     }
+    },
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "ULN2003",
+     "pins": {
+      "IN1": "IN",
+      "GND": "GND",
+      "OUT1": "OUT",
+      "COM": "VCC"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "1k",
+     "pins": [
+      "VCC",
+      "OUT"
+     ]
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "OUT",
+    "min_v_below": 1.5
+   }
+  ]
+ },
+ "origin": "seed"
+}

@@ -147,7 +147,11 @@ class Machine:
         """Coordinated move to absolute millimetres; every axis arrives together, each within its own speed. A move the
         firmware stopped with host_lost (it heard nothing from the PC for a second, now and then in a long X move even
         while the PC polled every 0.5 s: once three times in a row, every 27 mm) is made again while each try gets
-        closer: the firmware stops cleanly and counts every step, so the position stays exact."""
+        closer: the firmware stops cleanly and counts every step, so the position stays exact. no_go, if set, is the last
+        word on any move, whoever asks for it: it gets the target and says why not, or nothing."""
+        problem = getattr(self, "no_go", None) and self.no_go({**self.at_mm, **targets_mm})
+        if problem:
+            raise ValueError(problem)
         remaining = max((abs(v - self.at_mm[n]) for n, v in targets_mm.items()), default=0.0)
         for n, v in targets_mm.items():
             delta = v - self.at_mm[n]

@@ -68,9 +68,36 @@ def ring():
     found = bench.ring_in_picture(img)
     ok(found is not None and math.dist(found, (920, 540)) < 3, f"found at {found and (round(found[0]), round(found[1]))}")
     ok(bench.ring_in_picture(picture()) is None, "with no ring, none")
+    board = np.full((800, 1200, 3), 225, np.uint8)
+    cv2.rectangle(board, (600, 400), (650, 430), (25, 25, 25), -1)
+    cv2.rectangle(board, (100, 100), (260, 260), (10, 10, 10), -1)  # darker and bigger, and far from where it must be
+    near = bench.chip_near(board, 640, 380)
+    ok(near is not None and math.dist(near, (625, 415)) < 2, "the chip nearest where the geometry says, not the big dark thing")
+    ok(bench.chip_near(np.full((800, 1200, 3), 225, np.uint8), 640, 380) is None, "nothing there, nothing found")
+    ok(bench.ring_in_picture(img, near=(300, 200), reach=100) is None, "near another place, it is not seen")
+    far = bench.ring_in_picture(img, near=(900, 500), reach=100)
+    ok(far is not None and math.dist(far, (920, 540)) < 3, "near where it should be, it is")
     unlit = img.copy()
     cv2.ellipse(unlit, (920, 540), (30, 20), 0, 0, 360, (60, 60, 60), -1)
     ok(bench.ring_in_picture(unlit) is None, "with the ring off, the supply's digits are not taken for it")
+
+
+def chip_on_board():
+    print("A chip on a breadboard, in the bench picture")
+    img = np.full((2160, 3840, 3), (70, 120, 190), np.uint8)  # a wooden table
+    img[0:900, 2800:3840] = (245, 245, 245)  # a white wall
+    cv2.fillConvexPoly(img, np.array([(1500, 1300), (2300, 1300), (2300, 1700), (1500, 1700)]), (235, 235, 235))  # the board
+    for x in range(1520, 2290, 12):  # its holes
+        for y in range(1320, 1690, 12):
+            cv2.circle(img, (x, y), 1, (90, 90, 90), -1)
+    cv2.rectangle(img, (1880, 1490), (1915, 1512), (30, 30, 30), -1)  # the chip
+    cv2.rectangle(img, (1200, 1450), (1240, 1490), (30, 30, 30), -1)  # a screw on the table, off the board
+    table = [(1000, 1100), (2700, 1100), (2700, 1950), (1000, 1950)]
+    found = bench.chip_in_picture(img, table)
+    ok(len(found) == 1 and math.dist(found[0][:2], (1897, 1501)) < 3, f"the chip found, and only it: {found}")
+    cv2.rectangle(img, (1880, 1490), (1915, 1512), (235, 235, 235), -1)
+    ok(bench.chip_in_picture(img, table) == [], "a bare board: nothing, the holes do not pass for chips")
+    ok(bench.chip_in_picture(np.full((2160, 3840, 3), (70, 120, 190), np.uint8), table) == [], "no board: nothing")
 
 
 def fitted(p, noise=0.7):
@@ -92,6 +119,10 @@ def fit():
         ok(False, "locate without a height must refuse")
     except ValueError:
         ok(True, "locate without a height refuses")
+    ring_at = {"X": 100.0, "Y": -100.0, "Z": 30.0}
+    u, v = project(p, np.array([100.0, -100.0, 30.0]))
+    ok(cam.ring_off_px((u, v), ring_at) < 5, "the ring where the projection puts it: the camera is where it was")
+    ok(cam.ring_off_px((u + 237, v + 35), ring_at) > bench.MOVED_PX, "the ring 240 px off: the camera was moved")
     u, v = surface(p, *CHIP)  # the chip under the microscope, seen by the webcam too
     taught = cam.teach(u + 1.0, v - 1.0, CHIP[0], CHIP[1], CHIP[2])
     ok(taught["ok"] and abs(taught["ring_above_mm"] - RING_ABOVE) < 3.0,
@@ -135,6 +166,7 @@ def refusals():
 
 if __name__ == "__main__":
     ring()
+    chip_on_board()
     fit()
     refusals()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'}")

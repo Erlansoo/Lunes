@@ -1,0 +1,134 @@
+{
+ "name": "LM358",
+ "aka": [
+  "LM358N",
+  "LM358P",
+  "LM2904"
+ ],
+ "package": "DIP8",
+ "pins": {
+  "1": "OUT1",
+  "2": "IN1-",
+  "3": "IN1+",
+  "4": "GND",
+  "5": "IN2+",
+  "6": "IN2-",
+  "7": "OUT2",
+  "8": "VCC"
+ },
+ "power": [
+  "VCC",
+  "GND"
+ ],
+ "inputs": [
+  "IN1-",
+  "IN1+",
+  "IN2+",
+  "IN2-"
+ ],
+ "outputs": [
+  "OUT1",
+  "OUT2"
+ ],
+ "dc_links": [
+  [
+   "VCC",
+   "GND"
+  ],
+  [
+   "OUT1",
+   "GND"
+  ],
+  [
+   "OUT2",
+   "GND"
+  ],
+  [
+   "IN1+",
+   "IN1-"
+  ],
+  [
+   "IN2+",
+   "IN2-"
+  ]
+ ],
+ "supply_v": [
+  3,
+  32
+ ],
+ "notes": "Dual op-amp for one supply. Inputs and output reach ground; the output tops out 1.5 V under the supply. Gain-bandwidth about 1 MHz.",
+ "source": "TI LM358 datasheet",
+ "spice": ".subckt CHIP_LM358 out1 inm1 inp1 gnd inp2 inm2 out2 vcc\nX1 out1 inm1 inp1 vcc gnd OPAMP\nX2 out2 inm2 inp2 vcc gnd OPAMP\n.ends CHIP_LM358",
+ "test": {
+  "circuit": {
+   "name": "LM358 as two followers",
+   "supply_v": 9,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "LM358",
+     "pins": {
+      "VCC": "VCC",
+      "GND": "GND",
+      "IN1+": "MID",
+      "IN1-": "A",
+      "OUT1": "A",
+      "IN2+": "MID",
+      "IN2-": "B",
+      "OUT2": "B"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "VCC",
+      "MID"
+     ]
+    },
+    {
+     "ref": "R2",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "MID",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R3",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "A",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R4",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "B",
+      "GND"
+     ]
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "A",
+    "mean_v": 4.5,
+    "tolerance": 0.03
+   },
+   {
+    "net": "B",
+    "mean_v": 4.5,
+    "tolerance": 0.03
+   }
+  ]
+ },
+ "origin": "seed"
+}

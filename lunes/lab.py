@@ -2,6 +2,7 @@
 the circuit, its diagnosis and the board in it. It only reads what Hume already keeps, from the page's own thread, so it
 never talks to the machine or the scope: those belong to the thread that is working.
 """
+from lunes import catalog, mcu
 import time
 
 import numpy as np
@@ -14,12 +15,20 @@ def _ago(moment):
     return None if moment is None else round(time.time() - moment, 1)
 
 
+def _mind(hume):
+    """What Lunes has in mind of the bench, for the map: all of it in machine mm, with how long ago it was seen."""
+    world = hume.world
+    return {"chip": world["chip"] and dict(world["chip"], ago_s=_ago(world["chip"]["at"])),
+            "laser": world["laser"] and dict(world["laser"], ago_s=_ago(world["laser"]["at"])),
+            "mosaic": world["mosaic"], "notes": world["notes"]}
+
+
 def _machine(hume):
     from lunes.hume import WORKSPACE
     microscope = hume.m.config.get("microscope", {})
     scale = microscope.get("px_per_mm") or {}
     check = hume.last_kinect_check or {}
-    board = hume.board or {}
+    board = hume.board or hume.world["board"] or {}
     return {"at_mm": {k: round(float(v), 2) for k, v in (getattr(hume.m, "at_mm", None) or {}).items()},
             "area_mm": WORKSPACE, "focus_z_mm": hume.focus_z,
             "board": {k: board[k] for k in ("center_mm", "size_mm") if k in board} or None,
@@ -27,7 +36,8 @@ def _machine(hume):
             "kinect": {"agrees": check.get("agrees"), "off_mm": round(check.get("off_mm", 0), 1),
                        "ago_s": _ago(check.get("at"))} if check else None,
             "px_per_mm": float(np.mean(list(scale.values()))) if scale else None,
-            "image": microscope.get("resolution") or [640, 480], "mosaics": len(hume.surveys)}
+            "image": microscope.get("resolution") or [640, 480], "mosaics": len(hume.surveys), "mind": _mind(hume),
+            "bed": hume.world["bed"]}
 
 
 def _scope(hume):
@@ -78,14 +88,33 @@ def _arduino(hume):
             "pins": last.get("pins"), "all_as_simulated": last.get("all_as_simulated"), "serial": hume.last_serial}
 
 
+def _parts(hume, layout):
+    """What the page needs to draw each part of the plan: all of it comes from the part's own data, so a chip learnt a
+    minute ago is drawn like any other, with no drawing made for it."""
+    out = []
+    for part in (hume.circuit or {}).get("parts", []):
+        ref, holes = part["ref"], layout["holes"].get(part["ref"])
+        if not holes or part["kind"] == "V" or part["kind"] in mcu.BOARDS:
+            continue
+        item = {"ref": ref, "kind": part["kind"], "value": part.get("value"), "color": part.get("color"),
+                "label": part.get("model") or part["kind"], "holes": {str(k): v for k, v in holes.items()}}
+        if ref in layout.get("chips", {}):
+            item["chip"] = layout["chips"][ref]
+        if part["kind"] == "IC":
+            entry = catalog.get(part["model"])
+            item.update(package=entry["package"], label=entry["name"], learnt=entry.get("origin") == "learnt")
+        out.append(item)
+    return out
+
+
 def _breadboard(hume):
-    layout = hume.layout
+    layout = hume.plan_now()
     if layout is None:
         return None
     steps = layout["steps"]
-    return {"holes": [h for pins in layout["holes"].values() for h in pins.values()],
-            "wires": [[w["from"], w["to"]] for w in layout["wires"]], "total": len(steps), "placed": hume.placement is not None,
-            "guide": hume.guide}
+    return {"holes": [h for pins in layout["holes"].values() for h in pins.values()], "parts": _parts(hume, layout),
+            "wires": [[w["from"], w["to"], w["color"]] for w in layout["wires"]], "total": len(steps),
+            "placed": hume.placement is not None, "guide": hume.guide}
 
 
 def _chip(hume):

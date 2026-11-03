@@ -1,0 +1,87 @@
+{
+ "name": "LM317",
+ "aka": [
+  "LM317T"
+ ],
+ "package": "TO-220",
+ "pins": {
+  "1": "ADJ",
+  "2": "OUT",
+  "3": "IN"
+ },
+ "power": [
+  "IN",
+  "ADJ"
+ ],
+ "inputs": [],
+ "outputs": [
+  "OUT"
+ ],
+ "dc_links": [
+  [
+   "IN",
+   "OUT"
+  ],
+  [
+   "OUT",
+   "ADJ"
+  ]
+ ],
+ "supply_v": null,
+ "notes": "Adjustable regulator: Vout = 1.25 V x (1 + R2 / R1), R1 from OUT to ADJ, usually 240 ohm, R2 from ADJ to ground. The input must be at least 3 V over the output. 1.5 A with a heatsink.",
+ "source": "TI LM317 datasheet",
+ "spice": ".subckt CHIP_LM317 adj out in\nIadj in adj 50u\nBp in out I = max(min(20*(1.25-v(out,adj)),1.5),0)*lunes_step(v(in,out)-2,20)\n.ends CHIP_LM317",
+ "test": {
+  "circuit": {
+   "name": "LM317 at 5 V",
+   "supply_v": 12,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "LM317",
+     "pins": {
+      "IN": "VCC",
+      "OUT": "OUT",
+      "ADJ": "ADJ"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "240",
+     "pins": [
+      "OUT",
+      "ADJ"
+     ]
+    },
+    {
+     "ref": "R2",
+     "kind": "R",
+     "value": "720",
+     "pins": [
+      "ADJ",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R3",
+     "kind": "R",
+     "value": "1k",
+     "pins": [
+      "OUT",
+      "GND"
+     ]
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "OUT",
+    "mean_v": 5.05,
+    "tolerance": 0.05
+   }
+  ]
+ },
+ "origin": "seed"
+}

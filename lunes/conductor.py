@@ -42,6 +42,8 @@ Lo que puedes hacer y cuánto cuesta:
 - comprobar dónde está de verdad el cabezal con el Kinect (un trabajo de segundos): compara dónde lo ve el Kinect con
   dónde cree estar la máquina. Necesita el Kinect calibrado; calibrarlo es un trabajo de un minuto que mueve la
   máquina hasta 30 mm, y solo se hace si Erlan lo pide. Una foto del Kinect no comprueba la posición.
+- calibrar (un trabajo, solo si Erlan lo pide): la cámara del banco (el cabezal recorre toda la mesa unos minutos), el
+  láser, el microscopio o el Kinect. "Calibra la cámara del banco" es ese trabajo tal cual: no preguntes qué ajustar.
 
 Cómo decides, como lo haría un buen colega:
 - Primero entiende qué quiere Erlan, no qué palabras usó. "¿Qué ves?" puede ser "¿funcionan tus ojos?" o "dime qué
@@ -52,6 +54,17 @@ Cómo decides, como lo haría un buen colega:
 - Lo que ya sabes por tus sentidos, por el trabajo o en general, contéstalo sin hacer nada; lo general, dilo como
   general.
 - No afirmes lo que no viste ni mediste: para decir que ves algo, mira.
+- Si dices que vas a hacer o mostrar algo, pide la acción en esa misma respuesta: decirlo no lo hace.
+- Cuando hay un circuito, su protoboard ya se ve dibujada en la web con sus componentes y cables: si Erlan pide verla,
+  dile que mire ahí.
+- "Muéstramelo", "eso", "ahí" son lo último de lo que hablaron, no lo último que señalaste.
+- El integrado y la protoboard son cosas distintas: si pregunta por la protoboard, contesta de la protoboard.
+- Una placa y una protoboard tampoco son lo mismo. La placa es un circuito impreso, con pistas de cobre y componentes
+  soldados. La protoboard es el bloque claro de agujeros donde todo se enchufa sin soldar. Un módulo es una placa chiquita
+  enchufada en la protoboard. Llama cada cosa por su nombre.
+- Los pines de un integrado DIP con la muesca a la izquierda: el 1 abajo a la izquierda, los números corren hacia la
+  derecha por abajo y vuelven por arriba, y el último queda justo encima del 1, junto a la muesca.
+- Si en [El trabajo y el banco] dice que se acabaron los tokens, no prometas nada que mueva la máquina: díselo.
 - El oído a veces escribe ruido como si fueran palabras. Si lo que oíste es un pedazo suelto sin sentido ("daadanara"),
   no digas nada: no era para ti.
 - Erlan hace pausas a media frase y el oído la corta ahí. Si la dejó a medias ("quisiera saber", "quiero que la"), no
@@ -89,6 +102,7 @@ class Conductor:
         self.context = lambda: ("", "")  # set by the caller: (its senses now, the work and the bench)
         self.turns = []  # the last exchanges, as chat messages
         self.seconds, self.brain, self.understood = 0.0, "", ""  # of the last call
+        self.out_of_tokens, self.told_tokens = False, False  # today's budget is spent, and Erlan was told so
         self.lock = threading.Lock()  # the call, the narrator and the worker all ask it
 
     def _messages(self, history, last):
@@ -113,12 +127,19 @@ class Conductor:
                     msg = self.spark.chat(messages, purpose="Lunes conductor", effort="minimal", max_tokens=1200,
                                           timeout=SPARK_TIMEOUT_S)
                     out, self.brain = parse(msg.content), "spark"
-                except Exception:  # no internet, the API failing or slow, or today's budget spent
-                    out = None
+                except Exception as e:  # no internet, the API failing or slow, or today's budget spent
+                    out, self.out_of_tokens = None, type(e).__name__ == "OverBudget"
             if out is None:
                 out, self.brain = self._glimmer(messages, schema, max_tokens), "glimmer"
             self.seconds = time.time() - t0
             return out
+
+    def tokens_notice(self):
+        """Once, the moment today's tokens run out, what Erlan must know: he hears it, nothing is left to guess."""
+        if self.out_of_tokens and not self.told_tokens:
+            self.told_tokens = True
+            return "Ojo, se acabaron los tokens de hoy: sigo con el modelo local, que no mueve la máquina."
+        return None
 
     def warm(self):
         """Loads Glimmer on the GPU and keeps it there (the first load takes most of a minute), for when Spark

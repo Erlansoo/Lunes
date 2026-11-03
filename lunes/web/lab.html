@@ -93,6 +93,8 @@ td.id { font-family:var(--mono); }
 .map { flex:1; min-height:0; padding:8px 12px 2px; display:flex; }
 .map svg { width:100%; height:100%; display:block; }
 .map text { font:11px "Segoe UI", system-ui, sans-serif; fill:var(--quiet); }
+.line.mind { gap:10px; font-size:12px; color:var(--muted); }
+.line.mind span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .line { flex:none; display:flex; align-items:center; gap:7px; padding:6px 12px; font-size:12.5px; color:var(--muted); border-top:1px solid var(--line); }
 .line i { width:7px; height:7px; border-radius:50%; background:var(--quiet); flex:none; }
 .line.ok i { background:var(--ok); } .line.bad { color:var(--bad); font-weight:600; } .line.bad i { background:var(--bad); }
@@ -180,6 +182,7 @@ body:not(.details) .detail { display:none; }
     <div class="head"><h2 data-t="machine"></h2><span class="side" id="mosaics"></span></div>
     <div class="dro"><div><b>X</b><span id="dx">—</span></div><div><b>Y</b><span id="dy">—</span></div><div><b>Z</b><span id="dz">—</span></div></div>
     <div class="map"><svg id="map" role="img"></svg></div>
+    <div class="line mind"><button class="toggle" id="mapView" hidden></button><span id="mind" hidden></span></div>
     <div class="line" id="check"><i></i><span></span></div>
     <div class="power" id="power"></div>
   </section>
@@ -207,7 +210,7 @@ const TEXT = {
       asSimulated:"Lee como la simulación", notAsSimulated:"No lee como la simulación", serial:"Monitor serie",
       kinectOk:"Kinect confirma la posición", kinectOff:"Kinect ve el cabezal a", kinectNone:"Kinect todavía no confirmó la posición",
       hold:"Movimiento en pausa", doubtful:"Posición dudosa: los motores se liberaron", front:"frente", back:"fondo",
-      board_:"placa", head_:"cabezal", mosaics:"mosaicos", details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
+      board_:"placa", head_:"cabezal", mosaics:"mosaicos", mapAll:"Toda la mesa", mapClose:"De cerca", chipUnread:"chip sin leer", details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
       lunes:"Lunes", noSignal:"Sin imagen", models:"Modelos Meta", api:"API", pc:"en la PC", new_:"Imagen nueva", clear:"Clara",
       noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
       remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
@@ -223,7 +226,7 @@ const TEXT = {
       asSimulated:"Reads as simulated", notAsSimulated:"Does not read as simulated", serial:"Serial monitor",
       kinectOk:"Kinect confirms the position", kinectOff:"Kinect sees the head", kinectNone:"Kinect has not confirmed the position yet",
       hold:"Moves on hold", doubtful:"Position doubtful: the motors were released", front:"front", back:"back",
-      board_:"board", head_:"head", mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
+      board_:"board", head_:"head", mapAll:"Whole table", mapClose:"Close up", chipUnread:"unread chip", mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
       lunes:"Lunes", noSignal:"No picture", models:"Meta models", api:"API", pc:"on the PC", new_:"New picture", clear:"Clear",
       noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
       remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
@@ -340,27 +343,58 @@ function renderStrip(d){
     e.append(el("small","",T[where])); m.append(e);
   }
 }
+let mapClose = true, mapImage = null;
 function renderMachine(m){
   const a = m.at_mm || {}; $("dx").textContent = fixed(a.X); $("dy").textContent = fixed(a.Y); $("dz").textContent = fixed(a.Z);
   $("mosaics").textContent = m.mosaics ? `${m.mosaics} ${T.mosaics}` : "";
-  const svg = $("map"), area = m.area_mm, W = area.X[1]-area.X[0], H = area.Y[1]-area.Y[0], pad = 16;
-  svg.setAttribute("viewBox", `${-pad} ${-pad} ${W+2*pad} ${H+2*pad}`); svg.setAttribute("aria-label", T.machine); svg.replaceChildren();
-  const toY = y => area.Y[1] - y, node = (tag, at) => { const e = document.createElementNS(NS,tag); for (const [k,v] of Object.entries(at)) e.setAttribute(k,v); svg.append(e); return e; };
+  // the map holds what Lunes has in mind, in machine mm: close around it, or the whole table
+  const svg = $("map"), area = m.area_mm, W = area.X[1]-area.X[0], H = area.Y[1]-area.Y[0], pad = 16, mind = m.mind || {}, chip = mind.chip;
+  const toX = x => x - area.X[0], toY = y => area.Y[1] - y, on = ([x,y]) => [toX(x), toY(y)];
+  const known = [...(chip ? chip.corners_mm : []), ...(mind.notes || []).map(n => n.mm), ...(mind.laser ? [mind.laser.mm] : []), ...(mind.mosaic ? mind.mosaic.corners_mm : [])].map(on);
+  if (m.board && m.board.center_mm){ const [cx,cy] = m.board.center_mm, [w,h] = m.board.size_mm; known.push(on([cx-w/2,cy-h/2]), on([cx+w/2,cy+h/2])); }
+  let box = [-pad, -pad, W+2*pad, H+2*pad];
+  $("mapView").hidden = !known.length;
+  $("mapView").textContent = mapClose ? T.mapAll : T.mapClose;
+  if (mapClose && known.length){
+    const xs = known.map(p => p[0]), ys = known.map(p => p[1]), cx = (Math.min(...xs)+Math.max(...xs))/2, cy = (Math.min(...ys)+Math.max(...ys))/2;
+    const h = Math.max(50, Math.max(...ys)-Math.min(...ys)+24, (Math.max(...xs)-Math.min(...xs)+24)*(H+2*pad)/(W+2*pad)), w = h*(W+2*pad)/(H+2*pad);
+    box = [cx-w/2, cy-h/2, w, h];
+  }
+  const unit = box[2]/340, step = box[2] > 200 ? 50 : 10;
+  svg.setAttribute("viewBox", box.join(" ")); svg.setAttribute("aria-label", T.machine); svg.replaceChildren();
+  const node = (tag, at) => { const e = document.createElementNS(NS,tag); for (const [k,v] of Object.entries(at)) e.setAttribute(k,v); svg.append(e); return e; };
+  const label = (x,y,t,anchor,fill) => { const e = node("text",{x,y,"text-anchor":anchor||"middle"}); e.style.fontSize = `${11*unit}px`; if (fill) e.style.fill = fill; e.textContent = t; };
   node("rect",{x:0,y:0,width:W,height:H,rx:3,fill:"#101416",stroke:"#2f383e","stroke-width":1.2,"vector-effect":"non-scaling-stroke"});
-  for (let x=50; x<W; x+=50) node("line",{x1:x,y1:0,x2:x,y2:H,stroke:"#1f262a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
-  for (let y=50; y<H; y+=50) node("line",{x1:0,y1:y,x2:W,y2:y,stroke:"#1f262a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+  for (let x=step; x<W; x+=step) node("line",{x1:x,y1:0,x2:x,y2:H,stroke:"#1f262a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+  for (let y=step; y<H; y+=step) node("line",{x1:0,y1:y,x2:W,y2:y,stroke:"#1f262a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+  if (mind.mosaic){ // placed by three of its corners, so a turned or mirrored picture lies as it does on the machine
+    const [o,u,v] = mind.mosaic.corners_mm.map(on), href = `/img/mosaic.jpg?v=${mind.mosaic.at}`;
+    if (!mapImage || mapImage.getAttribute("href") !== href){ mapImage = document.createElementNS(NS,"image"); mapImage.setAttribute("href",href); mapImage.setAttribute("width",1); mapImage.setAttribute("height",1); mapImage.setAttribute("preserveAspectRatio","none"); }
+    mapImage.setAttribute("transform",`matrix(${u[0]-o[0]} ${u[1]-o[1]} ${v[0]-o[0]} ${v[1]-o[1]} ${o[0]} ${o[1]})`); svg.append(mapImage);
+  }
   if (m.board && m.board.center_mm){
     const [cx,cy] = m.board.center_mm, [w,h] = m.board.size_mm;
-    node("rect",{x:cx-w/2-area.X[0],y:toY(cy+h/2),width:w,height:h,rx:1.5,fill:"#1e4a35",stroke:"#4cc38a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    node("rect",{x:cx-w/2-area.X[0],y:toY(cy+h/2),width:w,height:h,rx:1.5,fill:mind.mosaic ? "none" : "#1e4a35",stroke:"#4cc38a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    if (m.bed) label(cx-area.X[0],toY(cy+h/2)-4*unit,m.bed,"middle","#7fd6ae");
   }
+  if (chip){
+    const c = on(chip.center_mm), r = Math.max(...chip.size_mm)/2;
+    node("polygon",{points:chip.corners_mm.map(on).map(p => p.join(",")).join(" "),fill:"#3a3f45",stroke:"#d7dbe0","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    if (chip.notch_mm){ const [x,y] = on(chip.notch_mm); node("circle",{cx:x,cy:y,r:1.1,fill:"#101416",stroke:"#d7dbe0","stroke-width":1,"vector-effect":"non-scaling-stroke"}); }
+    if (chip.pin1_mm){ const [x,y] = on(chip.pin1_mm); node("circle",{cx:x,cy:y,r:Math.max(.9,2.2*unit),fill:"#f5dc28"}); label(x+5*unit,y+4*unit,"1","start","#f5dc28"); }
+    label(c[0],c[1]-r-6*unit,chip.name || T.chipUnread,"middle","#e6e9ec");
+  }
+  for (const n of mind.notes || []){ const [x,y] = on(n.mm); node("circle",{cx:x,cy:y,r:2.5*unit,fill:"#6db3f2"}); label(x+5*unit,y+4*unit,n.label,"start","#a9d1f7"); }
+  if (mind.laser){ const [x,y] = on(mind.laser.mm); node("circle",{cx:x,cy:y,r:3*unit,fill:"#e0261c",stroke:mind.laser.confirmed ? "#fff" : "none","stroke-width":1,"vector-effect":"non-scaling-stroke"}); }
   if (a.X !== undefined){
-    const x = a.X - area.X[0], y = toY(a.Y);
-    node("circle",{cx:x,cy:y,r:9,fill:"none",stroke:"#6db3f2","stroke-width":1.5,"vector-effect":"non-scaling-stroke"});
-    node("line",{x1:x-15,y1:y,x2:x+15,y2:y,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
-    node("line",{x1:x,y1:y-15,x2:x,y2:y+15,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    const x = toX(a.X), y = toY(a.Y);
+    node("circle",{cx:x,cy:y,r:9*unit,fill:"none",stroke:"#6db3f2","stroke-width":1.5,"vector-effect":"non-scaling-stroke"});
+    node("line",{x1:x-15*unit,y1:y,x2:x+15*unit,y2:y,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    node("line",{x1:x,y1:y-15*unit,x2:x,y2:y+15*unit,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
   }
-  const label = (x,y,t,anchor) => { const e = node("text",{x,y,"text-anchor":anchor||"middle","font-size":Math.max(H,W)/30}); e.textContent = t; };
-  label(W/2,H+13,T.front); label(W/2,-5,T.back);
+  label(box[0]+box[2]/2,box[1]+box[3]-3*unit,T.front); label(box[0]+box[2]/2,box[1]+11*unit,T.back);
+  const said = [chip && `${chip.name || T.chipUnread} · X ${fixed(chip.center_mm[0])} Y ${fixed(chip.center_mm[1])} · ${age(chip.ago_s)}`, ...(mind.notes || []).slice(-3).map(n => n.label)].filter(Boolean);
+  $("mind").hidden = !said.length; $("mind").textContent = said.join("  ·  ");
   const c = $("check"), span = c.querySelector("span");
   c.className = "line";
   if (m.hold){ c.classList.add("bad"); span.textContent = `${T.hold}: ${m.hold}`; }
@@ -482,17 +516,69 @@ function renderPower(p){
   else if (c && p.amps > 2 * c.limit_a) box.append(el("span","",`${T.limitHigh} ${c.limit_a} A`));
 }
 function drawBreadboard(b){
+  // the board as it lies on the bench with row 1 to the left: column a at the bottom, the rails below it. Every part is
+  // drawn from its own data (package, pins, value, colour), so a chip Lunes learnt a minute ago needs no drawing of its own
   const P = 6, W = 63 * P + 12, H = 19 * P, svg = document.createElementNS(NS,"svg");
-  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.setAttribute("role","img"); svg.setAttribute("aria-label",T.breadboard);
-  const at = hole => { const c = hole[0], row = +hole.slice(1), rails = {"-":-3,"+":-2},
+  // only the rows in use, so the parts read at their size; a real board is long and a circuit takes one end of it
+  const last = Math.max(...b.holes.concat(b.wires.flatMap(w => [w[0], w[1]])).map(h => +h.slice(1)));
+  svg.setAttribute("viewBox",`0 0 ${Math.min(63, Math.max(24, last + 4)) * P + 12} ${H}`); svg.setAttribute("role","img"); svg.setAttribute("aria-label",T.breadboard);
+  const at = hole => { const c = hole[0], row = +hole.slice(1), rails = {"-":-3,"+":-4},
     y = c in rails ? rails[c] : "abcde".includes(c) ? "abcde".indexOf(c) : 7 + "fghij".indexOf(c);
-    return [6 + (row - .5) * P, (y + 4.5) * P]; };
-  const add = (tag, a) => { const e = document.createElementNS(NS,tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k,v); svg.append(e); return e; };
-  add("line",{x1:0,x2:W,y1:(5.5+4.5)*P-3,y2:(5.5+4.5)*P-3,stroke:"#d9d4c5","stroke-width":P*1.6});
-  add("line",{x1:0,x2:W,y1:1.5*P,y2:1.5*P,stroke:"#d33","stroke-width":.6}); add("line",{x1:0,x2:W,y1:.5*P,y2:.5*P,stroke:"#35a","stroke-width":.6});
-  for (let r=1;r<=63;r++) for (const c of "abcdefghij") { const [x,y] = at(c+r); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#7d7a70"}); }
-  for (const [f,t] of b.wires){ const [x1,y1] = at(f), [x2,y2] = at(t); add("line",{x1,y1,x2,y2,stroke:"#2d7fd3","stroke-width":1}); }
-  for (const h of b.holes){ const [cx,cy] = at(h); add("circle",{cx,cy,r:1.9,fill:"#222"}); }
+    return [6 + (row - .5) * P, H - (y + 4.5) * P]; };
+  const add = (tag, a, parent, text) => { const e = document.createElementNS(NS,tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k,v);
+    if (text !== undefined) e.textContent = text; (parent || svg).append(e); return e; };
+  const label = (x, y, text, fill = "#1c1c1c", size = 3.6, parent) => add("text",{x,y,"text-anchor":"middle","dominant-baseline":"middle","font-size":size,"font-family":"sans-serif","font-weight":600,fill},parent,text);
+  const WIRE = {rojo:"#d33", negro:"#1c1c1c", azul:"#2d7fd3", verde:"#1f9d6b", naranja:"#e8862a", morado:"#8a4fbf", amarillo:"#d8b400", gris:"#8d8d8d"};
+  const BANDS = ["#111","#7a4a21","#d33","#e8862a","#e8cf2a","#2f9e4f","#2d62d3","#7d3fbf","#8d8d8d","#f4f4f4"];
+  const ohms = v => { const t = String(v).trim().replace(/[Ωohm ]/g,""), m = t.match(/^(\d*\.?\d+)([kKM]?)(\d*)$/);
+    if (!m) return null; const scale = {k:1e3,K:1e3,M:1e6}[m[2]] || 1; return parseFloat(m[3] ? `${m[1]}.${m[3]}` : m[1]) * scale; };
+  const bands = v => { const r = ohms(v); if (!r) return []; const e = Math.floor(Math.log10(r)) - 1, d = Math.round(r / 10 ** e);
+    return d === 100 ? [1, 0, e + 1] : [Math.floor(d / 10), d % 10, e]; };
+  add("line",{x1:0,x2:W,y1:H-10*P,y2:H-10*P,stroke:"#d9d4c5","stroke-width":P*1.6});
+  add("line",{x1:0,x2:W,y1:H-.5*P+2,y2:H-.5*P+2,stroke:"#d33","stroke-width":.6}); add("line",{x1:0,x2:W,y1:H-1.5*P-2,y2:H-1.5*P-2,stroke:"#35a","stroke-width":.6});
+  for (let r=1;r<=63;r++) for (const c of "abcdefghij+-") { const [x,y] = at(c+r); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#a9a596"}); }
+  for (const [f,t,color] of b.wires){ const [x1,y1] = at(f), [x2,y2] = at(t), long = Math.hypot(x2-x1,y2-y1), bow = Math.min(9, long*.18) / long;
+    add("path",{d:`M ${x1} ${y1} Q ${(x1+x2)/2+(y2-y1)*bow} ${(y1+y2)/2-(x2-x1)*bow} ${x2} ${y2}`,fill:"none",stroke:WIRE[color],"stroke-width":1.1,"stroke-linecap":"round"}); }
+  const body = (a, c, draw) => { // a two-legged part between two holes, drawn along the line that joins them
+    const [x1,y1] = at(a), [x2,y2] = at(c), mx = (x1+x2)/2, my = (y1+y2)/2, g = add("g",{transform:`translate(${mx} ${my}) rotate(${Math.atan2(y2-y1,x2-x1)*180/Math.PI})`});
+    add("line",{x1,y1,x2,y2,stroke:"#8d8d8d","stroke-width":.7}); svg.append(g); draw(g); return [mx,my,x1===x2]; };
+  for (const p of b.parts || []){
+    const holes = Object.values(p.holes), tip = add("title",{},undefined,`${p.ref} ${p.label}${p.value ? " " + p.value : ""}`);
+    if (p.chip){
+      const half = p.chip.pins / 2, first = +p.chip.first.slice(1), [x0] = at(`e${first}`), [x1] = at(`e${first + half - 1}`), [,yb] = at(`e${first}`), [,yt] = at(`f${first}`);
+      const g = add("g",{}); g.append(tip);
+      for (let i = 0; i < half; i++){ const [x] = at(`e${first + i}`); for (const y of [yb, yt]) add("rect",{x:x-1,y:y-1.4,width:2,height:2.8,fill:"#b8b8b8"},g); }
+      add("rect",{x:x0-2.6,y:yt+.2,width:x1-x0+5.2,height:yb-yt-.4,rx:.8,fill:"#26272b"},g);
+      add("circle",{cx:x0-2.6,cy:(yb+yt)/2,r:2.2,fill:"#d9d4c5"},g);                      // the notch, to the left
+      add("circle",{cx:x0+.4,cy:yb-2.6,r:.9,fill:"#e8e8e8"},g);                           // the dot at pin 1
+      label((x0+x1)/2 + 1, (yb+yt)/2 - 1.6, p.label, p.learnt ? "#9fe0a8" : "#f2f2f2", Math.min(3.8, (x1-x0+2)/p.label.length*1.5), g);
+      label((x0+x1)/2 + 1, (yb+yt)/2 + 3, p.ref, "#b9b9b9", 3, g);
+      continue;
+    }
+    if (["POT","NPN","PNP","NMOS","PMOS","REG"].includes(p.kind) || (p.kind === "IC" && !p.chip)){
+      const pts = holes.map(at), xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), cx = xs.reduce((a,c) => a+c)/xs.length, cy = ys.reduce((a,c) => a+c)/ys.length, g = add("g",{}); g.append(tip);
+      if (p.kind === "POT"){ add("rect",{x:Math.min(...xs)-3,y:cy-5.5,width:Math.max(...xs)-Math.min(...xs)+6,height:9,rx:1,fill:"#2f5fb3"},g); add("circle",{cx,cy:cy-1,r:2.8,fill:"#f0f0f0"},g); add("line",{x1:cx-1.8,x2:cx+1.8,y1:cy-1,y2:cy-1,stroke:"#333","stroke-width":.6},g); }
+      else if (p.package === "TO-220" || p.kind === "REG" || ["IRLZ44N","IRF540","IRF9540"].includes(p.label)){ add("rect",{x:Math.min(...xs)-3,y:cy-7,width:Math.max(...xs)-Math.min(...xs)+6,height:2.4,fill:"#c4c4c4"},g); add("rect",{x:Math.min(...xs)-3,y:cy-4.6,width:Math.max(...xs)-Math.min(...xs)+6,height:6,fill:"#26272b"},g); }
+      else add("path",{d:`M ${Math.min(...xs)-2.4} ${cy+1.5} a ${(Math.max(...xs)-Math.min(...xs))/2+2.4} 6 0 0 1 ${Math.max(...xs)-Math.min(...xs)+4.8} 0 z`,fill:"#26272b"},g);
+      for (const q of pts) add("circle",{cx:q[0],cy:q[1],r:1,fill:"#b8b8b8"},g);
+      label(cx, cy - (p.kind === "POT" ? 8 : 9), `${p.ref} ${p.kind === "POT" ? p.value : p.label}`, "#1c1c1c", 3.2, g);
+      continue;
+    }
+    if (holes.length === 2){
+      const [a, c] = p.kind === "LED" || p.kind === "D" || p.kind === "ZENER" ? [p.holes.A, p.holes.K] : holes;
+      const [mx, my, upright] = body(a, c, g => { g.append(tip);
+        if (p.kind === "R"){ add("rect",{x:-6,y:-1.6,width:12,height:3.2,rx:1.2,fill:"#d9bd8e"},g); bands(p.value).forEach((n,i) => add("rect",{x:-4+i*2.1,y:-1.6,width:1.1,height:3.2,fill:BANDS[n] || "#111"},g)); add("rect",{x:3.2,y:-1.6,width:1.1,height:3.2,fill:"#b5902e"},g); }
+        else if (p.kind === "C"){ const big = /u|µ/.test(p.value); add("circle",{cx:0,cy:0,r:big ? 3 : 2.3,fill:big ? "#26406e" : "#c9913f"},g); }
+        else if (p.kind === "LED") add("circle",{cx:0,cy:0,r:3,fill:{red:"#e33",green:"#2ea84f",blue:"#2d62d3",yellow:"#e6c82a",white:"#f2f2f2"}[p.color] || "#e33",stroke:"#555","stroke-width":.4},g);
+        else if (p.kind === "D" || p.kind === "ZENER"){ add("rect",{x:-4,y:-1.5,width:8,height:3,rx:.7,fill:p.kind === "ZENER" ? "#b9652f" : "#26272b"},g); add("rect",{x:2,y:-1.5,width:1,height:3,fill:"#e8e8e8"},g); }
+        else if (p.kind === "L") add("rect",{x:-5,y:-2,width:10,height:4,rx:1.6,fill:"#5d8a5b"},g);
+        else if (p.kind === "SW"){ add("rect",{x:-3,y:-3,width:6,height:6,rx:.6,fill:"#2b2b2b"},g); add("circle",{cx:0,cy:0,r:1.7,fill:"#d33"},g); }
+        else add("circle",{cx:0,cy:0,r:2.6,fill:p.kind === "LDR" ? "#b9652f" : "#1f7a7a"},g);
+      });
+      label(mx + (upright ? 6 : 0), my - (upright ? 0 : 4.6), p.ref, "#1c1c1c", 3);
+      for (const h of holes){ const [cx,cy] = at(h); add("circle",{cx,cy,r:.9,fill:"#777"}); }
+    }
+  }
   const g = b.guide || {};
   for (const h of g.holes || []){ const [cx,cy] = at(h); add("circle",{cx,cy,r:h === g.at ? 3.2 : 2.4,fill:"none",stroke:"#e0261c","stroke-width":1.2}); }
   return svg;
@@ -509,7 +595,7 @@ function renderChip(c){
   else if (c.as_planned === false) line.append(el("span","", ` · ${T.notAsPlanned} `), el("b","",c.planned_hole));
   if (c.how) line.append(el("span","", ` · ${c.how}`));
 }
-function render(d){ renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); renderChip(d.chip); drawOverlay(); }
+function render(d){ window.lastLab = d; renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); renderChip(d.chip); drawOverlay(); }
 $("big").addEventListener("click", e => {
   if (view !== "microscope") return;
   const img = $("big"), r = img.getBoundingClientRect(), nat = img.naturalWidth / img.naturalHeight || 4/3;
@@ -547,6 +633,7 @@ async function poll(){
   setTimeout(poll, 700);
 }
 $("lang").onclick = () => { lang = lang === "es" ? "en" : "es"; T = TEXT[lang]; store.set("lunes.lang",lang); translate(); };
+$("mapView").onclick = () => { mapClose = !mapClose; if (window.lastLab) renderMachine(window.lastLab.machine); };
 $("details").onclick = () => { document.body.classList.toggle("details"); $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details; };
 setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString("en-GB", {hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}); }, 1000);
 window.addEventListener("resize", () => { if (lab){ drawOverlay(); drawTrace(lab.scope); } });

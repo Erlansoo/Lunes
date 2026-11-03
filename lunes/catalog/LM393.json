@@ -1,0 +1,149 @@
+{
+ "name": "LM393",
+ "aka": [
+  "LM393N",
+  "LM393P",
+  "LM2903"
+ ],
+ "package": "DIP8",
+ "pins": {
+  "1": "OUT1",
+  "2": "IN1-",
+  "3": "IN1+",
+  "4": "GND",
+  "5": "IN2+",
+  "6": "IN2-",
+  "7": "OUT2",
+  "8": "VCC"
+ },
+ "power": [
+  "VCC",
+  "GND"
+ ],
+ "inputs": [
+  "IN1-",
+  "IN1+",
+  "IN2+",
+  "IN2-"
+ ],
+ "outputs": [
+  "OUT1",
+  "OUT2"
+ ],
+ "dc_links": [
+  [
+   "VCC",
+   "GND"
+  ],
+  [
+   "OUT1",
+   "GND"
+  ],
+  [
+   "OUT2",
+   "GND"
+  ]
+ ],
+ "supply_v": [
+  2,
+  36
+ ],
+ "notes": "Dual comparator. Its outputs are open collector: each needs a pull-up resistor to give a high, typically 10 k. It only sinks, about 16 mA. Output low when IN- is above IN+.",
+ "source": "TI LM393 datasheet",
+ "spice": ".subckt CHIP_LM393 out1 inm1 inp1 gnd inp2 inm2 out2 vcc\nRin1 inp1 inm1 10Meg\nRin2 inp2 inm2 10Meg\nRs vcc gnd 5k\nBq1 out1 gnd I = v(out1,gnd)/30*lunes_step(v(inm1,gnd)-v(inp1,gnd),200)*lunes_step(v(vcc,gnd)-1.5,10)\nBq2 out2 gnd I = v(out2,gnd)/30*lunes_step(v(inm2,gnd)-v(inp2,gnd),200)*lunes_step(v(vcc,gnd)-1.5,10)\n.ends CHIP_LM393",
+ "test": {
+  "circuit": {
+   "name": "LM393 both ways",
+   "supply_v": 5,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "LM393",
+     "pins": {
+      "VCC": "VCC",
+      "GND": "GND",
+      "IN1+": "HI",
+      "IN1-": "MID",
+      "OUT1": "A",
+      "IN2+": "MID",
+      "IN2-": "HI",
+      "OUT2": "B"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "VCC",
+      "HI"
+     ]
+    },
+    {
+     "ref": "R2",
+     "kind": "R",
+     "value": "20k",
+     "pins": [
+      "HI",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R3",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "VCC",
+      "MID"
+     ]
+    },
+    {
+     "ref": "R4",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "MID",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R5",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "VCC",
+      "A"
+     ]
+    },
+    {
+     "ref": "R6",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "VCC",
+      "B"
+     ]
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "A",
+    "mean_v": 5.0,
+    "tolerance": 0.05
+   },
+   {
+    "net": "B",
+    "mean_v": 0.1,
+    "tolerance": 3.0
+   },
+   {
+    "net": "HI",
+    "mean_v": 3.33,
+    "tolerance": 0.05
+   }
+  ]
+ },
+ "origin": "seed"
+}

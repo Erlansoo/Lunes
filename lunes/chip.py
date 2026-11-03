@@ -24,7 +24,8 @@ MAX_BODY_MM = 60.0  # longer than this is not a chip in one picture
 MAX_SHARE = 0.75  # a body filling more of the picture than this is the whole board or the bench, not a chip
 
 
-BESIDE_PIN_MM = 2.3  # from the long axis: inside the flat top of a body 6.35 mm wide, clear of its bevelled rim
+BESIDE_PIN_MM = 1.4  # from the long axis: well inside the top of a body 6.35 mm wide, since the slanted beam misses a
+# chip's edge by millimetres, and which edge depends on how the chip is turned
 
 
 def body_mask(frame):
@@ -33,10 +34,16 @@ def body_mask(frame):
     and a chip's body at 38: a fixed line between them would not hold from one light to another."""
     hsv = cv2.cvtColor(cv2.medianBlur(frame, 9), cv2.COLOR_BGR2HSV)
     value = hsv[..., 2]
-    ceiling = min(110, float(np.percentile(value, 60)) * 0.8)  # darker than most of the picture, by a margin
-    body = ((hsv[..., 1] < 60) & (value > 12) & (value < ceiling)).astype(np.uint8)
+    most = float(np.percentile(value, 60))
+    # darker than most of the picture, by a margin; a wider one under a side lamp, which lifts the chip's own top too
+    lamp = most >= 150
+    ceiling = min(160, most * 0.55) if lamp else min(110, most * 0.8)
+    # a lamp from the side tints the whole picture, the chip too: how coloured a thing is counts against the picture's own
+    tint = max(60.0, 1.6 * float(np.median(hsv[..., 1])))
+    body = ((hsv[..., 1] < tint) & (value > 12) & (value < ceiling)).astype(np.uint8)
     body = cv2.morphologyEx(body, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
-    return cv2.morphologyEx(body, cv2.MORPH_OPEN, np.ones((11, 11), np.uint8))
+    size = 21 if lamp else 11  # under a side lamp the shadow by the legs joins the body: a wider opening parts them
+    return cv2.morphologyEx(body, cv2.MORPH_OPEN, np.ones((size, size), np.uint8))
 
 
 def find_chip(frame, px_per_mm):
@@ -162,12 +169,14 @@ def notch_end(frame, chip):
     return side, round(sure, 2), why
 
 
-def _pin1_place(chip, end, across_mm=None):
-    """A point at pin 1's place along the body, across_mm from its long axis (the leg's row if None), in pixels. Seen
-    from above with the notch to the left, pin 1 is on the lower side; with the notch to the right, on the upper one
-    (the chip turned half a turn). "Lower" is in the straightened body's frame, which the dent confirms when it was
+def _pin_place(chip, end, number=1, pins=None, across_mm=None):
+    """A point at a pin's place along the body, across_mm from its long axis (the leg's row if None), in pixels. Seen
+    from above with the notch to the left, pin 1 is on the lower side and the numbers run away from the notch along it
+    and back along the upper side, so the last pin stands right across from pin 1; with the notch to the right, the chip
+    is that one turned half a turn. "Lower" is in the straightened body's frame, which the dent confirms when it was
     seen. A body's corner is not its pin: the pins stand on the 2.54 mm grid, so pin 1 of a DIP-8 is 3.81 mm from the
-    centre along the body and 3.81 mm across it (rows 7.62 mm apart)."""
+    centre along the body and 3.81 mm across it (rows 7.62 mm apart). pins is how many the chip has: its body does not
+    tell a DIP-14 from a DIP-16, so a pin other than 1 of a long chip needs it."""
     corners = np.array(chip["corners"], np.float32)
     angle = math.radians(chip["angle_deg"])
     along = np.array([math.cos(angle), math.sin(angle)])
@@ -176,24 +185,50 @@ def _pin1_place(chip, end, across_mm=None):
     length_px = float(np.ptp((corners - center) @ along))
     length_mm, width_mm = chip["size_mm"]
     px_per_mm = length_px / length_mm
-    down_body = 3.81 if length_mm < 12 else length_mm / 2 - 1.27  # the longer DIPs: the first pin near the end
+    if pins is None:
+        pins = 8 if length_mm < 12 else 0
+    half = pins // 2
+    first = (half - 1) * 1.27 if pins else length_mm / 2 - 1.27  # the longer DIPs: the first pin near the end
+    down_body = first - 2.54 * (number - 1 if number <= half or not pins else pins - number)
     if across_mm is None:
         across_mm = 3.81 if width_mm < 10 else width_mm / 2 + 0.6  # a wide DIP has its rows 15.24 mm apart
     row = chip.get("dent_row") or ("low" if end == "left" else "high")
     side = -1.0 if end == "left" else 1.0
-    point = center + side * down_body * px_per_mm * along + (1.0 if row == "low" else -1.0) * across_mm * px_per_mm * across
+    far_row = pins and number > half  # the numbers come back along the other long side
+    lower = (row == "low") != bool(far_row)
+    point = center + side * down_body * px_per_mm * along + (1.0 if lower else -1.0) * across_mm * px_per_mm * across
     return float(point[0]), float(point[1])
+
+
+def notch_at(chip, end):
+    """The middle of the body's end with the notch, in pixels."""
+    angle = math.radians(chip["angle_deg"])
+    along = np.array([math.cos(angle), math.sin(angle)])
+    center = np.array(chip["center"])
+    length_px = float(np.ptp((np.array(chip["corners"], np.float32) - center) @ along))
+    point = center + (-1.0 if end == "left" else 1.0) * length_px / 2 * along
+    return float(point[0]), float(point[1])
+
+
+def pin_at(chip, end, number=1, pins=None):
+    """A pin's leg in the picture, in pixels."""
+    return _pin_place(chip, end, number, pins)
+
+
+def beside_pin(chip, end, number=1, pins=None):
+    """The point on the body's flat top right beside a pin's leg, in pixels: where a laser's dot can be seen and
+    checked. The leg itself is a few mm lower and shiny, and the slanted beam misses it or the camera loses it."""
+    return _pin_place(chip, end, number, pins, across_mm=BESIDE_PIN_MM)
 
 
 def pin1(chip, end):
     """Pin 1's leg in the picture, in pixels."""
-    return _pin1_place(chip, end)
+    return pin_at(chip, end)
 
 
 def beside_pin1(chip, end):
-    """The point on the body's flat top right beside pin 1's leg, in pixels: where a laser's dot can be seen and
-    checked. The leg itself is a few mm lower and shiny, and the slanted beam misses it or the camera loses it."""
-    return _pin1_place(chip, end, across_mm=BESIDE_PIN_MM)
+    """The point on the body's flat top beside pin 1's leg, in pixels."""
+    return beside_pin(chip, end)
 
 
 def on_body(frame, x, y):

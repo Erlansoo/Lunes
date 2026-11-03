@@ -5,21 +5,22 @@ The board: rows 1 to 63, columns a to e and f to j with the centre channel betwe
 a row on one side are one strip. Two rails run along the left edge: + for VCC and - for GND.
 
 plan() lays a circuit out by rule, with no model: chips straddle the channel, each pin's strip takes that pin's net,
-every other net gets a strip of its own, and strips of one net are joined with wires. verify() then rebuilds the
-connections from the holes alone and compares them with the circuit, so a plan that would not be the circuit is never
-shown. Boards and sources stay off the breadboard and come in on wires.
+every other net gets a strip of its own, and strips of one net are joined with wires. A part with two leads always lies
+straight: along a column, across the channel, or from a strip down to a rail, never aslant; only wires run any way, VCC's
+red and GND's black. verify() then rebuilds the connections from the holes alone and compares them with the circuit, so
+a plan that would not be the circuit is never shown. Boards and sources stay off the breadboard and come in on wires.
 
 Placement says where the board lies on the machine, from two holes whose position in mm is known: the laser's dot on them.
 """
 import math
 
-from lunes import mcu
+from lunes import catalog, mcu
 from lunes.circuit import PIN_NUMBER, value
 
 ROWS, PITCH = 63, 2.54
 LEFT, RIGHT = "abcde", "fghij"
 COLUMN = {c: i for i, c in enumerate(LEFT)} | {c: 7 + i for i, c in enumerate(RIGHT)}  # the channel takes two pitches
-RAIL_COLUMN = {"-": -3, "+": -2}  # beyond column a; a board with other rails only moves these
+RAIL_COLUMN = {"-": -3, "+": -4}  # beyond column a, as a mosaic of the real board shows: blue first, red at the edge
 OPAMP_PINS = {"OUT": 1, "IN-": 2, "IN+": 3, "V-": 4, "V+": 8}  # an LM358's first amplifier
 # the legs of a TO-92 as they stand with its flat face towards you, left to right; a TO-220 with its tab away
 TRANSISTOR_LEGS = {"BC547": "CBE", "BC557": "CBE", "2N3904": "EBC", "2N3906": "EBC", "2N2222": "EBC",
@@ -30,6 +31,8 @@ THREE_LEGS = ("NPN", "PNP", "NMOS", "PMOS", "POT", "REG")
 TWO_LEADS = ("R", "C", "L", "SW", "LDR", "NTC")
 DIODES = ("D", "ZENER", "LED")
 RAIL_OF = {"VCC": "+", "GND": "-"}
+SPAN = {"R": 4, "D": 4, "ZENER": 4, "L": 4, "C": 2, "SW": 2, "LDR": 2, "LED": 1, "NTC": 1}  # pitches between a lying part's leads
+WIRE_COLORS = ("azul", "verde", "naranja", "morado", "amarillo", "gris")  # after VCC's red and GND's black
 
 
 def board_xy(hole):
@@ -71,8 +74,9 @@ class Placement:
 
 class _Layout:
     def __init__(self):
-        self.net_of, self.used, self.row = {}, set(), 3
-        self.wires, self.holes, self.notes = [], {}, []
+        self.net_of, self.used, self.covered, self.row = {}, set(), set(), 3
+        self.color_of = {"VCC": "rojo", "GND": "negro"}
+        self.wires, self.holes, self.notes, self.first_pin, self.chip_pins = [], {}, [], {}, {}
 
     def take(self, row, side, net):
         self.net_of[(row, side)] = net
@@ -80,12 +84,17 @@ class _Layout:
 
     def free(self, strip):
         row, side = strip
-        for column in ("cbade" if side == "L" else "hijgf"):
-            hole = f"{column}{row}"
+        holes = [f"{column}{row}" for column in ("cbade" if side == "L" else "hijgf")]
+        for hole in sorted(holes, key=lambda h: h in self.covered):  # one under a part's body, only if nothing else is left
             if hole not in self.used:
                 self.used.add(hole)
                 return hole
         return None
+
+    def room(self, strip):
+        """Whether a part can land on a strip: two holes stay free on each for the wires that join it to its net."""
+        row, side = strip
+        return sum(f"{column}{row}" not in self.used for column in (LEFT if side == "L" else RIGHT)) >= 3
 
     def strips(self, net):
         return [s for s, n in self.net_of.items() if n == net]
@@ -97,41 +106,67 @@ class _Layout:
             raise ValueError("the circuit does not fit on one breadboard")
         return self.take(self.row, "L", net)
 
+    def fresh_row(self, span=0):
+        """The first row from here on with its strips free on both sides, and span more like it after it."""
+        row = self.row
+        while any((r, side) in self.net_of for r in range(row, row + span + 1) for side in "LR"):
+            row += 1
+        if row + span > ROWS:
+            raise ValueError("the circuit does not fit on one breadboard")
+        return row
+
     def hole_on(self, net, near=None):
-        """A free hole of the net: its rail, or one of its strips, adding a strip joined by a wire when they are full."""
+        """A free hole of the net: its rail, or one of its strips, adding a strip when they are full; join() wires it."""
         if net in RAIL_OF:
             row = max(1, min(ROWS, near or self.row))
             while f"{RAIL_OF[net]}{row}" in self.used:
                 row += 1
             self.used.add(f"{RAIL_OF[net]}{row}")
             return f"{RAIL_OF[net]}{row}"
-        strips = self.strips(net) or [self.new_strip(net)]
-        for strip in strips:
-            hole = self.free(strip)
-            if hole:
-                return hole
-        strip = self.new_strip(net)
-        self.wire(self.free(strips[0]) or self.free(strip), self.free(strip), net)
-        return self.free(strip)
+        for strip in self.strips(net):
+            if self.room(strip):
+                return self.free(strip)
+        return self.free(self.new_strip(net))
 
     def wire(self, a, b, net):
-        self.wires.append({"from": a, "to": b, "net": net})
+        color = self.color_of.setdefault(net, WIRE_COLORS[(len(self.color_of) - 2) % len(WIRE_COLORS)])
+        self.wires.append({"from": a, "to": b, "net": net, "color": color})
+
+    def join(self):
+        """Every strip of a supply goes to its rail, and the strips of any other net are chained."""
+        for net in sorted({n for n in self.net_of.values() if n}):
+            strips = self.strips(net)
+            if net in RAIL_OF:
+                for strip in strips:  # a chip's supply pins often face each other: their wires must not lie one over the other
+                    row = strip[0]
+                    while {f"+{row}", f"-{row}"} & self.used:
+                        row += 1
+                    self.wire(self.free(strip), self.hole_on(net, row), net)
+            for one, other in ([] if net in RAIL_OF else zip(strips, strips[1:])):
+                self.wire(self.free(one), self.free(other), net)
 
 
-def _dip(layout, part, pins):
+def _dip(layout, part, pins, count=8):
     """A chip astride the channel: pin 1 at the top left, numbers running down that side and back up the other."""
-    top = layout.row
-    for number in range(1, 9):
-        row, column, side = (top + number - 1, "e", "L") if number <= 4 else (top + 8 - number, "f", "R")
+    top, half = layout.row, count // 2
+    layout.first_pin[part["ref"]] = f"e{top}"
+    layout.chip_pins[part["ref"]] = count
+    for number in range(1, count + 1):
+        row, column, side = (top + number - 1, "e", "L") if number <= half else (top + count - number, "f", "R")
         layout.take(row, side, pins.get(number))
         hole = f"{column}{row}"
         layout.used.add(hole)
         if number in pins:
             layout.holes.setdefault(part["ref"], {})[number] = hole
-    layout.row = top + 6
+    layout.row = top + half + 2
 
 
 def _chips(layout, part):
+    if part["kind"] == "IC":
+        entry = catalog.get(part["model"])
+        numbers = catalog.pin_numbers(entry)
+        _dip(layout, part, {numbers[name]: net for name, net in part["pins"].items()}, len(numbers))
+        return
     if part["kind"] == "NE555":
         pins = {PIN_NUMBER["NE555"][name]: net for name, net in part["pins"].items()}
     else:
@@ -139,9 +174,20 @@ def _chips(layout, part):
     _dip(layout, part, pins)
 
 
+def is_chip(part):
+    """A part that straddles the channel."""
+    return part["kind"] in ("NE555", "OPAMP") or (part["kind"] == "IC" and catalog.is_dip(catalog.get(part["model"])))
+
+
+def is_three_legged(part):
+    return part["kind"] in THREE_LEGS or (part["kind"] == "IC" and not catalog.is_dip(catalog.get(part["model"])))
+
+
 def legs_of(part):
     """The pins of a three-legged part in the order its legs stand, left to right."""
     kind = part["kind"]
+    if kind == "IC":
+        return tuple(name for _, name in catalog.ordered_pins(catalog.get(part["model"])))
     if kind == "POT":
         return ("A", "W", "B")  # the wiper is the middle leg of a trimmer and of a panel pot
     if kind == "REG":
@@ -159,35 +205,100 @@ def _transistor(layout, part):
     layout.row = top + 4
 
 
+def _along(layout, strip_a, strip_b):
+    """A part's holes along one column of two strips of a side, or None; the holes under its body stay out of the way."""
+    (row_a, side), (row_b, _) = strip_a, strip_b
+    rows = range(min(row_a, row_b), max(row_a, row_b) + 1)
+    for column in ("cbad" if side == "L" else "hijg"):
+        if not any(f"{column}{row}" in layout.used | layout.covered for row in rows):
+            layout.covered.update(f"{column}{row}" for row in rows)
+            layout.used.update((f"{column}{row_a}", f"{column}{row_b}"))
+            return f"{column}{row_a}", f"{column}{row_b}"
+    return None
+
+
+def _to_rail(layout, strip, net, span):
+    """A part's holes straight from a strip on the rails' side down to its rail, or None: from the strip's hole that
+    stands closest to the part's own length from the rail, since a long body does not fit between it and column a."""
+    row, side = strip
+    rail = f"{RAIL_OF[net]}{row}"
+    if side != "L" or rail in layout.used:
+        return None
+    for column in sorted("abcd", key=lambda c: abs(COLUMN[c] - RAIL_COLUMN[RAIL_OF[net]] - span)):
+        hole = f"{column}{row}"
+        if hole not in layout.used:
+            layout.used.update((hole, rail, f"-{row}"))  # the way to the far rail passes over the near one
+            layout.covered.update(f"{c}{row}" for c in LEFT if COLUMN[c] < COLUMN[column])
+            return hole, rail
+    return None
+
+
+def _lay_down(layout, part, a, b):
+    """The holes of a two-lead part between nets a and b, in that order, always straight. A supply: down to its rail. Two
+    other nets: between strips they have, if some stand a part's length apart; else from one of them to a new strip;
+    else on new strips, across the channel if the part is long enough, or along a column. Wires do the rest."""
+    span = SPAN[part["kind"]]
+    if a in RAIL_OF and b in RAIL_OF and a != b:
+        row = next(r for r in range(1, ROWS + 1) if not {f"+{r}", f"-{r}"} & layout.used)
+        layout.used.update((f"+{row}", f"-{row}"))
+        return f"{RAIL_OF[a]}{row}", f"{RAIL_OF[b]}{row}"
+    if (a in RAIL_OF) != (b in RAIL_OF):
+        supply, other = (a, b) if a in RAIL_OF else (b, a)
+        for strip in layout.strips(other):
+            holes = layout.room(strip) and _to_rail(layout, strip, supply, span)
+            if holes:
+                return holes if b == supply else holes[::-1]
+        row = layout.fresh_row()
+        while f"{RAIL_OF[supply]}{row}" in layout.used:
+            layout.row, row = row + 1, layout.fresh_row(1)
+        holes = _to_rail(layout, layout.take(row, "L", other), supply, span)
+        layout.row = row + 1
+        return holes if b == supply else holes[::-1]
+    for strip_a in layout.strips(a):
+        for strip_b in layout.strips(b):
+            if strip_a[1] == strip_b[1] and span <= abs(strip_a[0] - strip_b[0]) <= span + 2 and layout.room(strip_a)                     and layout.room(strip_b):
+                holes = _along(layout, strip_a, strip_b)
+                if holes:
+                    return holes
+    for near, far in ((a, b), (b, a)):
+        for strip in layout.strips(near):
+            for row in (strip[0] + span, strip[0] - span):
+                if layout.room(strip) and 1 <= row <= ROWS and (row, strip[1]) not in layout.net_of:
+                    holes = _along(layout, strip, (row, strip[1]))
+                    if holes:
+                        layout.take(row, strip[1], far)
+                        return holes if near == a else holes[::-1]
+    if span >= 3:
+        row = layout.fresh_row()
+        layout.take(row, "L", a)
+        layout.take(row, "R", b)
+        layout.used.update((f"e{row}", f"f{row}"))
+        layout.row = row + 2  # a row between two parts across the channel: their bodies do not fit side by side
+        return f"e{row}", f"f{row}"
+    row = layout.fresh_row(span)
+    strip_a, strip_b = layout.take(row, "L", a), layout.take(row + span, "L", b)
+    layout.row = row + span + 1
+    return _along(layout, strip_a, strip_b)
+
+
 def plan(circuit, sim=None):
     """{"holes": {ref: {pin: hole}}, "wires", "probe": {net: hole}, "steps", "notes"} for a circuit on a breadboard."""
     layout = _Layout()
     parts = circuit["parts"]
     for part in parts:
-        if part["kind"] in ("NE555", "OPAMP"):
+        if is_chip(part):
             _chips(layout, part)
     for part in parts:
-        if part["kind"] in THREE_LEGS:
+        if is_three_legged(part):
             _transistor(layout, part)
     layout.row += 1
-    # strips of one net are joined, and a strip of a supply net goes to its rail
-    for net in sorted({n for n in layout.net_of.values() if n}):
-        strips = layout.strips(net)
-        for (row, side) in strips:
-            if net in RAIL_OF:
-                layout.wire(layout.free((row, side)), layout.hole_on(net, row), net)
-        if net not in RAIL_OF:
-            first = strips[0]
-            for other in strips[1:]:
-                layout.wire(layout.free(first), layout.free(other), net)
     for part in parts:
         if part["kind"] in TWO_LEADS:
             a, b = part["pins"]
-            hole_a = layout.hole_on(a)
-            layout.holes[part["ref"]] = {"1": hole_a, "2": layout.hole_on(b, int(hole_a[1:]))}
+            layout.holes[part["ref"]] = dict(zip(("1", "2"), _lay_down(layout, part, a, b)))
         elif part["kind"] in DIODES:
-            hole_a = layout.hole_on(part["pins"]["A"])
-            layout.holes[part["ref"]] = {"A": hole_a, "K": layout.hole_on(part["pins"]["K"], int(hole_a[1:]))}
+            pins = part["pins"]
+            layout.holes[part["ref"]] = dict(zip(("A", "K"), _lay_down(layout, part, pins["A"], pins["K"])))
     external = []
     for part in parts:
         if part["kind"] in mcu.BOARDS or part["kind"] == "V":
@@ -196,9 +307,11 @@ def plan(circuit, sim=None):
                 layout.holes.setdefault(part["ref"], {})[pin] = hole
                 external.append({"ref": part["ref"], "pin": pin, "hole": hole, "net": net})
     probe = {}
-    for net in {n for p in parts for n in (p["pins"].values() if isinstance(p["pins"], dict) else p["pins"])}:
+    for net in sorted({n for p in parts for n in (p["pins"].values() if isinstance(p["pins"], dict) else p["pins"])}):
         probe[net] = layout.hole_on(net, 2)
+    layout.join()
     result = {"holes": layout.holes, "wires": layout.wires, "external": external, "probe": probe,
+              "chips": {ref: {"first": hole, "pins": layout.chip_pins[ref]} for ref, hole in layout.first_pin.items()},
               "steps": _steps(circuit, layout, external, sim)}
     problems = verify(circuit, result)
     if problems:
@@ -209,7 +322,8 @@ def plan(circuit, sim=None):
 def _named(part):
     words = {"R": "resistencia", "C": "capacitor", "L": "bobina", "D": "diodo", "ZENER": "zener", "LED": "LED",
              "SW": "interruptor", "LDR": "fotorresistencia", "NTC": "termistor", "POT": "potenciómetro",
-             "NMOS": "MOSFET", "PMOS": "MOSFET", "REG": "regulador", "NPN": "transistor", "PNP": "transistor"}
+             "NMOS": "MOSFET", "PMOS": "MOSFET", "REG": "regulador", "NPN": "transistor", "PNP": "transistor",
+             "IC": "integrado"}
     detail = part.get("value", part.get("model", part.get("color", "")))
     if part["kind"] in ("LDR", "NTC"):
         detail = "/".join(str(part.get(k, "?")) for k in (("dark", "lit") if part["kind"] == "LDR" else ("cold", "hot")))
@@ -230,12 +344,12 @@ def _steps(circuit, layout, external, sim):
     steps = []
     for part in circuit["parts"]:
         ref = part["ref"]
-        if part["kind"] in ("NE555", "OPAMP"):
-            hole = layout.holes[ref][1] if 1 in layout.holes[ref] else layout.holes[ref][min(layout.holes[ref])]
+        if is_chip(part):
+            hole = layout.first_pin[ref]
             steps.append({"kind": "chip", "ref": ref, "holes": [hole],
                           "says": f"Pon el chip {ref} sobre el canal central, con el pin 1 (la muesca a la izquierda) en "
                                   f"{hole}."})
-        elif part["kind"] in THREE_LEGS:
+        elif is_three_legged(part):
             holes = layout.holes[ref]
             order = " ".join(f"{leg} en {hole}" for leg, hole in holes.items())
             hint = {"POT": " El cursor es la pata del medio.", "REG": " Con la marca hacia ti, de izquierda a derecha.",
@@ -256,7 +370,7 @@ def _steps(circuit, layout, external, sim):
                           "says": f"Pon {_named(part)}: {leg} (ánodo) en {a} y el otro lado{' (el de la banda)' if part['kind'] != 'LED' else ''} en {k}."})
     for wire in layout.wires:
         steps.append({"kind": "wire", "holes": [wire["from"], wire["to"]],
-                      "says": f"Pon un cable de {wire['from']} a {wire['to']} ({wire['net']})."})
+                      "says": f"Pon un cable {wire['color']} de {wire['from']} a {wire['to']} ({wire['net']})."})
     for item in external:
         steps.append({"kind": "external", "ref": item["ref"], "holes": [item["hole"]],
                       "says": f"Conecta {item['pin']} de {item['ref']} en {item['hole']} ({item['net']})."})
@@ -287,7 +401,7 @@ def verify(circuit, result):
         holes = result["holes"].get(ref, {})
         for pin, net in items:
             key = PIN_NUMBER["NE555"][pin] if part["kind"] == "NE555" else OPAMP_PINS[pin] if part["kind"] == "OPAMP" \
-                else pin
+                else catalog.pin_numbers(catalog.get(part["model"]))[pin] if is_chip(part) and part["kind"] == "IC" else pin
             hole = holes.get(key)
             if hole is None:
                 problems.append(f"{ref} {pin} has no hole")

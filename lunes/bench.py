@@ -34,14 +34,19 @@ MIN_PAIRS = 8
 RING = dict(bright=235, min_area=100, max_area=4000, max_w=120, max_h=80, tint=8)  # the ring light, at 960 px wide
 ABOVE = dict(low=20.0, high=200.0, step=0.5, fine=0.02)  # where the ring's height over the surface in focus may lie, mm
 TEACH_MAX_OFF_MM = 6.0  # a taught thing further than this from the camera's ray to it, at any height, is not that thing
+CHIP = dict(white_s=70, white_v=150, min_board=20000, dark=0.55, min_area=150, max_area=6000, max_side=160, min_fill=0.25,
+            max_aspect=4.0)  # a chip on a breadboard in the 4K picture
+MOVED_PX = 40  # the ring this far from where the projection puts it, at 4K: the camera was moved, not just noise
 
 
-def ring_in_picture(color):
+def ring_in_picture(color, near=None, reach=350):
     """(column, row) of the microscope's ring light in the webcam's picture, or None. The picture is scaled to 960
     wide; there the lit ring is a white patch some 30 x 20 px with the black microscope tube right above it, and the
     patch's centre is given back at the picture's own size. Other white things are told apart: a breadboard under the
     lamp or a cable has no black tube over it; the supply's red digits burn out to a warm white in the webcam, small
-    patches with a tint, where the ring is grey-white through and through. Of what is left, the biggest is the ring."""
+    patches with a tint, where the ring is grey-white through and through. Of what is left, the biggest is the ring.
+    near (column, row at the picture's size) keeps to what lies within reach px of it: a lamp or a lit strip elsewhere
+    in the picture is then not the ring, and no ring there means it is not seen, not that the camera moved."""
     k = 960 / color.shape[1]
     small = cv2.resize(color, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else color
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -53,6 +58,8 @@ def ring_in_picture(color):
         if not (RING["min_area"] <= area <= RING["max_area"] and w <= RING["max_w"] and h <= RING["max_h"]):
             continue
         cx, cy = centres[i]
+        if near is not None and math.hypot(cx / k - near[0], cy / k - near[1]) > reach:
+            continue
         above = gray[max(0, y - int(1.5 * h) - 4):max(1, y - 2), max(0, int(cx) - w // 4):int(cx) + w // 4]
         darkness = float(above.mean()) if above.size else 255.0
         mean = small[labels == i].mean(axis=0)
@@ -65,6 +72,54 @@ def ring_in_picture(color):
     if xs.size >= 4:
         cx, cy = float(xs.mean()), float(ys.mean())
     return float(cx) / k, float(cy) / k
+
+
+def chip_near(color, u, v, reach=260):
+    """Column and row of the dark thing nearest column u, row v of the bench picture, or None: the chip under the
+    microscope, when the camera's geometry says about where it must be. Anything darker elsewhere is not looked at."""
+    x0, y0 = max(0, int(u) - reach), max(0, int(v) - reach)
+    crop = color[y0:max(y0 + 1, int(v) + reach), x0:max(x0 + 1, int(u) + reach)]
+    if crop.size == 0:
+        return None
+    gray = cv2.GaussianBlur(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    n, _, stats, centres = cv2.connectedComponentsWithStats((gray < 0.55 * np.median(gray)).astype(np.uint8))
+    spots = [(float(centres[i][0]) + x0, float(centres[i][1]) + y0) for i in range(1, n) if 250 <= stats[i, cv2.CC_STAT_AREA] <= 6000]
+    return min(spots, key=lambda s: math.hypot(s[0] - u, s[1] - v)) if spots else None
+
+
+def chip_in_picture(color, area=None):
+    """[(column, row, size in px)] of the dark compact things on the breadboard in the bench picture, biggest first:
+    SAM does not find a chip this small from so far, but a black chip on a white board is plain to see. The board is
+    the biggest white patch inside area (corners of the table in the picture, so the wall and the bench top do not
+    count); its holes are too small to pass, and what lies off the board does not count. Nothing found: []."""
+    hsv = cv2.cvtColor(color, cv2.COLOR_BGR2HSV)
+    white = ((hsv[..., 1] < CHIP["white_s"]) & (hsv[..., 2] > CHIP["white_v"])).astype(np.uint8)
+    if area is not None:
+        inside = np.zeros(white.shape, np.uint8)
+        cv2.fillConvexPoly(inside, np.array(area, np.int32), 1)
+        white &= inside
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(cv2.morphologyEx(white, cv2.MORPH_CLOSE, np.ones((41, 41), np.uint8)))
+    if n < 2:
+        return []
+    board = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    if stats[board, cv2.CC_STAT_AREA] < CHIP["min_board"]:
+        return []
+    on = np.zeros(white.shape, np.uint8)
+    cv2.fillConvexPoly(on, cv2.convexHull(cv2.findNonZero((labels == board).astype(np.uint8))), 1)
+    on = cv2.erode(on, np.ones((21, 21), np.uint8))
+    gray = cv2.GaussianBlur(cv2.cvtColor(color, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    lit = (on > 0) & (white > 0)
+    if not lit.any():
+        return []
+    dark = ((gray < CHIP["dark"] * float(np.median(gray[lit]))) & (on > 0)).astype(np.uint8)
+    n, _, stats, centres = cv2.connectedComponentsWithStats(dark)
+    found = []
+    for i in range(1, n):
+        x, y, w, h, size = stats[i]
+        if (CHIP["min_area"] <= size <= CHIP["max_area"] and max(w, h) <= CHIP["max_side"] and size >= CHIP["min_fill"] * w * h
+                and max(w, h) <= CHIP["max_aspect"] * min(w, h)):
+            found.append((float(centres[i][0]), float(centres[i][1]), int(size)))
+    return sorted(found, key=lambda f: -f[2])
 
 
 class BenchCamera:
@@ -106,6 +161,19 @@ class BenchCamera:
                               "located yet: centre the microscope on a thing the bench camera also sees and "
                               "teach_bench_height with where it is in the bench picture")
         return out
+
+    def ring_at(self, at_mm):
+        """Where the projection puts the ring with the head at at_mm, or None if not calibrated."""
+        if self.P is None:
+            return None
+        u, v, w = np.asarray(self.P, float) @ np.array([at_mm["X"], at_mm["Y"], at_mm["Z"], 1.0])
+        return float(u / w), float(v / w)
+
+    def ring_off_px(self, seen_uv, at_mm):
+        """How far the ring light is, in pixels, from where the projection puts it with the head at at_mm: over
+        MOVED_PX, someone moved the camera and its millimetres are not to be trusted. None if not calibrated."""
+        at = self.ring_at(at_mm)
+        return None if at is None else math.hypot(seen_uv[0] - at[0], seen_uv[1] - at[1])
 
     def _nearest_height(self, u, v, x, y):
         """(frame Z, picture distance in px) where the vertical through machine X, Y passes nearest the camera's ray

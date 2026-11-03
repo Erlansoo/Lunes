@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 
 from lunes import mcu
+from lunes import catalog
 from lunes.circuit import _net, faults, netlist, nets_of, value, with_fault
 from lunes.signals import measure
 
@@ -63,7 +64,8 @@ def _run(lines, control, timeout=120, options=SETTINGS[0][1]):
         raise SimulationError([f"ngspice is not installed at {NGSPICE} (see the README)"])
     with tempfile.TemporaryDirectory() as folder:
         cir, data = Path(folder) / "circuit.cir", Path(folder) / "data.txt"
-        cir.write_text("\n".join(["* Lunes", f'.include "{MODELS.as_posix()}"', options, *lines, ".control",
+        cir.write_text("\n".join(["* Lunes", f'.include "{MODELS.as_posix()}"', f'.include "{catalog.lib_path().as_posix()}"',
+                                  options, *lines, ".control",
                                   *control(data.as_posix()), "quit", ".endc", ".end"]) + "\n", encoding="ascii")
         r = subprocess.run([str(NGSPICE), "-b", str(cir)], capture_output=True, text=True, timeout=timeout,
                            cwd=NGSPICE.parent)
@@ -347,7 +349,8 @@ def fault_dictionary(circuit, stop_s=None, workers=6):
     """{fault id: {"says": words, "nets": expected nets, or None and "problem" if it could not be simulated}} plus
     "healthy". Kept on disk by the circuit's content, so the same circuit is simulated once (about half a minute
     for twenty faults)."""
-    key = hashlib.sha1((json.dumps(circuit, sort_keys=True) + MODELS.read_text() + VERSION).encode()).hexdigest()[:16]
+    key = hashlib.sha1((json.dumps(circuit, sort_keys=True) + MODELS.read_text() + catalog.fingerprint() +
+                        VERSION).encode()).hexdigest()[:16]
     cached = CACHE / f"{key}.json"
     if cached.exists():
         return json.loads(cached.read_text(encoding="utf-8"))

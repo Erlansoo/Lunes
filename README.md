@@ -120,6 +120,13 @@ set up as this README describes.
     the known values' units carried through. A mix of units that makes no sense is an error, not a number, and
     nothing but arithmetic is ever run. The model never does arithmetic in its head, and the verifier removes any
     number that came from no tool.
+  - **Chips are data, not code** (`lunes/catalog.py`, `lunes/catalog/*.json`). A chip is a file with its pins, supply,
+    a SPICE subcircuit and a test circuit, and the simulation, the review, the faults, the breadboard and the
+    diagnosis all work with it with no line written for it. Asked for a chip it does not know, Lunes finds the
+    datasheet, writes the entry and the code runs its test: only what passes enters, marked as learnt. It learnt the
+    LM339 that way, in 48 s. A chip is data, so what the model writes never reaches the computer as code. Measured in
+    `docs/unseen.md`: 8 sentences with no template behind them, judged by the simulator with criteria the model
+    never sees, 7 work. The eighth is the honest limit: a NAND oscillator ran out of steps.
   - A review before simulating catches nets with no DC path to ground, a shorted supply and parts in one row
     (`lunes/review.py`). One after simulating catches an LED past 30 mA, a resistor past 1/4 W, a transistor past
     its rating, and a net outside the supply.
@@ -196,6 +203,8 @@ set up as this README describes.
     the holes alone and refuses a plan that is not the circuit.
   - `guide_step` shows each lead, wire and supply connection with the laser's dot, in words. During a diagnosis,
     `guide_net` shows where the probe goes for the net the engine asks for, and where the ground clip goes.
+- **What Lunes has in mind** (`note_on_map`, the web lab's map). The chip it saw, with its notch and pin 1, the laser's last
+  point, the last mosaic and its notes stay in machine mm across restarts, and the page draws them where they are.
 - **A chip and its pin 1** (`lunes/chip.py`), tried on the real 555 on the breadboard.
   - `see_chip` finds the DIP's body, its angle and which end has the notch or the pin-1 dent, by image processing with
     no model, and says how sure it is. A body that runs off the picture's edge is photographed whole, four pictures
@@ -211,7 +220,7 @@ set up as this README describes.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about three minutes. It runs ten files:
+- **Tests with no hardware:** `python tests/run_all.py`, about three minutes. It runs eleven files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -232,6 +241,8 @@ set up as this README describes.
   - `test_calc.py`: expressions with units as written on paper (600 Ω, 159.2 Hz, 2 sqrt(2) V), units that do not
     add up refused, Python in the text refused, and formulas solved for their unknown (an RC cutoff for C, a
     quadratic's two roots, a missing value asked for).
+  - `test_catalog.py`: every chip of the catalog passes its own test and lays out on a breadboard, a learnt chip enters
+    only if it passes, and a subcircuit carrying anything but electricity (`.control`, `.include`, shell) is refused.
   - `test_parts.py`: the newer parts accepted when written right and refused when not, their SPICE lines healthy
     and with each fault, the review catching a zener across the supply, a floating gate, a regulator fed too
     little and a MOSFET half driven, and every new design laid out on the breadboard.

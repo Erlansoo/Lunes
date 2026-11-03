@@ -62,10 +62,15 @@ GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' 
 LIFT_MM = 3.0
 # what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
 MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
-                "guide_step", "guide_net", "see_chip", "calibrate_bench", "reach_in_bench",
+                "guide_step", "guide_net", "see_chip", "center_on_chip", "calibrate_bench", "reach_in_bench",
                 "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
-MAX_ROUNDS = 10
-MAX_TILES = 80  # one board survey: about 9 x 9 pictures, some 75 x 95 mm
+MAX_ROUNDS = 16
+NEAR_CHIP_MM = 40.0  # around the chip on the map the head stays above the breadboard, whoever asks
+RING_ABOVE_MM = 103.0  # about how high the ring hangs over what is in focus: a first guess for the bench camera
+NO_TOKENS = ("Se acabaron los tokens de hoy y sigo con el modelo local, que no mueve la máquina. Puedo conversar y mirar; "
+             "para moverla hay que esperar a medianoche o subir el tope.")
+NO_MODEL = "El modelo principal no respondió y el local no mueve la máquina. Repítemelo en un momento."
+MAX_TILES = 130  # one survey: a whole breadboard, 55 x 165 mm, takes some 120 pictures and six minutes
 MAX_PART_TILES = 12
 BOARD_MARGIN_MM = 2.0
 PART_MARGIN_MM = 1.5
@@ -101,11 +106,26 @@ A la cámara del banco le falta un dato después de calibrarla, una sola vez: a 
 que enfoca el microscopio. Se lo enseñas con una cosa que vean las dos: centras el microscopio en algo que la cámara
 del banco también distinga (el chip negro de la protoboard), enfocado, find_in_bench lo encuentra en la foto del
 banco y teach_bench_height con ese x, y.
-Para llegar rápido a algo que el microscopio no tiene debajo: find_in_bench lo encuentra en la foto de la cámara del
-banco y reach_in_bench lleva el cabezal encima: la cámara del banco da los mm, el Kinect comprueba que el cabezal
-llegó, y abajo, a la altura de la superficie, el láser pone el punto y el microscopio lo ve: por dónde cae sabe a qué
-altura está lo que hay ahí, que debe ser la esperada; si el punto cae en un agujero o en el costado de una pieza lo
-prueba 4 mm al lado. Es una aproximación (la CNC es artesanal, con sus errores de escuadra y tensión): deja el
+La linterna del banco ilumina de costado: con ella se lee la marca de un chip bajo el microscopio, sin ella casi
+nunca, pero deslumbra a la cámara del banco y al Kinect. Si no alcanzas a leer una marca, pídele a Erlan que la
+encienda; si reach_in_bench no encuentra el chip, pídele que la apague.
+El chip que ya viste se queda donde lo viste: tu mapa lo recuerda y reach_in_bench con chip true va ahí primero. Lo
+que identifiques (la marca de un chip, un riel, un componente) anótalo con note_on_map: Erlan ve ese mapa en la web.
+Una placa y una protoboard no son lo mismo. La placa es un circuito impreso, con pistas de cobre y componentes
+soldados. La protoboard es el bloque claro de agujeros cada 2.54 mm, con sus rieles, donde todo se enchufa sin soldar. Un
+módulo es una placa chiquita enchufada en la protoboard: anótalo con note_on_map y llámalo módulo. Llama cada cosa por su
+nombre. measure_board y survey_board te piden bed: si no sabes qué hay en la mesa, míralo antes.
+Una protoboard tiene dos rieles de alimentación a lo largo de cada borde, con su línea roja (+) y azul (-), paralelos al
+chip y a unos 20 mm de su centro, a cada lado. Para mostrar uno: center_on_chip (trae across_chip_axis, el eje que cruza
+el chip), move_by unos 20 mm por ese eje, autofocus y look_microscope; si ves el riel, laser_point con picture_x y
+picture_y sobre su línea, y si no, sigue unos mm. Con la cámara del banco no se distinguen.
+Para ir a un chip de la protoboard, esté donde esté: reach_in_bench con chip true, una sola llamada; el código lo
+encuentra en la foto del banco, va encima y lo centra comprobándolo. Si ya se ve en el microscopio, center_on_chip.
+Para otra cosa que el microscopio no tiene debajo: find_in_bench la encuentra en la foto de la cámara del banco y
+reach_in_bench lleva el cabezal encima con su x, y: la cámara del banco da los mm y el Kinect comprueba que el cabezal
+llegó. Solo baja si le das height_mm; sin eso se queda arriba, porque del cabezal cuelgan cosas que llegan más abajo
+que el lente. Con la altura, el láser pone el punto y el microscopio lo ve: por dónde cae sabe a qué altura está lo
+que hay ahí, que debe ser la esperada. Es una aproximación (la CNC es artesanal, con sus errores de escuadra y tensión): deja el
 cabezal a pocos mm y el microscopio remata. Si algo no coincide te lo dice y tú se lo dices a Erlan. find_in_kinect
 también da machine_mm (con un centímetro de error). Los tamaños y las posiciones finas salen del microscopio y
 measure_board, nunca de las cámaras.
@@ -145,7 +165,9 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   usuales (LED, 555 fijo o ajustable con potenciómetro, transistor o MOSFET como interruptor, divisor fijo o con
   potenciómetro, filtro RC, amplificador, regulador lineal o zener, sensor de luz, pulsador), diséñalo con circuit_design: el
   código calcula los valores con fórmulas y los verifica en la simulación. Si no, escríbelo con circuit_set y dale
-  sus metas (spec). Solo propónselo a Erlan cuando todas las metas pasen y la revisión no avise nada serio; si
+  sus metas (spec): sirve para cualquier circuito con piezas del catálogo, no solo las plantillas. Si te piden un
+  integrado, míralo con chip_catalog; si no está, no digas que no se puede y no lo cambies por otro: busca su hoja de
+  datos con search_web y apréndelo con chip_learn, tú solo, y sigue con el circuito. Solo propónselo a Erlan cuando todas las metas pasen y la revisión no avise nada serio; si
   avisa, corrígelo. Para el criterio (patillajes, fallas típicas, límites) consulta circuit_guide. Si el simulador
   rechaza un circuito, su mensaje dice por qué: corrige eso, no repitas lo mismo. Hasta un valor suelto (la
   resistencia de un LED) se calcula con circuit_design, nunca a mano, y cualquier otra cuenta (una potencia, una
@@ -183,9 +205,12 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   culpar al circuito, y system_restart para la parte que falle; dile a Erlan qué pasó.
 - El láser del cabezal es tu dedo para señalarle cosas a Erlan: el punto rojo es lo que él ve, así que apunta a la
   cosa misma con laser_point (un punto de la foto del microscopio con picture_x/picture_y, del mosaico con
-  mosaic_x/mosaic_y, o en mm) y dile qué le señalas. Para el pin 1 de un chip, laser_point con chip_pin 1: el código
-  encuentra el chip y su pin, enfoca y pone el punto sobre el chip, justo al lado de la pata 1, y comprueba que cayó
-  sobre el chip; dile que está al lado de la pata, no encima. Nunca elijas un pin a ojo en la foto. Toda
+  mosaic_x/mosaic_y, o en mm) y dile qué le señalas. Para cualquier pin de un chip, laser_point con chip_pin y su
+  número (si el chip es largo, también pins, cuántas patas tiene): el código encuentra el chip y ese pin, enfoca y pone
+  el punto sobre el chip, justo al lado de la pata, y comprueba que cayó sobre el chip; dile que está al lado de la
+  pata, no encima. Nunca elijas un pin a ojo en la foto, y su lugar tampoco lo digas de memoria: en un DIP con la muesca
+  a la izquierda el 1 va abajo a la izquierda, los números corren hacia la derecha por abajo y vuelven por arriba, así
+  que el último queda justo encima del 1, también junto a la muesca. Toda
   respuesta de laser_point trae confirmed: si es false, di que no pudiste confirmarlo y dónde cayó el punto, nunca
   que está sobre la cosa. El láser va en el carro, no en el Z, y su haz va inclinado: el
   punto cae corrido del centro del microscopio, y más corrido cuanto más alta es la superficie. El código enfoca
@@ -261,26 +286,30 @@ TOOLS = [
         "description": "After calibrate_bench, once: tells the bench camera how high the ring light hangs over what the "
                        "microscope focuses on, from one thing seen by both. First centre the microscope on a thing "
                        "the bench camera tells apart too (the black chip on the breadboard, a board's corner) with "
-                       "center_on_point, in focus (autofocus); then find it in the bench picture (find_in_bench, or "
+                       "center_on_chip, which focuses too, or center_on_point and autofocus; then find it in the bench picture (find_in_bench, or "
                        "Erlan says where it is in look_bench's picture) and give its x, y (0 to 1) here. height_mm is "
                        "the thing's focus height, the head's Z by default. The one height that fits is kept and "
-                       "checked against the camera's geometry: a point that is not the thing is refused.",
+                       "checked against the camera's geometry: a point that is not the thing is refused. With the "
+                       "chip centred, chip true instead of x, y: the code finds it in the bench picture.",
         "parameters": {"type": "object", "properties": {
-            "x": {"type": "number"}, "y": {"type": "number"}, "height_mm": {"type": "number"}}, "required": ["x", "y"]}}},
+            "chip": {"type": "boolean"}, "x": {"type": "number"}, "y": {"type": "number"}, "height_mm": {"type": "number"}}}}},
     {"type": "function", "function": {
         "name": "reach_in_bench",
-        "description": "Go straight to a point of the bench camera's picture (x, y from 0 to 1, from find_in_bench or "
+        "description": "To go to the chip on the breadboard, wherever it is: chip true, with nothing else; the code "
+                       "finds it in the bench picture (SAM does not, from so far), goes over it and centres it under "
+                       "the microscope, checked. Otherwise go straight to a point of the bench camera's picture (x, y from 0 to 1, from find_in_bench or "
                        "from a point Erlan names in look_bench's picture): the calibrated bench camera turns it into "
-                       "millimetres at height_mm (the table's by default; a breadboard's top or a board's surface if "
-                       "it lies on one, as the head's Z in focus on it), the head goes over it high, the Kinect "
-                       "checks the head got there, then it comes down to height_mm and the laser's dot is put on "
-                       "the point and seen by the microscope: where it lands tells the height of the surface there, "
-                       "which must be height_mm. A dot lost in a hole or on a part's side is tried 4 mm beside the "
+                       "millimetres at height_mm (a breadboard's top or a board's surface, as the head's Z in focus "
+                       "on it), the head goes over it high and the Kinect checks it got there. Only with height_mm "
+                       "does it come down, and the laser's dot is put on the point and seen by the microscope: where "
+                       "it lands tells the height of the surface there, which must be height_mm; without it the head "
+                       "stays up. A dot lost in a hole or on a part's side is tried 4 mm beside the "
                        "point. A disagreement is reported, never corrected on its own. An approximation, a few mm "
                        "(the machine is hand-built): look_microscope and center_on_point settle the rest.",
         "parameters": {"type": "object", "properties": {
+            "chip": {"type": "boolean", "description": "true: to the chip on the breadboard, found by the code"},
             "x": {"type": "number"}, "y": {"type": "number"}, "height_mm": {"type": "number"},
-            "check_laser": {"type": "boolean"}}, "required": ["x", "y"]}}},
+            "check_laser": {"type": "boolean"}}}}},
     {"type": "function", "function": {
         "name": "find_in_kinect",
         "description": "Find every instance of one thing in a fresh Kinect picture with SAM 3.1: where it is in the "
@@ -466,6 +495,13 @@ TOOLS = [
                        "guess. Returns the picture with what was seen drawn.",
         "parameters": {"type": "object", "properties": {"ref": {"type": "string"}}}}},
     {"type": "function", "function": {
+        "name": "center_on_chip",
+        "description": "Put the chip under the microscope in the middle of the view, checked: the code focuses, finds "
+                       "the chip's body, moves, and looks again until it is within 0.3 mm of the middle. The answer's "
+                       "centered says whether it was seen there. Use this and not center_on_point for a chip. The chip "
+                       "must be at least partly in view; if it is not, reach_in_bench with chip true.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
         "name": "confirm_pin1",
         "description": "Erlan tells where pin 1 is, when the code could not see it or to confirm it, one of three "
                        "ways. 'tap': the point he tapped on the microscope's picture in the web lab (or give "
@@ -501,6 +537,8 @@ TOOLS = [
                        "button): state 'closed' or 'open', pins [a, b]. LDR: dark and lit values, condition 'lit' "
                        "or 'dark', pins [a, b]. NTC: cold and hot values, condition 'cold' or 'hot', pins [a, b]. "
                        "REG (linear regulator): model 7805, 7812, LM1117-3.3 or LM1117-5, pins {IN, OUT, GND}. "
+                       "IC: any chip of the catalog, model its name, pins {its pin names: net} (chip_catalog gives "
+                       "them; a chip that is not there, chip_learn); pins of it left out stay unconnected. "
                        "NE555: pins {GND, TRIG, OUT, RESET, CTRL, THRES, "
                        "DISCH, VCC}. OPAMP: pins {OUT, IN-, IN+, V+, V-}. V (an extra source): value '3.3' or "
                        "{sine: [offset, amplitude, hz]} or {square: [low, high, hz]}, pins {+, -}. ARDUINO_UNO, "
@@ -546,6 +584,28 @@ TOOLS = [
                                                     "arduino_blink", "arduino_pwm_rc", "arduino_transistor",
                                                     "arduino_read_divider"]},
             "params": {"type": "object"}}, "required": ["template"]}}},
+    {"type": "function", "function": {
+        "name": "chip_catalog",
+        "description": "The chips Lunes can use with kind IC in circuit_set. Without name, their list. With a name, the "
+                       "chip's pins, what they do, its supply range, its notes and its SPICE subcircuit, which is also "
+                       "the example to follow in chip_learn.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "chip_learn",
+        "description": "Learn a chip that is not in the catalog, by yourself: find its datasheet with search_web, read "
+                       "the pinout, and give the entry. {name, package (DIP8, DIP14, TO-220...), pins {\"1\": \"OUT1\", "
+                       "...} with every pin named once, power [positive pin, ground pin], inputs [...], outputs [...], "
+                       "dc_links [[pin, pin], ...] for the pins that conduct DC inside it, supply_v [min, max], notes "
+                       "(what a user must know: an open-collector output needs a pull-up), source (the datasheet's "
+                       "URL), spice, test}. spice is one behavioural subcircuit, .subckt CHIP_<name> with its nodes in "
+                       "pin-number order: only electrical parts (R, C, L, D, Q, M, V, I, X, B sources) and .model, "
+                       ".param, .func, .ends; lunes_step(x, k) is a smooth step and OPAMP an op-amp you can use. test "
+                       "is {circuit, goals}: a small circuit using this chip as kind IC with the model's name, and the "
+                       "goals its simulation must meet ({net, mean_v | frequency_hz, tolerance}), which prove it does "
+                       "what the datasheet says. The code runs the test; only a chip that passes enters the catalog, "
+                       "and a failure says why, so fix the entry and try again. Never make goals up to pass: they "
+                       "come from what the chip must do.",
+        "parameters": {"type": "object", "properties": {"entry": {"type": "object"}}, "required": ["entry"]}}},
     {"type": "function", "function": {
         "name": "circuit_guide",
         "description": "Read a section of Lunes' circuit guide, what a senior bench engineer keeps in mind: method, "
@@ -664,10 +724,18 @@ TOOLS = [
                        "different heights.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
+        "name": "note_on_map",
+        "description": "Write on your map of the bench what you identified, so Erlan sees it in the web lab and you "
+                       "still know it later. chip true names the chip the microscope saw (its marking, like NE555P); "
+                       "otherwise the label goes at x, y in machine mm, or under the microscope with none given.",
+        "parameters": {"type": "object", "properties": {
+            "label": {"type": "string"}, "chip": {"type": "boolean"}, "x": {"type": "number"}, "y": {"type": "number"}},
+            "required": ["label"]}}},
+    {"type": "function", "function": {
         "name": "laser_point",
         "description": "Put the laser dot exactly on a point to show it to Erlan (the red dot is what he sees, so "
-                       "point at the thing itself). To point at a chip's pin 1: chip_pin 1, and the code finds the "
-                       "chip and its pin (see_chip), focuses, puts the dot on the chip's top right beside pin 1's leg "
+                       "point at the thing itself). To point at any pin of a DIP chip: chip_pin with its number, and the "
+                       "code finds the chip and the pin, focuses, puts the dot on the chip's top right beside that leg "
                        "(the leg itself is lower and shiny) and confirms it is seen on the chip: tell Erlan it is "
                        "beside the leg, not on it. Never pick a pin by eye in the picture. Otherwise picture_x, picture_y for a point of the "
                        "last microscope picture, mosaic_x, mosaic_y for a point of the last survey mosaic "
@@ -678,7 +746,9 @@ TOOLS = [
                        "Erlan in those words and where the dot is; never say the dot is on something unconfirmed. "
                        "Needs laser_calibrate.",
         "parameters": {"type": "object", "properties": {
-            "chip_pin": {"type": "integer", "description": "1: the pin 1 of the DIP under the microscope"},
+            "chip_pin": {"type": "integer", "description": "the number of the pin of the DIP under the microscope"},
+            "pins": {"type": "integer", "description": "how many pins the chip has: needed for a pin other than 1 of a "
+                                                       "chip longer than a DIP-8, unless the circuit already says it"},
             "ref": {"type": "string", "description": "the chip's ref in the circuit, if any"},
             "picture_x": {"type": "number"}, "picture_y": {"type": "number"},
             "mosaic_x": {"type": "number"}, "mosaic_y": {"type": "number"},
@@ -716,20 +786,30 @@ TOOLS = [
             "up_mm": {"type": "number", "description": "how far above the current height to search, 0.3 to 5"}}}}},
     {"type": "function", "function": {
         "name": "measure_board",
-        "description": "Find the outline of the circuit board from the current position: walk to each side until "
-                       "its edges show up (searching around first if there is no board under the microscope). "
-                       "Returns the board's size and position in mm. Takes some 20 to 90 seconds.",
+        "description": "Find the outline of what lies on the table, a placa or a protoboard, from the current position: "
+                       "walk to each side until its edges show up (searching around first if there is nothing under "
+                       "the microscope). Returns its size and position in mm. Takes some 20 to 90 seconds.",
         "parameters": {"type": "object", "properties": {
+            "bed": {"type": "string", "enum": ["protoboard", "placa"],
+                    "description": "what lies on the table, as you see it: protoboard, the light block of holes where parts "
+                                   "plug in with no solder, or placa, a printed circuit board with soldered parts. A module "
+                                   "plugged into a protoboard is a small placa, and the bed is still protoboard"},
             "new_board": {"type": "boolean",
-                          "description": "true when Erlan changed, moved or flipped the board since the last one"}}}}},
+                          "description": "true when Erlan changed, moved or flipped it since the last one"}},
+            "required": ["bed"]}}},
     {"type": "function", "function": {
         "name": "survey_board",
-        "description": "Photograph the whole board that measure_board found (it measures first if needed) and "
-                       "stitch one mosaic. With width_mm and height_mm, photograph an area of that size centred on "
+        "description": "Photograph the whole placa or protoboard that measure_board found (it measures first if needed) "
+                       "and stitch one mosaic. With width_mm and height_mm, photograph an area of that size centred on "
                        "the current position instead.",
         "parameters": {"type": "object", "properties": {
+            "bed": {"type": "string", "enum": ["protoboard", "placa"],
+                    "description": "what lies on the table, as you see it: protoboard, the light block of holes where parts "
+                                   "plug in with no solder, or placa, a printed circuit board with soldered parts. A module "
+                                   "plugged into a protoboard is a small placa, and the bed is still protoboard"},
             "width_mm": {"type": "number", "description": "size along X, only when Erlan gave it"},
-            "height_mm": {"type": "number", "description": "size along Y, only when Erlan gave it"}}}}},
+            "height_mm": {"type": "number", "description": "size along Y, only when Erlan gave it"}},
+            "required": ["bed"]}}},
     {"type": "function", "function": {
         "name": "look_survey",
         "description": "See again a mosaic taken earlier in this session, without moving: number 1 is the first "
@@ -854,8 +934,13 @@ class Hume:
         self.supply = json.loads(SUPPLY.read_text(encoding="utf-8")) if SUPPLY.exists() else None  # the last reading
         self.supply_seen = None  # what the bench camera said the last time it looked: a reading, or why there is none
         self.layout, self.placement = None, None  # the circuit laid out on the breadboard, and where the board lies
+        self.layout_for = None  # the circuit that layout is of
         self.guide = {"step": 0, "holes": [], "says": ""}  # what the laser is showing Erlan
         self.chip_seen = None  # the last chip the microscope saw: body, notch end, pin 1, and how it was confirmed
+        # what Lunes has in mind of the bench, in machine mm: the chip (and its notch, last seen well), the laser's last
+        # point, the last mosaic and its notes. It is on the web lab's map, and only the real session keeps it (keep_world)
+        self.world = {"bed": None, "board": None, "chip": None, "notch": None, "laser": None, "mosaic": None, "notes": []}
+        self.world_file = None
         self.taps = []  # points Erlan tapped on the web lab's microscope picture: (x, y) as fractions
         self.last_mcu, self.last_serial = None, None  # the last mcu_read, and the last lines the serial monitor showed
         self.goals, self.lab_diagnosis = None, None  # the circuit's goals, and the diagnosis as the web lab last read it
@@ -892,6 +977,8 @@ class Hume:
         self.hold, self.kinect_waived = None, False
         self.spark = None
         self.effort = effort or SPARK_EFFORT  # how much the Meta model reasons per step
+        self.on_fallback = False  # the Meta model failed this step and local Glimmer answered: it does not drive the machine
+        self.fallback_line = NO_MODEL  # the reason, in words: Glimmer is not left to make one up
         if spark:
             try:
                 from lunes.meta_api import MetaModels
@@ -933,17 +1020,14 @@ class Hume:
         here = self.m.position()["Z"]
         return self._scan_focus(min(here + up_mm, WORKSPACE["Z"][1]), max(self._z_floor(), here - 0.3))
 
-    def _focus_board(self, above_mm=0.5):
-        """Puts the board's surface in focus: at the known focus height, or found by searching from above_mm over
-        the current height down to the floor."""
+    def _focus_board(self):
+        """Puts the board's surface in focus: at the known focus height, or coming down onto the first sharp surface,
+        never a scan down to the table, since things hang from the head."""
         if self.focus_z is not None:
             self.m.move_to(Z=self.focus_z)
             return self.focus_z
-        # The bench's Z origin was set by eye: the board may sit a little lower, so look 1.5 mm below it too.
-        here = self.m.position()["Z"]
-        z, _ = self._scan_focus(min(here + above_mm, WORKSPACE["Z"][1]), max(self._z_floor() - 1.5, WORKSPACE["Z"][0]))
-        self.focus_z = z
-        return z
+        self.focus_z, _ = self._focus_here()
+        return self.focus_z
 
     # Memory ------------------------------------------------------------------------------------------------
     def _memory_text(self, last=15):
@@ -973,7 +1057,7 @@ class Hume:
                 lo = max(lo, self._z_floor())
             if not lo - 0.05 <= v <= hi + 0.05:  # positions come back rounded to whole steps (Y: 0.025 mm)
                 return f"{axis}={v:.2f} mm está fuera del área permitida ({lo:.2f} a {hi:.2f} mm)"
-        return None
+        return self._no_go(target) if self.world_file else None  # a calibration's route skips such a point, and goes on
 
     def _move(self, x=None, y=None, z=None):
         here = self.m.position()
@@ -1147,9 +1231,10 @@ class Hume:
         goals = verify(sim, as_spec(spec)) if spec else []
         self.circuit, self.expected, self.diagnosis, self.fault_table = circuit, sim, None, None
         self.goals = goals
-        CIRCUIT.parent.mkdir(exist_ok=True)
-        CIRCUIT.write_text(json.dumps({"circuit": circuit, "expected": sim}, ensure_ascii=False, indent=1),
-                           encoding="utf-8")
+        if self.world_file:  # a test's circuit is not the one on the bench
+            CIRCUIT.parent.mkdir(exist_ok=True)
+            CIRCUIT.write_text(json.dumps({"circuit": circuit, "expected": sim}, ensure_ascii=False, indent=1),
+                               encoding="utf-8")
 
         def table():  # ready by the time Erlan has built it or picked up the probe
             try:
@@ -1603,20 +1688,38 @@ class Hume:
             out["warning"] = warning
         return out, view
 
-    def _focus_here(self):
-        """The microscope in focus on what is under it, if it is not already: a fine search a few tenths around
-        here, and when the sharpest is at that window's edge a wide one, from a millimetre up down to the floor.
-        The laser's offset and the picture's scale both depend on the surface's height, so pointing starts here.
-        Returns (Z, sharpness)."""
+    def _travel_z(self):
+        """A height clear of everything measured on the table: the highest known surface, plus a margin."""
+        known = [s["z"] for s in (self.m.config.get("laser") or {}).get("surfaces", [])]
+        return min(max(known + [self._z_floor()]) + 3.0, WORKSPACE["Z"][1])
+
+    def _surface_z(self, *names):
+        """The focus height of the first of these surfaces the laser was calibrated on, or None."""
+        surfaces = {s.get("surface"): s["z"] for s in (self.m.config.get("laser") or {}).get("surfaces", [])}
+        return next((surfaces[n] for n in names if n in surfaces), None)
+
+    def _chip_floor(self):
+        """How low the microscope goes looking for a chip: a chip is never below the breadboard it stands on."""
+        z = self._surface_z("protoboard", "chip")
+        return None if z is None else z - 1.0
+
+    def _focus_here(self, lowest=None):
+        """The microscope in focus on the highest thing under it. It comes down from over the highest surface known,
+        a millimetre at a time, and stops as soon as the picture has been sharp and blurs again, so the head never
+        goes lower than it must: other things hang from it (a scope's probe), and they reach further down than the
+        lens. Then a fine search around the best. lowest keeps it above a height when what it looks for cannot be
+        lower. Returns (Z, sharpness)."""
         here, top, floor = self.m.position()["Z"], WORKSPACE["Z"][1], self._z_floor()
-        hi, lo = min(here + 1.0, top), floor
+        floor = floor if lowest is None else max(floor, lowest)
         best = (-1.0, here)
-        z = hi
-        while z >= lo - 1e-9:  # a millimetre at a time over the whole range: a blurred chip looks sharpish up close
+        z = min(max(here + 1.0, self._travel_z()), top)
+        while z >= floor - 1e-9:
             self.m.move_to(Z=z)
             s = sharpness(self.cam.fresh_gray(2))
             self.show(self.cam.frame(), f"enfocando  Z {z:+.2f}  nitidez {s:.0f}")
             best = max(best, (s, z))
+            if best[0] > 100 and s < 0.6 * best[0]:
+                break  # past the first sharp surface coming down: it is the one on top
             z -= 1.0
         z, s = self._scan_focus(min(best[1] + 0.75, top), max(best[1] - 0.75, floor))  # then fine around the best
         self.m.move_to(Z=z)
@@ -1626,7 +1729,7 @@ class Hume:
         """The dot on a point, with the microscope first in focus on the surface there (the laser's offset depends
         on its height), the dot looked for after the move at rising brightness, and the answer saying whether it was
         confirmed: seen by the microscope within half a millimetre of the point. With chip_pin, the point is on the
-        chip's flat top right beside pin 1's leg, found by the code (see_chip): the leg itself is lower and shiny, and
+        chip's flat top right beside that pin's leg, found by the code (see_chip): the leg itself is lower and shiny, and
         the dot is confirmed only when it is also seen on the chip's body, in a last look with the laser on."""
         from lunes import chip as chips
         from lunes.laser import height_from, offset_at, slant
@@ -1636,14 +1739,17 @@ class Hume:
         pin, view = None, None
         if args.get("chip_pin") is not None:
             pin = int(args["chip_pin"])
-            if pin != 1:
-                return {"ok": False, "error": "the code finds pin 1 only: point at pin 1 with chip_pin 1 and tell "
-                                              "Erlan to count from it (pins run from the notch down one side and "
-                                              "back up the other)"}, None
-            seen, view = self._see_chip(args.get("ref"))  # in focus on the chip, its pin 1 found by the code
-            if not seen.get("ok") or not seen.get("pin1_mm"):
-                return dict(seen, ok=False, error=seen.get("error") or seen.get("note") or "pin 1 not seen"), view
-            x, y = seen["beside_pin1_mm"]["X"], seen["beside_pin1_mm"]["Y"]
+            centred, view = self._center_chip()  # in one picture, in focus, its top the surface the dot lands on
+            if not centred.get("ok"):
+                return centred, view
+            count = args.get("pins") or self._chip_pins(args.get("ref"))
+            if not 1 <= pin <= (count or 99) or (pin > 1 and count is None and centred["body_size_mm"][0] >= 12):
+                return {"ok": False, "error": f"this chip has {count} pins" if count else "this chip is longer than a "
+                        "DIP-8 and its body does not say how many pins it has: give pins"}, view
+            seen, view = self._see_chip(args.get("ref"), focus=False, pin=pin, pins=count)  # the pin, found by the code
+            if not seen.get("ok") or not seen.get("pin_mm"):
+                return dict(seen, ok=False, error=seen.get("error") or seen.get("note") or f"pin {pin} not seen"), view
+            x, y = seen["beside_pin_mm"]["X"], seen["beside_pin_mm"]["Y"]
         else:
             at = self.m.position()
             if args.get("picture_x") is not None and args.get("picture_y") is not None:
@@ -1665,7 +1771,7 @@ class Hume:
             self._focus_here()
         at = self.m.position()
         nearest = min(cal["surfaces"], key=lambda s: abs(s["z"] - at["Z"]))
-        levels = (nearest["pwm"], min(255, nearest["pwm"] * 3), min(255, nearest["pwm"] * 8))  # a dark part swallows the fine dot
+        levels = (nearest["pwm"], min(255, nearest["pwm"] * 3))  # a dark part swallows the fine dot; much more only blinds
         dx, dy = offset_at(cal, at["Z"])
         moved = self._move(x - dx, y - dy, at["Z"])
         if not moved.get("ok"):
@@ -1699,17 +1805,22 @@ class Hume:
             dot, _, _ = self._laser_dot(level, dark)
             on_body = dot is not None and chips.on_body(dark, dot["x"], dot["y"])
             confirmed = on_body
+        if not seen_dot:
+            level = levels[0]  # none showed it: the bright one blinds the picture for nothing
         self.m.laser(level)  # the brightness that showed the dot here; off by itself in a minute
+        self.world["laser"] = {"mm": [round(x, 2), round(y, 2)], "confirmed": confirmed, "pin": pin, "at": time.time()}
+        self._save_world()
         out = {"ok": True, "confirmed": confirmed, "dot_at_mm": {"X": round(x, 2), "Y": round(y, 2)},
                "head_at_mm": moved["position_mm"], "level": level, "focus_z_mm": round(at["Z"], 2)}
         if pin is not None:
-            leg = seen["pin1_mm"]
-            out.update(pin=1, pin1_mm=leg, notch=seen.get("notch"), sure=seen.get("sure"),
+            leg = seen["pin_mm"]
+            out.update(pin=pin, pin_mm=leg, notch=seen.get("notch"), sure=seen.get("sure"),
                        leg_from_dot_mm=round(math.hypot(leg["X"] - x, leg["Y"] - y), 1))
         if confirmed:
-            out["note"] = (f"the dot is on the chip's top right beside pin 1's leg ({seen.get('notch')}), seen on the body "
+            out["note"] = (f"the dot is on the chip's top right beside pin {pin}'s leg ({seen.get('notch')}), seen on the body "
                            f"by the microscope; the leg is {out['leg_from_dot_mm']} mm further out, past the body's edge; "
-                           "say it that way, beside the leg, not on it" if pin else
+                           "say it that way, beside the leg, not on it; the laser is off to one side of the microscope, "
+                           "so to look at the chip again, center_on_chip first" if pin else
                            "the dot is on the point, seen there by the microscope" +
                            (f" after {corrected} correction(s)" if corrected else "") +
                            "; it goes off by itself in a minute")
@@ -1725,7 +1836,7 @@ class Hume:
         else:
             out["warning"] = ("the dot was not seen after the move (over a hole, off a surface, or too shiny): it "
                               "points where the calibration says, NOT confirmed" +
-                              (f"; pin 1 is {seen.get('notch')}" if pin else ""))
+                              (f"; the chip has its {seen.get('notch')}" if pin else ""))
             if slant(cal) is None and abs(at["Z"] - nearest["z"]) >= 0.3:
                 out["warning"] += (f"; calibrated only on a surface at Z {nearest['z']:.2f} and the head is at Z "
                                    f"{at['Z']:.2f}, so the slanted beam may land off")
@@ -1737,12 +1848,26 @@ class Hume:
         return out, view
 
     # The laser as a guide on the breadboard -------------------------------------------------------------------------
+    def plan_now(self):
+        """The plan of the circuit on the bench, for the web lab: there as soon as the circuit is, with nobody asking, and
+        never the plan of the circuit before."""
+        from lunes import breadboard
+        if self.layout_for is not self.circuit:
+            self.layout_for, self.layout = self.circuit, None
+            self.guide = {"step": 0, "holes": [], "says": ""}
+            if self.circuit is not None:
+                try:
+                    self.layout = breadboard.plan(self.circuit, self.expected)
+                except ValueError:  # it does not fit: breadboard_plan says why when asked
+                    pass
+        return self.layout
+
     def _breadboard_plan(self):
         from lunes import breadboard
         if self.circuit is None:
             return {"ok": False, "error": "no circuit yet: circuit_set or circuit_design first"}, None
         try:
-            self.layout = breadboard.plan(self.circuit, self.expected)
+            self.layout, self.layout_for = breadboard.plan(self.circuit, self.expected), self.circuit
         except ValueError as e:
             return {"ok": False, "error": str(e)}, None
         self.guide = {"step": 0, "holes": [], "says": ""}
@@ -1801,7 +1926,7 @@ class Hume:
     # A chip under the microscope and its pin 1 -----------------------------------------------------------------
     def _chip_ref(self, ref=None):
         """The chip of the circuit this is about: the one named, or the only chip in the circuit."""
-        chips = [p for p in (self.circuit or {}).get("parts", []) if p["kind"] in ("NE555", "OPAMP")]
+        chips = [p for p in (self.circuit or {}).get("parts", []) if p["kind"] in ("NE555", "OPAMP", "IC")]
         if ref:
             chips = [p for p in chips if p["ref"] == ref]
         return chips[0]["ref"] if len(chips) == 1 else None
@@ -1839,9 +1964,150 @@ class Hume:
         self.chip_seen = dict(self.chip_seen or {}, **out, at=time.time())
         return out
 
-    def _see_chip(self, ref=None):
+    def _center_chip(self):
+        """The chip in the middle of the microscope's view, checked: it looks, moves by what is left, and looks again
+        until the chip's own centre, found by the code, is within 0.3 mm of the middle."""
         from lunes import chip as chips
-        self._focus_here()  # a blurred chip measures wrong; its pin 1 in mm needs the picture's true scale
+        ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
+        self._focus_here(self._chip_floor())
+        view, off = None, None
+        for moves in range(6):
+            frame = self._look()
+            at = self.last_look[0]
+            view = with_cross(frame)
+            found = chips.find_chip(frame, ppm)
+            known = self.world["chip"]
+            if found is None and moves == 0 and known and math.dist(known["center_mm"], (at["X"], at["Y"])) > 1.0:
+                # the laser's offset, or a walk on the bench, left it out of the picture: it stays where it was seen
+                moved = self._move(*known["center_mm"], max(at["Z"], self._travel_z()))
+                if not moved.get("ok"):
+                    return dict(moved, centered=False), view
+                self._focus_here(self._chip_floor())
+                continue
+            if found is None:
+                self.world["chip"] = None  # not where it was: on the map only what is true
+                self._save_world()
+                return {"ok": False, "centered": False, "error": "no chip in the microscope's view: it is further away "
+                                                                  "than the picture reaches, or this is not over it; "
+                                                                  "tell Erlan"}, view
+            x, y = self._picture_mm(found["center"][0], found["center"][1], at)
+            off = math.hypot(x - at["X"], y - at["Y"])
+            if off <= 0.3 and not found["cut_by_edge"]:
+                self._remember_chip(found, at)
+                return {"ok": True, "centered": True, "off_mm": round(off, 2), "moves": moves,
+                        "across_chip_axis": self._across_chip(),
+                        "chip_at_mm": {"X": round(x, 2), "Y": round(y, 2)}, "focus_z_mm": round(at["Z"], 2),
+                        "body_size_mm": found["size_mm"], "note": "seen in the middle of the picture in a fresh look"}, view
+            moved = self._move(x, y, at["Z"])
+            if not moved.get("ok"):
+                return dict(moved, centered=False), view
+        return {"ok": False, "centered": False, "off_mm": off and round(off, 2),
+                "error": f"after 6 moves the chip is still {off:.1f} mm from the middle: say so to Erlan"}, view
+
+    def keep_world(self, path):
+        """What Lunes knows of the bench survives a restart from now on. Only the real session calls this: a made-up
+        bench in a test is not to be remembered."""
+        self.world_file = Path(path)
+        if self.world_file.exists():
+            self.world.update(json.loads(self.world_file.read_text(encoding="utf-8")))
+        if CIRCUIT.exists():
+            saved = json.loads(CIRCUIT.read_text(encoding="utf-8"))
+            self.circuit, self.expected = saved["circuit"], saved["expected"]
+        self.m.no_go = self._no_go
+
+    def _no_go(self, target):
+        """The last guard on a move, whatever asked for it: near the chip on the map the head never goes below the
+        breadboard the chip stands on. Coming up from there is always allowed."""
+        chip, floor = self.world["chip"], self._chip_floor()
+        if not chip or floor is None or target["Z"] >= floor or target["Z"] > self.m.at_mm["Z"]:
+            return None
+        if math.dist(chip["center_mm"], (target["X"], target["Y"])) > NEAR_CHIP_MM:
+            return None
+        return (f"refused: Z {target['Z']:.2f} is below the breadboard here (Z {floor + 1.0:.2f}), and things hang from the "
+                f"head; stay above it")
+
+    def _save_world(self):
+        if self.world_file:
+            self.world_file.write_text(json.dumps(self.world, default=float), encoding="utf-8")
+
+    def bench_mosaic(self):
+        """The last mosaic's picture, for the map."""
+        if self.last_mosaic is None and self.world_file and self.world_file.with_name("bench_mosaic.jpg").exists():
+            self.last_mosaic = cv2.imread(str(self.world_file.with_name("bench_mosaic.jpg")))
+        return self.last_mosaic
+
+    def _say_bed(self, bed):
+        if bed in ("protoboard", "placa"):
+            self.world["bed"] = bed
+            self._save_world()
+
+    def bed_name(self):
+        """What lies on the table, in words, as the model saw it."""
+        return f"la {self.world['bed']}" if self.world["bed"] else "lo que hay en la mesa"
+
+    def _remember_chip(self, found, at, **more):
+        """What the microscope just saw of a chip goes on the map, in machine mm. A chip further than 3 mm from the one
+        remembered is another one (or it was moved), and loses the name and the notch end of the old."""
+        center = self._picture_mm(found["center"][0], found["center"][1], at)
+        old = self.world["chip"] or {}
+        same = old and math.dist(old["center_mm"], center) < 3
+        self.world["chip"] = {**(old if same else {}), "center_mm": [round(v, 2) for v in center],
+                              "corners_mm": [[round(v, 2) for v in self._picture_mm(cx, cy, at)] for cx, cy in found["corners"]],
+                              "size_mm": found["size_mm"], "at": time.time(), **more}
+        self._save_world()
+
+    def _across_chip(self):
+        """The machine axis across the remembered chip's length: the way to the breadboard's rails from it."""
+        a, b = self.world["chip"]["corners_mm"][:2]
+        c = self.world["chip"]["corners_mm"][2]
+        side = max(((a, b), (b, c)), key=lambda pair: math.dist(*pair))  # the long side
+        return "Y" if abs(side[1][0] - side[0][0]) > abs(side[1][1] - side[0][1]) else "X"
+
+    def _note_on_map(self, args):
+        label = str(args.get("label", "")).strip()[:40]
+        if not label:
+            return {"ok": False, "error": "a note needs its label"}
+        if args.get("chip"):
+            if not self.world["chip"]:
+                return {"ok": False, "error": "no chip on the map yet: see_chip first"}
+            self.world["chip"]["name"] = label
+        else:
+            at = self.m.position()
+            x, y = float(args.get("x", at["X"])), float(args.get("y", at["Y"]))
+            notes = [n for n in self.world["notes"] if n["label"] != label]
+            self.world["notes"] = (notes + [{"label": label, "mm": [round(x, 2), round(y, 2)], "at": time.time()}])[-30:]
+        self._save_world()
+        return {"ok": True, "note": "on the map Erlan sees in the web lab"}
+
+    def _chip_pins(self, ref=None):
+        """How many pins the circuit says the chip has, or None if it says nothing."""
+        from lunes import catalog
+        for part in (self.circuit or {}).get("parts", []):
+            if ref and part["ref"] != ref:
+                continue
+            if part["kind"] in ("NE555", "OPAMP"):
+                return 8
+            if part["kind"] == "IC" and catalog.is_dip(catalog.get(part["model"])):
+                return len(catalog.pin_numbers(catalog.get(part["model"])))
+        return None
+
+    def _kept_notch(self, found, at, end, sure, why):
+        """The notch end of a chip that has not moved: a look that misses it, or barely sees it, takes the last good
+        look's, and says so. A look that sees it well is the new memory, even against the old one: the chip was turned."""
+        x, y = self._picture_mm(found["center"][0], found["center"][1], at)
+        old = self.world["notch"]
+        if end is not None and sure >= 0.6:
+            self.world["notch"] = {"X": x, "Y": y, "angle": found["angle_deg"], "end": end, "sure": sure}
+            self._save_world()
+        elif old and math.hypot(x - old["X"], y - old["Y"]) < 1.5 and abs(found["angle_deg"] - old["angle"]) < 8:
+            return old["end"], old["sure"], f"not clear in this look ({why}), so taken from the last good look at this " \
+                                            f"same chip, in the same place: if it was turned around, say so"
+        return end, sure, why
+
+    def _see_chip(self, ref=None, focus=True, pin=1, pins=None):
+        from lunes import chip as chips
+        if focus:
+            self._focus_here(self._chip_floor())  # a blurred chip measures wrong; its pin 1 in mm needs the picture's true scale
         frame = self._look()
         at = self.last_look[0]
         ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
@@ -1870,13 +2136,15 @@ class Hume:
                 self.chip_seen = {"seen": False, "at": time.time()}
                 return {"ok": False, "seen": False, "error": "the chip ran off the picture's edge and four pictures "
                                                               "around it still show no whole body: ask Erlan where it is"}, view
-        end, sure, why = chips.notch_end(frame, found)
+        end, sure, why = self._kept_notch(found, at, *chips.notch_end(frame, found))
         cv2.polylines(view, [np.array(found["corners"], np.int32)], True, (0, 255, 0), 2)
         out = {"ok": True, "seen": True, "body_size_mm": found["size_mm"], "angle_deg": found["angle_deg"],
-               "center_in_picture": [round(found["center"][0] / frame.shape[1], 3), round(found["center"][1] / frame.shape[0], 3)]}
+               **({} if "_mosaic" in at else {"center_in_picture": [round(found["center"][0] / frame.shape[1], 3),
+                                                                     round(found["center"][1] / frame.shape[0], 3)]})}
         if end is None:
             self.chip_seen = {"seen": True, "pin1": None, "body": found, "at": time.time()}
             out["pin1"] = None
+            self._remember_chip(found, at)
             out["note"] = (f"the body is seen but not its notch or dent ({why}): ask Erlan where pin 1 is, with "
                            f"confirm_pin1 (a tap on the picture, a wooden stick on the pin, the laser, or the hole's name)")
             return out, view
@@ -1885,6 +2153,11 @@ class Hume:
         cv2.putText(view, "1", (int(px) + 14, int(py) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
         bx, by = self._picture_mm(*chips.beside_pin1(found, end), at)
         out["beside_pin1_mm"] = {"X": round(bx, 2), "Y": round(by, 2)}  # the flat top next to the leg, for the laser
+        lx, ly = self._picture_mm(*chips.pin_at(found, end, pin, pins), at)
+        bx, by = self._picture_mm(*chips.beside_pin(found, end, pin, pins), at)
+        out.update(pin_mm={"X": round(lx, 2), "Y": round(ly, 2)}, beside_pin_mm={"X": round(bx, 2), "Y": round(by, 2)})
+        self._remember_chip(found, at, end=end, notch_mm=[round(v, 2) for v in self._picture_mm(*chips.notch_at(found, end), at)],
+                            pin1_mm=[round(v, 2) for v in self._picture_mm(px, py, at)])
         angle, words = chips.orientation(found, end)
         out.update(notch=words, notch_deg=angle, pin1_in_picture=[round(px / frame.shape[1], 3), round(py / frame.shape[0], 3)],
                    **self._pin1_report(px, py, at, "seen by the microscope", sure, why, ref))
@@ -2423,16 +2696,22 @@ class Hume:
         """Moves over the whole work area at two heights far apart, finds the ring light in the bench camera at each
         place, and fits the camera's projection to machine millimetres. Comes back to where it started. The ring's
         height over the surface in focus, taught before, is kept and checked on the new projection."""
-        from lunes.bench import BenchCamera, plan_route
+        from lunes.bench import MOVED_PX, BenchCamera, plan_route
         if self.bench is None:
             return {"ok": False, "error": "the bench camera is not connected"}
-        if self.bench_head() is None:  # a look before moving anything
+        seen = self.bench_head()  # a look before moving anything
+        if seen is None:
             return {"ok": False, "error": "the bench camera does not see the microscope's ring light from where it "
                                           "is: is the light on and the head in its view?"}
         start, skipped = self.m.position(), []
-        cam = BenchCamera(taught=self.bench_cal.taught if self.bench_cal is not None else None)
+        # what was taught is a pixel of the old picture: a camera that was moved has to be taught again
+        old = self.bench_cal
+        moved_px = old.ring_off_px(seen, start) if old is not None else None
+        camera_moved = moved_px is not None and moved_px > MOVED_PX
+        cam = BenchCamera(taught=old.taught if old is not None and not camera_moved else None)
         z_top = WORKSPACE["Z"][1]
-        z_low = max(WORKSPACE["Z"][0] + 8.0, z_top - 45.0)  # far apart: the projection must reach the table, 90 mm down
+        # far apart, so the projection reaches the table; never under the floor, which moves with the focus
+        z_low = max(WORKSPACE["Z"][0] + 8.0, z_top - 45.0, self._z_floor() + LIFT_MM)
         plan = plan_route(WORKSPACE, z_low, z_top)
         try:
             for x, y, z in plan:
@@ -2458,6 +2737,8 @@ class Hume:
         self.bench_cal = cam
         self._save_bench_cal(result)
         out = dict(result, of=len(plan), skipped=skipped)
+        if camera_moved:
+            out["camera_moved_px"] = round(moved_px)
         if cam.ring_above_mm is not None:
             out["note"] = "reach_in_bench takes the head to anything the bench camera sees"
         return out
@@ -2478,13 +2759,23 @@ class Hume:
         the head's X, Y, Z are its place) and where the bench camera sees it (x, y of its picture)."""
         if self.bench_cal is None or self.bench_cal.P is None:
             return {"ok": False, "error": "the bench camera is not calibrated: calibrate_bench, when Erlan asks"}, None
-        fx, fy = float(args.get("x", -1)), float(args.get("y", -1))
-        if not (0 <= fx <= 1 and 0 <= fy <= 1):
-            return {"ok": False, "error": "x and y are fractions of the bench camera's picture, from 0 to 1"}, None
         frame, problem = self.bench_picture()
         if problem:
             return {"ok": False, "error": problem}, None
         h, w = frame.shape[:2]
+        if args.get("chip"):
+            from lunes.bench import chip_near
+            at = self.m.position()  # the ring hangs about as high as it ever did: that says where in the picture to look
+            u, v, s = np.asarray(self.bench_cal.P, float) @ np.array([at["X"], at["Y"], at["Z"] - RING_ABOVE_MM, 1.0])
+            spot = chip_near(frame, u / s, v / s)
+            if spot is None:
+                return {"ok": False, "error": "the code sees no chip in the bench picture: give x, y of it in look_bench's "
+                                              "picture, or ask Erlan where it is"}, None
+            fx, fy = spot[0] / (w - 1), spot[1] / (h - 1)
+        else:
+            fx, fy = float(args.get("x", -1)), float(args.get("y", -1))
+            if not (0 <= fx <= 1 and 0 <= fy <= 1):
+                return {"ok": False, "error": "x and y are fractions of the bench camera's picture, from 0 to 1"}, None
         here = self.m.position()
         z = float(args["height_mm"]) if args.get("height_mm") is not None else here["Z"]
         result = self.bench_cal.teach(fx * (w - 1), fy * (h - 1), here["X"], here["Y"], z)
@@ -2495,45 +2786,103 @@ class Hume:
                     note="the bench camera now locates things at any focus height; reach_in_bench goes to them"), None
 
     def _reach_in_bench(self, args):
-        """To a point of the bench camera's picture: the bench camera's millimetres, the Kinect's check of the head
-        once there, then down to the surface's height, where the laser's dot under the microscope tells the height
-        of what is really there. An approximation (a few mm); disagreements are reported, not corrected."""
+        """To a point of the bench camera's picture, or to the chip on the breadboard (found there by the code, then
+        centred under the microscope in a closed loop): the bench camera's millimetres and the Kinect's check of the
+        head. It travels high, and goes down only to a height it knows: given (height_mm), or the chip's. Without one
+        it stays up, since things hang from the head that reach further down than the lens. An approximation (a few
+        mm); disagreements are reported, not corrected."""
+        from lunes.bench import MOVED_PX, chip_in_picture
+        if args.get("chip") and self.world["chip"]:  # the microscope saw it: that beats the bench camera's millimetres
+            moved = self._move(*self.world["chip"]["center_mm"], max(self.m.position()["Z"], self._travel_z()))
+            if not moved.get("ok"):
+                return moved, None
+            centred, view = self._center_chip()
+            if centred.get("ok"):
+                return {"ok": True, "how": "to where the microscope last saw it", "center": centred,
+                        "head_at_mm": _mm(self.m.position()), "note": "the chip is centred, seen in the middle of the "
+                                                                      "microscope's picture"}, view
         if self.bench_cal is None:
             return {"ok": False, "error": "the bench camera is not calibrated: calibrate_bench, when Erlan asks"}, None
+        # the head is somewhere known: if the picture disagrees, the camera was moved. It looks only near where the ring
+        # should be, so a lamp elsewhere in the picture is not taken for it
+        from lunes.bench import ring_in_picture
+        at = self.m.position()
+        seen, _ = self.bench_picture()
+        ring = ring_in_picture(seen, near=self.bench_cal.ring_at(at)) if seen is not None else None
+        off_px = self.bench_cal.ring_off_px(ring, at) if ring is not None else None
+        if off_px is not None and off_px > MOVED_PX:
+            return {"ok": False, "error": f"the bench camera was moved: the ring is {off_px:.0f} px from where its "
+                                          f"calibration puts it, so its millimetres are wrong; tell Erlan, and "
+                                          f"calibrate_bench when he asks"}, None
         frame, problem = self.bench_picture()
         if problem:
             return {"ok": False, "error": problem}, None
-        fx, fy = float(args.get("x", -1)), float(args.get("y", -1))
-        if not (0 <= fx <= 1 and 0 <= fy <= 1):
-            return {"ok": False, "error": "x and y are fractions of the bench camera's picture, from 0 to 1"}, None
         h, w = frame.shape[:2]
-        z = float(args["height_mm"]) if args.get("height_mm") is not None else self._z_floor()
-        u, v = fx * (w - 1), fy * (h - 1)
+        chip = bool(args.get("chip"))
+        if chip:
+            table = self._z_floor() if self.focus_z is None else self.focus_z
+            corners = [(WORKSPACE["X"][i], WORKSPACE["Y"][j]) for i, j in ((0, 0), (1, 0), (1, 1), (0, 1))]
+            try:
+                area = [self.bench_cal.project(cx, cy, table) for cx, cy in corners]
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}, None
+            spots = chip_in_picture(frame, area)
+            if not spots:
+                return {"ok": False, "error": "the bench camera sees no chip on the breadboard. A lamp on the bench washes "
+                                              "the board out of this camera: ask Erlan to turn it off and try again, or "
+                                              "to say where the chip is and give x, y of look_bench's picture"}, None
+            u, v = spots[0][:2]
+            z = self._surface_z("chip", "protoboard")
+            known = z is not None
+            if not known:
+                return {"ok": False, "error": "the chip's height is not known: laser_calibrate on a chip, surface chip"}, None
+        else:
+            fx, fy = float(args.get("x", -1)), float(args.get("y", -1))
+            if not (0 <= fx <= 1 and 0 <= fy <= 1):
+                return {"ok": False, "error": "x and y are fractions of the bench camera's picture, from 0 to 1"}, None
+            u, v = fx * (w - 1), fy * (h - 1)
+            known = args.get("height_mm") is not None
+            z = float(args["height_mm"]) if known else self._surface_z("protoboard", "mesa") or self._z_floor()
         try:
             x, y = self.bench_cal.locate(u, v, z)
         except ValueError as e:
             return {"ok": False, "error": str(e)}, None
-        here = self.m.position()
         target = {"X": round(x, 1), "Y": round(y, 1), "at_height_mm": round(z, 2)}
-        moved = self._move(x, y, max(here["Z"], self._z_floor() + LIFT_MM))  # over it first, high
+        moved = self._move(x, y, max(self.m.position()["Z"], self._travel_z()))  # over it, high
         if not moved.get("ok"):
             return dict(moved, target_mm=target), None
         out = {"ok": True, "target_mm": target, "head_at_mm": moved["position_mm"]}
+        if chip:
+            out.update(chip_in_picture={"x": round(u / (w - 1), 3), "y": round(v / (h - 1), 3)}, chips_seen=len(spots))
         if self.kinect is not None and self.m.config.get("kinect_head"):
             out["kinect_check"] = self.check_position()
-        cal = self.m.config.get("laser")
-        if args.get("check_laser", True) and cal and cal.get("surfaces") and hasattr(self.m, "laser"):
-            out["laser_check"] = self._laser_check_at(cal, x, y, z)
-            self._move(x, y, z)  # the microscope back over the point, in focus on the expected surface
-            self.m.laser(0)
+        view = None
+        if chip:
+            centred, view = self._center_chip()
+            out["center"] = centred
+            out["head_at_mm"] = _mm(self.m.position())
+            out["ok"] = bool(centred.get("ok"))
+        elif known:
+            cal = self.m.config.get("laser")
+            if args.get("check_laser", True) and cal and cal.get("surfaces") and hasattr(self.m, "laser"):
+                out["laser_check"] = self._laser_check_at(cal, x, y, z)
+                self.m.laser(0)
+            self._move(x, y, z)  # the microscope over the point, in focus on the expected surface
             out["head_at_mm"] = _mm(self.m.position())
         checks = [c for c in (out.get("kinect_check", {}).get("agrees"), out.get("laser_check", {}).get("agrees"))
                   if c is not None]
-        out["note"] = (("every check agrees: " if checks and all(checks) else
-                        "a check DISAGREES: tell Erlan before trusting it; " if checks else "unchecked: ") +
-                       "the microscope is over the point to a few mm (the machine is hand-built: this is an "
-                       "approximation); autofocus, look_microscope and center_on_point settle the rest")
-        return out, None
+        verdict = ("every check agrees: " if checks and all(checks) else
+                   "a check DISAGREES: tell Erlan before trusting it; " if checks else "unchecked: ")
+        if chip:
+            out["note"] = (verdict + "the chip is centred, seen in the middle of the microscope's picture" if out["ok"] else
+                           verdict + "the chip was not centred: say so to Erlan")
+        elif known:
+            out["note"] = verdict + ("the microscope is over the point to a few mm (the machine is hand-built: this is "
+                                     "an approximation); autofocus, look_microscope and center_on_point settle the rest")
+        else:
+            out["note"] = verdict + ("the head stayed up, since no height_mm was given, and the point was taken at the "
+                                     "breadboard's height, so it may be some mm off")
+        return out, view
 
     def _laser_check_at(self, cal, x, y, z):
         """The laser's dot on the point, seen by the microscope at the point's focus height: where it lands gives
@@ -2584,11 +2933,17 @@ class Hume:
         def lifted(axis, mm):
             hop(self.m, z, **{axis: self.m.position()[axis] + mm})
 
+        before = self.m.config.get("microscope")
         try:
-            calibrate(self.m, self.cam, lifted)
+            new = calibrate(self.m, self.cam, lifted)
             self.m.move_to(Z=z)
         except Exception:  # bare solder mask has nothing to track: keep the last calibration
-            pass
+            return
+        # square pixels on a machine nearly square: a reading that says otherwise was fooled by the picture (a repeated
+        # grid of holes, a reflection), and kept, it would step every mosaic and shift every mm read from a picture
+        if before and (abs(new["angle_between_axes_deg"] - 90) > 1.5 or abs(new["px_per_mm"]["X"] / new["px_per_mm"]["Y"] - 1) > 0.03):
+            self.m.config["microscope"] = before
+            self.m.save_config()
 
     def relocate(self):
         """Finds where the microscope really is by looking for what it sees inside the last mosaic of the face of
@@ -2626,7 +2981,6 @@ class Hume:
         self.mosaic_doubtful = True
 
     def _measure(self, new_board=False):
-        above = 0.5
         if not new_board and self.board:
             return dict(self.board, note="already measured and the board has not changed; if Erlan changed, moved "
                                          "or flipped it, call measure_board with new_board=true")
@@ -2634,16 +2988,16 @@ class Hume:
             if self.surveys:
                 self.side += 1
             self.focus_z, self.board, self.last_survey, self.last_mosaic = None, None, None, None
-            above = 8.0
-            self.m.move_to(Z=min(self.m.position()["Z"] + above, WORKSPACE["Z"][1]))
-            above = 0.0
-        z = self._focus_board(above)
+        z = self._focus_board()
         self._calibrate_here(z)
         found = find_perimeter(self.m, self.cam, z, self.m.config["microscope"], WORKSPACE, self.show,
                                stop=self.stop.is_set)
         if found["found"]:
             self.board = found
-            found["note"] = "the microscope is now over the board's centre; tell Erlan the size"
+            self.world["board"] = {k: found[k] for k in ("center_mm", "size_mm")}
+            self._save_world()
+            found["bed"] = self.world["bed"]
+            found["note"] = "the microscope is now over its centre; tell Erlan the size"
             self.position_doubtful = False  # the board's edges place the machine again
         else:
             found["note"] = ("no board under the microscope nor around it: find_in_kinect 'circuit board' gives where "
@@ -2676,8 +3030,14 @@ class Hume:
                                     rows=rows, stop=self.stop.is_set)
         self.focus_z = summary["focus_z_mm"] if self.focus_z is None else min(self.focus_z, summary["focus_z_mm"])
         self.last_survey, self.last_mosaic = summary, mosaic
+        self.world["mosaic"] = {"corners_mm": [[round(v, 2) for v in mosaic_point_to_mm(summary, fx, fy)]
+                                               for fx, fy in ((0, 0), (1, 0), (0, 1))], "at": time.time()}
+        if self.world_file:
+            cv2.imwrite(str(self.world_file.with_name("bench_mosaic.jpg")), mosaic)
+        self._save_world()
         result = {k: v for k, v in summary.items() if k not in BOOKKEEPING}
         result["pictures"] = cols * rows
+        result["bed"] = self.world["bed"]
         result["survey_number"] = len(self.surveys) + 1
         result["face"] = f"face {self.side} of this board (face 2 is the other side after Erlan flipped it)"
         self.surveys.append({"number": result["survey_number"], "face": self.side, "summary": summary,
@@ -2769,6 +3129,8 @@ class Hume:
     # Tools -------------------------------------------------------------------------------------------------
     def run_tool(self, name, args):
         """Runs one tool; returns (result for the model, image to show the model or None)."""
+        if self.on_fallback and name in MOVING_TOOLS:
+            return {"ok": False, "refused": self.fallback_line, "error": self.fallback_line}, None
         if self.hold and name in MOVING_TOOLS:
             return {"ok": False, "on_hold": True,
                     "error": f"moving is on hold: {self.hold['why']}. Tell Erlan and wait; only when he says to go "
@@ -2963,9 +3325,15 @@ class Hume:
             # The floor stays at the board's focus height: focusing on the top of a tall part never lowers it.
             self.focus_z = z if self.focus_z is None else min(self.focus_z, z)
             return {"focused_z_mm": round(z, 3), "sharpness": round(s), "z_floor_mm": round(self.focus_z, 3)}, None
+        if name == "note_on_map":
+            return self._note_on_map(args), None
+        if name == "center_on_chip":
+            return self._center_chip()
         if name == "measure_board":
+            self._say_bed(args.get("bed"))
             return self._measure(bool(args.get("new_board"))), None
         if name == "survey_board":
+            self._say_bed(args.get("bed"))
             return self._survey_board(args.get("width_mm"), args.get("height_mm"))
         if name == "inspect_component":
             return self._inspect(float(args["x"]), float(args["y"]))
@@ -3004,6 +3372,22 @@ class Hume:
             if result.get("ok") and self.kinect is not None and self.m.config.get("kinect_head"):
                 result["kinect_check"] = self.check_position()  # like every move: checked once, never acted on
             return result, None
+        if name == "chip_catalog":
+            from lunes import catalog
+            if not args.get("name"):
+                return {"ok": True, "chips": catalog.names(),
+                        "note": "a chip that is not here can be learnt: chip_learn"}, None
+            entry = catalog.get(args["name"])
+            if entry is None:
+                return {"ok": False, "error": f"{args['name']} is not in the catalog: find its datasheet with search_web "
+                                              f"and chip_learn"}, None
+            return dict({k: v for k, v in entry.items() if k != "test"}, ok=True), None
+        if name == "chip_learn":
+            from lunes import catalog
+            result = catalog.add(args.get("entry"))
+            if result.get("ok") and self.on_think:
+                self.on_think(f"aprendí el chip {result['name']}: pasó su prueba en el simulador")
+            return result, None
         if name == "calculate":
             from lunes.calc import run as calculate
             return calculate(args), None
@@ -3034,11 +3418,22 @@ class Hume:
         parts = []
         if self.board:
             w, h = self.board["size_mm"]
-            parts.append(f"la placa de la CNC está medida: {w:.0f} por {h:.0f} mm")
+            parts.append(f"{self.bed_name()} en la CNC está medida: {w:.0f} por {h:.0f} mm")
         if self.surveys:
             parts.append(f"hay {len(self.surveys)} mosaicos guardados; el último es de la cara {self.surveys[-1]['face']}")
         if self.mosaic_doubtful:
             parts.append("al arrancar el microscopio no se ubicó en el último mosaico: la placa pudo cambiar")
+        if self.circuit:
+            parts.append(f"el circuito «{self.circuit.get('name')}» ya se ve dibujado en la protoboard de la web, con sus "
+                         "componentes y cables")
+        chip = self.world["chip"]
+        if chip:
+            x, y = chip["center_mm"]
+            parts.append(f"el chip {chip.get('name') or 'sin leer'} está en X {x:.1f}, Y {y:.1f}, visto hace "
+                         f"{(time.time() - chip['at']) / 60:.0f} minutos")
+        if self.world["notes"]:
+            parts.append("en tu mapa: " + ", ".join(f"{n['label']} en X {n['mm'][0]:.0f}, Y {n['mm'][1]:.0f}"
+                                                    for n in self.world["notes"][-6:]))
         if self.hold:
             parts.append("la máquina está en pausa porque el Kinect no la ve donde cree estar: no se mueve hasta que "
                          "Erlan dé permiso (si lo da, es un trabajo: seguir con lo que estaba haciendo)")
@@ -3047,12 +3442,14 @@ class Hume:
         return "; ".join(parts) or "todavía no se midió ni se recorrió ninguna placa en esta sesión"
 
     def _chat_any(self, on_text=None):
+        self.on_fallback = False
         if self.brain == "spark":
             try:
                 return self._chat_spark(on_text)
             except Exception as e:  # no internet, the API failing, or today's budget spent: Glimmer takes over
+                self.on_fallback, self.fallback_line = True, NO_TOKENS if type(e).__name__ == "OverBudget" else NO_MODEL
                 if self.on_think:
-                    self.on_think(f"Muse Spark no respondió ({type(e).__name__}: {str(e)[:120]}); contesta Glimmer")
+                    self.on_think(f"{self.brain_name} no respondió ({type(e).__name__}: {str(e)[:120]}); contesta Glimmer")
         return self._chat_glimmer(on_text)
 
     def _chat_spark(self, on_text=None):
@@ -3160,8 +3557,10 @@ class Hume:
     def _trim(self, keep=24):
         """Keeps the conversation small: the system prompt, the last messages, and only the newest image."""
         head, tail = self.messages[:1], self.messages[1:][-keep:]
-        while tail and tail[0].get("role") == "tool":  # never start with an orphan tool result
-            tail = tail[1:]
+        # never an orphan tool result: the API refuses the whole conversation for one, and a picture's message can
+        # stand between a call and its result, so looking only at the first message is not enough
+        called = {c.get("id") for m in tail for c in (m.get("tool_calls") or [])}
+        tail = [m for m in tail if m.get("role") != "tool" or m.get("tool_call_id") in called]
         seen_image = False
         for msg in reversed(tail):
             if msg.get("images"):
@@ -3223,6 +3622,7 @@ class Hume:
                     return " ".join(said)
                 return self._verified(answer, text, used_tools, turn_start)
             used_tools = True
+            refused = None
             for n, call in enumerate(calls):
                 call.setdefault("id", f"call_{len(self.messages)}_{n}")
                 name = call["function"]["name"]
@@ -3243,6 +3643,7 @@ class Hume:
                     result, image = {"ok": False, "error": str(e)}, None
                 if self.on_result:
                     self.on_result(name, result)
+                refused = refused or (isinstance(result, dict) and result.get("refused"))
                 self.messages.append({"role": "tool", "tool_name": name, "tool_call_id": call["id"],
                                       "content": json.dumps(result, ensure_ascii=False, default=float)})
                 if image is not None:
@@ -3253,6 +3654,11 @@ class Hume:
                                           "images": [jpeg_b64(image)]})
                 if self.stop.is_set():
                     break
+            if refused:  # the job ends here, in plain words: Glimmer would keep trying, or explain it its own way
+                self.messages.append({"role": "assistant", "content": refused})
+                if speak:
+                    speak(refused)
+                return " ".join(said) if on_text else refused
             # Inching along a few tenths of a millimetre never shows a whole part: point to the real skills.
             if tiny_moves >= 2 and "tiny" not in nudged:
                 nudged.add("tiny")

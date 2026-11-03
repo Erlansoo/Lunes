@@ -7,7 +7,7 @@ the simulator then solves nonsense), the supply must not be shorted, a part with
 milliamp, a resistor past a quarter watt, a transistor past its rating, a supply asked for more than a USB port
 gives, a net beyond the supply rails.
 """
-from lunes import mcu
+from lunes import catalog, mcu
 from lunes.circuit import (MOS_MAX_A, MOS_VGS_FULL, PINS, REG_DROPOUT, REG_V, ZENER_V, ZENER_W, _net, nets_of,
                            value)
 
@@ -59,6 +59,15 @@ def before(circuit):
                               f"takes whatever current the supply gives and burns; feed it through a resistor")
         for x, y in DC_LINKS.get(kind, []):
             link(pins[x], pins[y])
+        if kind == "IC":  # the catalog says what conducts inside the chip, and what must not float
+            entry = catalog.get(p["model"])
+            for x, y in entry.get("dc_links", []):
+                if x in pins and y in pins:
+                    link(pins[x], pins[y])
+            for x in entry.get("inputs", []):
+                if x not in pins:
+                    warnings.append(f"{p['ref']} input {x} (pin {catalog.pin_numbers(entry)[x]}) is left floating: an "
+                                    f"unused input picks up noise; tie it to VCC or GND, or as the datasheet says")
         values = list(pins.values())
         if kind in ("R", "C", "L", "D", "ZENER", "LED", "SW", "LDR", "NTC") and values[0] == values[1]:
             warnings.append(f"{p['ref']} has both leads in net {values[0]}: it does nothing (both in the same "
@@ -158,6 +167,15 @@ def after(circuit, sim):
             warnings.append(f"{p['ref']} dissipates {c['power_w']:.2f} W: a trimmer takes a tenth of a watt; a bigger "
                             f"value, or a 1/2 W pot")
     for p in circuit["parts"]:
+        if p["kind"] == "IC":
+            entry, pins = catalog.get(p["model"]), _pins(p)
+            span = entry.get("supply_v")
+            top, bottom = (sim.get("nets", {}).get(pins.get(x), {}) for x in (entry["power"][0], entry["power"][-1]))
+            if span and top and bottom:
+                volts = top.get("mean_v", 0) - bottom.get("mean_v", 0)
+                if volts < span[0] or volts > span[1]:
+                    warnings.append(f"{p['ref']} ({entry['name']}) gets {volts:.1f} V and works from {span[0]:g} to "
+                                    f"{span[1]:g} V: it will not work, or it burns")
         if p["kind"] == "REG":
             out = sim.get("nets", {}).get(_pins(p)["OUT"], {})
             if out and out.get("mean_v", 0) < 0.95 * REG_V[p["model"]]:

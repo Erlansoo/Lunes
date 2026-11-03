@@ -1,0 +1,124 @@
+{
+ "name": "LM339",
+ "package": "DIP14",
+ "pins": {
+  "1": "OUT2",
+  "2": "OUT1",
+  "3": "VCC",
+  "4": "IN1-",
+  "5": "IN1+",
+  "6": "IN2-",
+  "7": "IN2+",
+  "8": "IN3-",
+  "9": "IN3+",
+  "10": "IN4-",
+  "11": "IN4+",
+  "12": "GND",
+  "13": "OUT4",
+  "14": "OUT3"
+ },
+ "power": [
+  "VCC",
+  "GND"
+ ],
+ "inputs": [
+  "IN1-",
+  "IN1+",
+  "IN2-",
+  "IN2+",
+  "IN3-",
+  "IN3+",
+  "IN4-",
+  "IN4+"
+ ],
+ "outputs": [
+  "OUT1",
+  "OUT2",
+  "OUT3",
+  "OUT4"
+ ],
+ "dc_links": [
+  [
+   "VCC",
+   "GND"
+  ],
+  [
+   "OUT1",
+   "GND"
+  ],
+  [
+   "OUT2",
+   "GND"
+  ],
+  [
+   "OUT3",
+   "GND"
+  ],
+  [
+   "OUT4",
+   "GND"
+  ]
+ ],
+ "supply_v": [
+  2,
+  36
+ ],
+ "notes": "Quad comparator. Outputs are open collector: each needs a pull-up resistor to give a high, typically 10k. It only sinks, about 16 mA. Output low (sinking) when IN- is above IN+, output off (pulled high) when IN+ is above IN-.",
+ "source": "https://www.ti.com/lit/gpn/LM339-N",
+ "spice": ".subckt CHIP_LM339 out2 out1 vcc inm1 inp1 inm2 inp2 inm3 inp3 inm4 inp4 gnd out4 out3\nRin1 inp1 inm1 10Meg\nRin2 inp2 inm2 10Meg\nRin3 inp3 inm3 10Meg\nRin4 inp4 inm4 10Meg\nRs vcc gnd 5k\nBq1 out1 gnd I = v(out1,gnd)/30*lunes_step(v(inm1,gnd)-v(inp1,gnd),200)*lunes_step(v(vcc,gnd)-1.5,10)\nBq2 out2 gnd I = v(out2,gnd)/30*lunes_step(v(inm2,gnd)-v(inp2,gnd),200)*lunes_step(v(vcc,gnd)-1.5,10)\nBq3 out3 gnd I = v(out3,gnd)/30*lunes_step(v(inm3,gnd)-v(inp3,gnd),200)*lunes_step(v(vcc,gnd)-1.5,10)\nBq4 out4 gnd I = v(out4,gnd)/30*lunes_step(v(inm4,gnd)-v(inp4,gnd),200)*lunes_step(v(vcc,gnd)-1.5,10)\n.ends CHIP_LM339",
+ "test": {
+  "circuit": {
+   "name": "LM339 test comparator1 high",
+   "supply_v": 5,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "LM339",
+     "pins": {
+      "VCC": "VCC",
+      "GND": "GND",
+      "IN1+": "N3V",
+      "IN1-": "N25V",
+      "OUT1": "OUT"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "VCC",
+      "OUT"
+     ]
+    },
+    {
+     "ref": "V1",
+     "kind": "V",
+     "value": "3",
+     "pins": {
+      "+": "N3V",
+      "-": "GND"
+     }
+    },
+    {
+     "ref": "V2",
+     "kind": "V",
+     "value": "2.5",
+     "pins": {
+      "+": "N25V",
+      "-": "GND"
+     }
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "OUT",
+    "mean_v": 5,
+    "tolerance": 0.1
+   }
+  ]
+ },
+ "origin": "learnt"
+}

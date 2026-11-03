@@ -45,6 +45,7 @@ def factory_mm(shift, emitter_cm, reference_mm, pixel_mm):
     mm[2047] = 0
     return mm.round().astype(np.uint16)
 
+RECONNECTING = threading.Lock()
 
 class _Stream:
     """Puts one stream's packets back together; keeps the latest whole frame."""
@@ -214,8 +215,9 @@ class Kinect:
                 "depth_calibration": self.calibration}
 
     def reconnect(self):
-        self.close()
-        self._open()
+        with RECONNECTING:  # two threads can find it hung at once: one must not write to what the other is closing
+            self.close()
+            self._open()
 
     def close(self):
         if not self.pumping:

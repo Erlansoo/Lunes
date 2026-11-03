@@ -43,7 +43,7 @@ from lunes.lab import state as lab_state  # noqa: E402
 from lunes.mcu import SimulatedBoard  # noqa: E402
 from lunes.kinect import Kinect  # noqa: E402
 from lunes.machine import Machine  # noqa: E402
-from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, local_transcriber  # noqa: E402
+from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, latin, local_transcriber  # noqa: E402
 from microscope import Camera, sharpness  # noqa: E402
 
 # The wake word. "el lunes", "este lunes"... are the weekday, not a call, so they do not count. The ear also writes
@@ -100,11 +100,14 @@ STEPS = {"measure_board": "mido la placa", "survey_board": "recorro la placa con
          "diagnose_measure": "mido y comparo con la simulación", "circuit_design": "diseño el circuito",
          "laser_calibrate": "calibro el láser", "laser_point": "apunto el láser", "laser_height": "mido la altura con el láser", "laser": "prendo el láser",
          "calibrate_bench": "calibro la cámara del banco", "teach_bench_height": "le enseño la altura a la cámara del banco",
-         "reach_in_bench": "voy a lo que ve la cámara del banco",
+         "reach_in_bench": "voy a lo que ve la cámara del banco", "see_chip": "miro el chip y lo enfoco",
+         "center_on_chip": "centro el chip", "chip_catalog": "reviso mis integrados",
+         "chip_learn": "aprendo el integrado nuevo y lo pruebo en el simulador",
          "circuit_guide": "repaso mis notas", "calculate": "hago la cuenta",
          "system_check": "reviso mis partes", "system_restart": "reinicio una parte",
          "ask_spark": "le pregunto a Muse Spark", "remember": "lo anoto en la memoria", "where": "veo dónde estoy"}
-TOLD_AT_START = {"measure_board", "survey_board", "inspect_component", "look_kinect"}
+TOLD_AT_START = {"measure_board", "survey_board", "inspect_component", "look_kinect", "see_chip", "center_on_chip",
+                 "laser_point", "reach_in_bench"}
 
 
 def milestone(name, result):
@@ -123,13 +126,15 @@ def milestone(name, result):
                   else f" Y en el mosaico también me veo corrido, unos {mosaic:.0f} milímetros.")
         return (f"Ojo: el Kinect no me ve donde creo estar, hay unos {abs(off[axis]):.0f} milímetros de diferencia en "
                 f"{axis}.{second} No me muevo hasta que me des permiso.")
+    if result.get("refused"):
+        return None
     if name == "measure_board":
         if result.get("found"):
             w, h = result["size_mm"]
             return f"Ya la medí: {w:.0f} por {h:.0f} milímetros."
-        return "No encuentro la placa bajo el microscopio."
+        return "No encuentro qué medir bajo el microscopio."
     if name == "survey_board" and result.get("ok", True):
-        return "Ya terminé de recorrer la placa."
+        return f"Ya terminé de recorrer la {result.get('bed') or 'mesa'}."
     return None
 
 
@@ -306,7 +311,9 @@ class Worker:
         self._args = args
         # The conductor has just said it starts; a step is worth telling when it comes later in the job.
         if name in TOLD_AT_START and time.time() - self.started > 10:
-            self.narrator_ref().update(f"Ahora {STEPS[name]}.", lambda: self.hume.status == name)
+            bed = args.get("bed") or self.hume.world["bed"]
+            step = STEPS[name].replace("la placa", f"la {bed}" if bed else "lo que hay en la mesa")
+            self.narrator_ref().update(f"Ahora {step}.", lambda: self.hume.status == name)
 
     def _result(self, name, result):
         if name not in ("where", "look_microscope", "look_bench", "look_kinect", "kinect_distance", "look_survey"):
@@ -331,6 +338,7 @@ class Worker:
                 exact = ""
             if exact:
                 log("ear", f"   (oído preciso: {exact})")
+            if exact and latin(exact):
                 request += f"\n(Lo que dijo Erlan, palabra por palabra: «{exact}»)"
         try:
             answer = self.hume.handle(request, self._tool)
@@ -516,9 +524,11 @@ def main():
     warming.start()
     voice = Voice()
     voice.prepare(*REACTIONS, "Listo, me detengo.")
+    hume.keep_world(ROOT / "runs" / "bench_world.json")
     board = Dashboard(camera=cam, kinect=kinect, speaking=lambda: voice.speaking,
                       bench=bench, lab=lambda: lab_state(hume))
     hume.on_image = lambda image, what: board.set_seen(image, what)
+    board.mosaic = hume.bench_mosaic
     board.on_tap = lambda x, y: hume.taps.append((x, y))
     print(f"página en vivo: {board.url}")
 
@@ -648,7 +658,9 @@ def main():
         at = {k: round(v) for k, v in machine.at_mm.items()}
         parts.append(f"CNC: conectada, {'trabajando' if worker.running else 'quieta'}, en X {at.get('X')}, "
                      f"Y {at.get('Y')}, Z {at.get('Z')} mm")
-        parts.append("Muse Spark: disponible por internet" if hume.spark else "Muse Spark: no se usa (modo privado)")
+        parts.append("Se acabaron los tokens de hoy: estás con el modelo local y no puedes mover la máquina hasta "
+                     "medianoche" if conductor.out_of_tokens else
+                     "Muse Spark: disponible por internet" if hume.spark else "Muse Spark: no se usa (modo privado)")
         return ". ".join(parts) + "."
 
     conductor.context = lambda: (senses(), state())
@@ -811,6 +823,9 @@ def main():
             answered.set()
             narrator.answered()
             last_exchange = time.time()
+            notice = conductor.tokens_notice()
+            if notice:
+                voice.say_soon(notice)
             if called:
                 closed = False
             not_for_me = not_for_me + 1 if (not say and action == "ninguna") else 0
@@ -826,8 +841,8 @@ def main():
             if say:
                 narrator.say(say, remember=False)
             if action == "mirar":  # a quick look, not a job: one picture and what it shows
-                worker.submit(f"Mirada rápida, sin mover la máquina ni recorrer la placa: {todo}. Una sola foto y "
-                              f"di en dos o tres frases qué se ve.", words)
+                worker.submit(f"Mirada rápida, sin recorrer la placa: {todo}. Si es un chip y no sale entero, "
+                              f"center_on_chip primero. Una sola foto y di en dos o tres frases qué se ve.", words)
             elif action == "trabajo":
                 worker.submit(todo, words)
             log("think", f"   (entendió: {conductor.understood})")

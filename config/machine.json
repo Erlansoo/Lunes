@@ -365,5 +365,6 @@
     "typical_error_mm": 0.6,
     "held_out_mm": 0.72,
     "note": "the bench camera's 3 x 4 projection over the whole work area, from the ring light seen at two heights (calibrate_bench); ring_above_mm is the ring's height over the surface in focus, taught from one thing seen by both (teach_bench_height); the heights are focus heights"
-  }
+  },
+  "board_mirrored": true
 }

@@ -35,6 +35,12 @@ SPAN = {"R": 4, "D": 4, "ZENER": 4, "L": 4, "C": 2, "SW": 2, "LDR": 2, "LED": 1,
 WIRE_COLORS = ("azul", "verde", "naranja", "morado", "amarillo", "gris")  # after VCC's red and GND's black
 
 
+def on_rail(row):
+    """Whether a rail has a hole beside this row. As a mosaic of the real board shows, they go in groups of five from row 3
+    to row 61, with no hole beside rows 8, 14, 20 and so on."""
+    return 3 <= row <= 61 and row % 6 != 2
+
+
 def board_xy(hole):
     """A hole's place on the board in mm, from hole a1: "c12", or a rail as "+12" (the rail beside row 12)."""
     column, row = hole[0], int(hole[1:])
@@ -50,10 +56,13 @@ def strip_of(hole):
 
 
 class Placement:
-    """Where the board lies: machine mm of any hole, from two known ones, turned and shifted (never scaled)."""
+    """Where the board lies: machine mm of any hole, from two known ones, turned and shifted (never scaled). mirrored is
+    for a machine whose X and Y make a left-handed pair seen from above: then going up the rows and across them is
+    the other way round from any turn of the board, and two holes alone cannot tell."""
 
-    def __init__(self, hole_a, at_a, hole_b, at_b):
-        (ax, ay), (bx, by) = board_xy(hole_a), board_xy(hole_b)
+    def __init__(self, hole_a, at_a, hole_b, at_b, mirrored=False):
+        self.flip = -1.0 if mirrored else 1.0
+        (ax, ay), (bx, by) = self.board(hole_a), self.board(hole_b)
         board, machine = (bx - ax, by - ay), (at_b[0] - at_a[0], at_b[1] - at_a[1])
         length = math.hypot(*board)
         if length < 20:
@@ -65,11 +74,29 @@ class Placement:
         self.angle = math.atan2(machine[1], machine[0]) - math.atan2(board[1], board[0])
         self.origin, self.anchor = (ax, ay), at_a
 
-    def mm(self, hole):
+    def board(self, hole):
         x, y = board_xy(hole)
+        return x, self.flip * y
+
+    def mm(self, hole):
+        x, y = self.board(hole)
         dx, dy = x - self.origin[0], y - self.origin[1]
         c, s = math.cos(self.angle), math.sin(self.angle)
         return round(self.anchor[0] + c * dx - s * dy, 2), round(self.anchor[1] + s * dx + c * dy, 2)
+
+
+class BoardGrid:
+    """Where the board lies, from three of its corners measured in machine mm: a1, a63 and j1. Unlike Placement it needs
+    no word on how the machine's axes turn, and it holds each axis's own scale: on a home-made machine 62 pitches do not
+    measure the same along X and along Y."""
+
+    def __init__(self, a1, a63, j1):
+        self.a1, self.along, self.across = a1, (a63[0] - a1[0], a63[1] - a1[1]), (j1[0] - a1[0], j1[1] - a1[1])
+
+    def mm(self, hole):
+        x, y = board_xy(hole)
+        u, v = x / (62 * PITCH), y / (11 * PITCH)
+        return round(self.a1[0] + u * self.along[0] + v * self.across[0], 2), round(self.a1[1] + u * self.along[1] + v * self.across[1], 2)
 
 
 class _Layout:
@@ -115,12 +142,17 @@ class _Layout:
             raise ValueError("the circuit does not fit on one breadboard")
         return row
 
+    def rail_row(self, near, rails=("+", "-")):
+        """The row nearest this one where these rails have a free hole."""
+        rows = [r for r in range(1, ROWS + 1) if on_rail(r) and not {f"{rail}{r}" for rail in rails} & self.used]
+        if not rows:
+            raise ValueError("the circuit does not fit on one breadboard")
+        return min(rows, key=lambda r: abs(r - near))
+
     def hole_on(self, net, near=None):
         """A free hole of the net: its rail, or one of its strips, adding a strip when they are full; join() wires it."""
         if net in RAIL_OF:
-            row = max(1, min(ROWS, near or self.row))
-            while f"{RAIL_OF[net]}{row}" in self.used:
-                row += 1
+            row = self.rail_row(near or self.row, [RAIL_OF[net]])
             self.used.add(f"{RAIL_OF[net]}{row}")
             return f"{RAIL_OF[net]}{row}"
         for strip in self.strips(net):
@@ -138,10 +170,7 @@ class _Layout:
             strips = self.strips(net)
             if net in RAIL_OF:
                 for strip in strips:  # a chip's supply pins often face each other: their wires must not lie one over the other
-                    row = strip[0]
-                    while {f"+{row}", f"-{row}"} & self.used:
-                        row += 1
-                    self.wire(self.free(strip), self.hole_on(net, row), net)
+                    self.wire(self.free(strip), self.hole_on(net, self.rail_row(strip[0])), net)
             for one, other in ([] if net in RAIL_OF else zip(strips, strips[1:])):
                 self.wire(self.free(one), self.free(other), net)
 
@@ -222,7 +251,7 @@ def _to_rail(layout, strip, net, span):
     stands closest to the part's own length from the rail, since a long body does not fit between it and column a."""
     row, side = strip
     rail = f"{RAIL_OF[net]}{row}"
-    if side != "L" or rail in layout.used:
+    if side != "L" or rail in layout.used or not on_rail(row):
         return None
     for column in sorted("abcd", key=lambda c: abs(COLUMN[c] - RAIL_COLUMN[RAIL_OF[net]] - span)):
         hole = f"{column}{row}"
@@ -239,7 +268,7 @@ def _lay_down(layout, part, a, b):
     else on new strips, across the channel if the part is long enough, or along a column. Wires do the rest."""
     span = SPAN[part["kind"]]
     if a in RAIL_OF and b in RAIL_OF and a != b:
-        row = next(r for r in range(1, ROWS + 1) if not {f"+{r}", f"-{r}"} & layout.used)
+        row = layout.rail_row(layout.row)
         layout.used.update((f"+{row}", f"-{row}"))
         return f"{RAIL_OF[a]}{row}", f"{RAIL_OF[b]}{row}"
     if (a in RAIL_OF) != (b in RAIL_OF):
@@ -249,7 +278,7 @@ def _lay_down(layout, part, a, b):
             if holes:
                 return holes if b == supply else holes[::-1]
         row = layout.fresh_row()
-        while f"{RAIL_OF[supply]}{row}" in layout.used:
+        while f"{RAIL_OF[supply]}{row}" in layout.used or not on_rail(row):
             layout.row, row = row + 1, layout.fresh_row(1)
         holes = _to_rail(layout, layout.take(row, "L", other), supply, span)
         layout.row = row + 1
@@ -281,13 +310,17 @@ def _lay_down(layout, part, a, b):
     return _along(layout, strip_a, strip_b)
 
 
-def plan(circuit, sim=None):
-    """{"holes": {ref: {pin: hole}}, "wires", "probe": {net: hole}, "steps", "notes"} for a circuit on a breadboard."""
+def plan(circuit, sim=None, first_row=None):
+    """{"holes": {ref: {pin: hole}}, "wires", "probe": {net: hole}, "steps", "notes"} for a circuit on a breadboard.
+    first_row is the row of a chip's pin 1 when it already stands on the board: the plan is laid out around it."""
     layout = _Layout()
     parts = circuit["parts"]
+    layout.row = first_row or layout.row
     for part in parts:
         if is_chip(part):
             _chips(layout, part)
+    if first_row:  # the rest beside the chip, on whichever side of it the board has rows left
+        layout.row = max(1, first_row - 14)
     for part in parts:
         if is_three_legged(part):
             _transistor(layout, part)
@@ -376,9 +409,18 @@ def _steps(circuit, layout, external, sim):
                       "says": f"Conecta {item['pin']} de {item['ref']} en {item['hole']} ({item['net']})."})
     volts = circuit.get("supply_v", 5)
     if any("V" != p["kind"] and p["kind"] not in mcu.BOARDS for p in circuit["parts"]):
-        steps.append({"kind": "power", "holes": ["+1", "-1"], "says": f"Con la fuente apagada y en {volts:g} V: positivo "
+        steps.append({"kind": "power", "holes": ["+3", "-3"], "says": f"Con la fuente apagada y en {volts:g} V: positivo "
                                                                       f"al riel +, negativo al riel -."})
     return steps
+
+
+def pin_key(part, pin):
+    """The key of a part's pin in plan()'s holes."""
+    if part["kind"] == "NE555":
+        return PIN_NUMBER["NE555"][pin]
+    if part["kind"] == "OPAMP":
+        return OPAMP_PINS[pin]
+    return catalog.pin_numbers(catalog.get(part["model"]))[pin] if is_chip(part) and part["kind"] == "IC" else pin
 
 
 def verify(circuit, result):
@@ -400,9 +442,7 @@ def verify(circuit, result):
         items = list(zip(("1", "2"), pins)) if isinstance(pins, list) else list(pins.items())
         holes = result["holes"].get(ref, {})
         for pin, net in items:
-            key = PIN_NUMBER["NE555"][pin] if part["kind"] == "NE555" else OPAMP_PINS[pin] if part["kind"] == "OPAMP" \
-                else catalog.pin_numbers(catalog.get(part["model"]))[pin] if is_chip(part) and part["kind"] == "IC" else pin
-            hole = holes.get(key)
+            hole = holes.get(pin_key(part, pin))
             if hole is None:
                 problems.append(f"{ref} {pin} has no hole")
                 continue
@@ -422,12 +462,16 @@ def verify(circuit, result):
 def nearest_hole(placement, x_mm, y_mm, max_mm=1.5):
     """The hole of the placed board nearest a machine point, or None if none is within max_mm: the point turned back
     into the board's frame, then rounded to the grid."""
+    if isinstance(placement, BoardGrid):
+        holes = [f"{c}{r}" for r in range(1, ROWS + 1) for c in COLUMN] + [f"{c}{r}" for r in range(1, ROWS + 1) for c in RAIL_COLUMN if on_rail(r)]
+        hole = min(holes, key=lambda h: math.dist(placement.mm(h), (x_mm, y_mm)))
+        return hole if math.dist(placement.mm(hole), (x_mm, y_mm)) <= max_mm else None
     c, s = math.cos(placement.angle), math.sin(placement.angle)
     dx, dy = x_mm - placement.anchor[0], y_mm - placement.anchor[1]
     bx = placement.origin[0] + c * dx + s * dy
     by = placement.origin[1] - s * dx + c * dy
     row = int(round(bx / PITCH)) + 1
-    across = int(round(by / PITCH))
+    across = int(round(placement.flip * by / PITCH))
     columns = {v: k for k, v in COLUMN.items()} | {v: k for k, v in RAIL_COLUMN.items()}
     if row < 1 or row > ROWS or across not in columns:
         return None

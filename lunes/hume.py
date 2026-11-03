@@ -115,6 +115,8 @@ Una placa y una protoboard no son lo mismo. La placa es un circuito impreso, con
 soldados. La protoboard es el bloque claro de agujeros cada 2.54 mm, con sus rieles, donde todo se enchufa sin soldar. Un
 módulo es una placa chiquita enchufada en la protoboard: anótalo con note_on_map y llámalo módulo. Llama cada cosa por su
 nombre. measure_board y survey_board te piden bed: si no sabes qué hay en la mesa, míralo antes.
+Si el chip ya está puesto en la protoboard, el plan se arma alrededor de él: lee en el mosaico el número de fila de su
+pin 1 y llama breadboard_plan con first_row. El plan siempre va en la web, dibujado.
 Una protoboard tiene dos rieles de alimentación a lo largo de cada borde, con su línea roja (+) y azul (-), paralelos al
 chip y a unos 20 mm de su centro, a cada lado. Para mostrar uno: center_on_chip (trae across_chip_axis, el eje que cruza
 el chip), move_by unos 20 mm por ese eje, autofocus y look_microscope; si ves el riel, laser_point con picture_x y
@@ -463,8 +465,10 @@ TOOLS = [
         "name": "breadboard_plan",
         "description": "Lay the circuit on the bench out on a breadboard, by rule: which hole each lead goes in, the "
                        "wires, the rails, and a hole to probe each net. The code rebuilds the connections from the holes "
-                       "and refuses a plan that is not the circuit. Then guide_step shows each step with the laser.",
-        "parameters": {"type": "object", "properties": {}}}},
+                       "and refuses a plan that is not the circuit. Then guide_step shows each step with the laser. When "
+                       "the chip already stands on the board, first_row is the row of its pin 1, read in the mosaic: "
+                       "the plan is laid out around it.",
+        "parameters": {"type": "object", "properties": {"first_row": {"type": "integer"}}}}},
     {"type": "function", "function": {
         "name": "breadboard_place",
         "description": "Say where the breadboard lies on the machine, from two holes at least 20 mm apart and their "
@@ -939,7 +943,9 @@ class Hume:
         self.chip_seen = None  # the last chip the microscope saw: body, notch end, pin 1, and how it was confirmed
         # what Lunes has in mind of the bench, in machine mm: the chip (and its notch, last seen well), the laser's last
         # point, the last mosaic and its notes. It is on the web lab's map, and only the real session keeps it (keep_world)
-        self.world = {"bed": None, "board": None, "chip": None, "notch": None, "laser": None, "mosaic": None, "notes": []}
+        self.world = {"bed": None, "board": None, "chip": None, "notch": None, "laser": None, "mosaic": None, "notes": [],
+                      "first_row": None, "grid": None, "board_z": None}  # board_z: the focus height of the board's top; first_row: the row of the chip's pin 1, read in the mosaic;
+        # grid: machine mm of holes a1 and a63, read in the mosaic, and where the chip stood then
         self.world_file = None
         self.taps = []  # points Erlan tapped on the web lab's microscope picture: (x, y) as fractions
         self.last_mcu, self.last_serial = None, None  # the last mcu_read, and the last lines the serial monitor showed
@@ -1709,7 +1715,10 @@ class Hume:
         goes lower than it must: other things hang from it (a scope's probe), and they reach further down than the
         lens. Then a fine search around the best. lowest keeps it above a height when what it looks for cannot be
         lower. Returns (Z, sharpness)."""
-        here, top, floor = self.m.position()["Z"], WORKSPACE["Z"][1], self._z_floor()
+        at, top, floor = self.m.position(), WORKSPACE["Z"][1], self._z_floor()
+        here, chip = at["Z"], self.world["chip"]
+        if lowest is None and chip and math.dist(chip["center_mm"], (at["X"], at["Y"])) <= NEAR_CHIP_MM:
+            lowest = self._chip_floor()  # the breadboard is under the head: the table is out of reach, as for any move
         floor = floor if lowest is None else max(floor, lowest)
         best = (-1.0, here)
         z = min(max(here + 1.0, self._travel_z()), top)
@@ -1767,8 +1776,15 @@ class Hume:
                 x, y = float(args["x"]), float(args["y"])
             else:
                 x, y = at["X"], at["Y"]
-            # the surface's height is the head's Z in focus on it; high over it the beam lands millimetres off
-            self._focus_here()
+            # the surface's height is the head's Z in focus on it, there and not where the head was: it may be a chip's top
+            # beside a breadboard. High over it the beam lands millimetres off
+            moved = self._move(x, y, max(at["Z"], self._travel_z()))
+            if not moved.get("ok"):
+                return moved, None
+            if args.get("z") is not None:  # the surface's height is known: a hole gives the focus nothing to hold on to
+                self._move(x, y, float(args["z"]))
+            else:
+                self._focus_here()
         at = self.m.position()
         nearest = min(cal["surfaces"], key=lambda s: abs(s["z"] - at["Z"]))
         levels = (nearest["pwm"], min(255, nearest["pwm"] * 3))  # a dark part swallows the fine dot; much more only blinds
@@ -1857,17 +1873,22 @@ class Hume:
             self.guide = {"step": 0, "holes": [], "says": ""}
             if self.circuit is not None:
                 try:
-                    self.layout = breadboard.plan(self.circuit, self.expected)
+                    self.layout = breadboard.plan(self.circuit, self.expected, self.world.get("first_row"))
                 except ValueError:  # it does not fit: breadboard_plan says why when asked
                     pass
         return self.layout
 
-    def _breadboard_plan(self):
+    def _breadboard_plan(self, args=None):
+        args = args or {}
         from lunes import breadboard
         if self.circuit is None:
             return {"ok": False, "error": "no circuit yet: circuit_set or circuit_design first"}, None
         try:
-            self.layout, self.layout_for = breadboard.plan(self.circuit, self.expected), self.circuit
+            self.world["first_row"] = int(args["first_row"]) if args.get("first_row") else self.world.get("first_row")
+            self._save_world()
+            self.layout = breadboard.plan(self.circuit, self.expected, self.world.get("first_row"))
+            self.layout_for = self.circuit
+            self._place_board()
         except ValueError as e:
             return {"ok": False, "error": str(e)}, None
         self.guide = {"step": 0, "holes": [], "says": ""}
@@ -1875,11 +1896,40 @@ class Hume:
                 "probe": self.layout["probe"], "note": "checked: rebuilt from the holes, it is the circuit. "
                 "breadboard_place if the board's place is not known, then guide_step"}, None
 
+    def _note_grid(self, mosaic, summary):
+        """Where the breadboard's holes are, read in its own mosaic, and where the chip stood then: a board nudged since
+        then moved with the chip on it."""
+        from lunes import chip as chips
+        ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
+        grid = chips.breadboard_grid(mosaic, ppm)
+        if grid is None:
+            return None
+        h, w = mosaic.shape[:2]
+        holes = {name: [round(v, 2) for v in mosaic_point_to_mm(summary, grid[name][0] / w, grid[name][1] / h)] for name in ("a1", "a63", "j1")}
+        chip = self.world["chip"]
+        self.world["grid"] = dict(holes, chip_mm=chip["center_mm"] if chip else None, holes=grid["holes"], off_px=grid["off_px"])
+        self._place_board()
+        return self.world["grid"]
+
+    def _place_board(self):
+        """The board's place from the grid of its own holes, with no dot to measure. If the chip was seen somewhere else
+        since the mosaic, the board moved with it: past a reading's own wobble, the grid follows."""
+        from lunes.breadboard import BoardGrid
+        grid, chip = self.world.get("grid"), self.world["chip"]
+        if not grid:
+            return
+        dx, dy = 0.0, 0.0
+        if chip and grid.get("chip_mm"):
+            dx, dy = chip["center_mm"][0] - grid["chip_mm"][0], chip["center_mm"][1] - grid["chip_mm"][1]
+            if not 0.6 < math.hypot(dx, dy) < 8.0:
+                dx, dy = 0.0, 0.0
+        self.placement = BoardGrid(*((grid[n][0] + dx, grid[n][1] + dy) for n in ("a1", "a63", "j1")))
+
     def _breadboard_place(self, args):
         from lunes.breadboard import Placement
         try:
             self.placement = Placement(args["hole_a"], (float(args["x_a"]), float(args["y_a"])), args["hole_b"],
-                                       (float(args["x_b"]), float(args["y_b"])))
+                                       (float(args["x_b"]), float(args["y_b"])), self.m.config.get("board_mirrored", False))
         except (KeyError, ValueError) as e:
             return {"ok": False, "error": str(e)}, None
         return {"ok": True, "angle_deg": round(math.degrees(self.placement.angle), 1),
@@ -1889,10 +1939,14 @@ class Hume:
         """The laser on a hole, if the board's place is known; returns what to add to the tool's answer."""
         if self.placement is None:
             return {"note": "no sé dónde está la protoboard en la máquina: dilo con palabras y haz breadboard_place"}
-        result, _ = self._laser_point({"x": self.placement.mm(hole)[0], "y": self.placement.mm(hole)[1]})
+        x, y = self.placement.mm(hole)
+        result, _ = self._laser_point({"x": x, "y": y, "z": self.world.get("board_z")})
         if not result.get("ok"):
             return {"laser_failed": result.get("error", "the laser did not point")}
-        return {"pointed": hole, "mm": self.placement.mm(hole)}
+        out = {"pointed": hole, "mm": self.placement.mm(hole), "confirmed": result.get("confirmed", False)}
+        if not out["confirmed"]:  # a dot lost in a hole is usual: Erlan is who sees it, and he must know that
+            out["note"] = "the microscope did not see the dot on the hole: tell Erlan it is not confirmed and to look where it fell"
+        return out
 
     def _guide_step(self, step="next", end=1):
         if self.layout is None:
@@ -2013,6 +2067,7 @@ class Hume:
         if CIRCUIT.exists():
             saved = json.loads(CIRCUIT.read_text(encoding="utf-8"))
             self.circuit, self.expected = saved["circuit"], saved["expected"]
+        self._place_board()
         self.m.no_go = self._no_go
 
     def _no_go(self, target):
@@ -2051,9 +2106,12 @@ class Hume:
         center = self._picture_mm(found["center"][0], found["center"][1], at)
         old = self.world["chip"] or {}
         same = old and math.dist(old["center_mm"], center) < 3
+        if not same:
+            self.world["first_row"], self.placement = None, None  # that chip was somewhere else on the board
         self.world["chip"] = {**(old if same else {}), "center_mm": [round(v, 2) for v in center],
                               "corners_mm": [[round(v, 2) for v in self._picture_mm(cx, cy, at)] for cx, cy in found["corners"]],
                               "size_mm": found["size_mm"], "at": time.time(), **more}
+        self._place_board()
         self._save_world()
 
     def _across_chip(self):
@@ -3034,6 +3092,8 @@ class Hume:
                                                for fx, fy in ((0, 0), (1, 0), (0, 1))], "at": time.time()}
         if self.world_file:
             cv2.imwrite(str(self.world_file.with_name("bench_mosaic.jpg")), mosaic)
+        if self.world["bed"] == "protoboard":
+            self._note_grid(mosaic, summary)
         self._save_world()
         result = {k: v for k, v in summary.items() if k not in BOOKKEEPING}
         result["pictures"] = cols * rows
@@ -3224,7 +3284,7 @@ class Hume:
         if name == "confirm_pin1":
             return self._confirm_pin1(args)
         if name == "breadboard_plan":
-            return self._breadboard_plan()
+            return self._breadboard_plan(args)
         if name == "breadboard_place":
             return self._breadboard_place(args)
         if name == "guide_step":
@@ -3431,6 +3491,8 @@ class Hume:
             x, y = chip["center_mm"]
             parts.append(f"el chip {chip.get('name') or 'sin leer'} está en X {x:.1f}, Y {y:.1f}, visto hace "
                          f"{(time.time() - chip['at']) / 60:.0f} minutos")
+        if self.world.get("first_row"):
+            parts.append(f"en la protoboard real el pin 1 del chip está en e{self.world['first_row']}, y el plan se arma ahí")
         if self.world["notes"]:
             parts.append("en tu mapa: " + ", ".join(f"{n['label']} en X {n['mm'][0]:.0f}, Y {n['mm'][1]:.0f}"
                                                     for n in self.world["notes"][-6:]))

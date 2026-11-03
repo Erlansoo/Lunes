@@ -3,6 +3,7 @@ the circuit, its diagnosis and the board in it. It only reads what Hume already 
 never talks to the machine or the scope: those belong to the thread that is working.
 """
 from lunes import catalog, mcu
+from lunes.breadboard import pin_key
 import time
 
 import numpy as np
@@ -96,8 +97,11 @@ def _parts(hume, layout):
         ref, holes = part["ref"], layout["holes"].get(part["ref"])
         if not holes or part["kind"] == "V" or part["kind"] in mcu.BOARDS:
             continue
+        pins = part["pins"]
+        named = dict(zip(("1", "2"), pins)) if isinstance(pins, list) else pins
         item = {"ref": ref, "kind": part["kind"], "value": part.get("value"), "color": part.get("color"),
-                "label": part.get("model") or part["kind"], "holes": {str(k): v for k, v in holes.items()}}
+                "label": part.get("model") or part["kind"], "holes": {str(k): v for k, v in holes.items()},
+                "pins": [{"pin": name, "net": net, "hole": holes.get(pin_key(part, name))} for name, net in named.items()]}
         if ref in layout.get("chips", {}):
             item["chip"] = layout["chips"][ref]
         if part["kind"] == "IC":
@@ -113,7 +117,7 @@ def _breadboard(hume):
         return None
     steps = layout["steps"]
     return {"holes": [h for pins in layout["holes"].values() for h in pins.values()], "parts": _parts(hume, layout),
-            "wires": [[w["from"], w["to"], w["color"]] for w in layout["wires"]], "total": len(steps),
+            "wires": [[w["from"], w["to"], w["color"], w["net"]] for w in layout["wires"]], "total": len(steps),
             "placed": hume.placement is not None, "guide": hume.guide}
 
 

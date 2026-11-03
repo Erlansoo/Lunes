@@ -141,8 +141,24 @@ def pointer():
     ok(chip.pointer_tip(dip(0.0)[0], PPM) is None, "with no stick, no tip")
 
 
-    print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'}")
-    sys.exit(1 if FAILED else 0)
+def holes_of_a_board():
+    print("The holes of a breadboard, in a mosaic of it")
+    ppm, pitch = 37.25, 2.54 * 37.25
+    board = np.full((2600, 6600, 3), (150, 155, 150), np.uint8)
+    tilt = 0.012
+    truth = {}
+    for row in range(63):
+        for column in list(range(5)) + list(range(7, 12)):
+            x = 370 + row * pitch + column * pitch * tilt
+            y = 1790 - column * pitch + row * pitch * tilt
+            cv2.rectangle(board, (int(x - 14), int(y - 14)), (int(x + 14), int(y + 14)), (70, 70, 70), -1)
+            truth[(row, column)] = (x, y)
+    grid = chip.breadboard_grid(board, ppm)
+    ok(grid is not None and grid["holes"] > 300, f"the grid is found by its holes: {grid and grid['holes']}")
+    if grid:
+        off = max(math.dist(grid["a1"], truth[(0, 0)]), math.dist(grid["a63"], truth[(62, 0)]), math.dist(grid["j1"], truth[(0, 11)]))
+        ok(off < 4, f"a1, a63 and j1 within {off:.1f} px, on a board turned 0.7 degrees")
+    ok(chip.breadboard_grid(np.full((2600, 6600, 3), 150, np.uint8), ppm) is None, "no holes, no grid")
 
 
 def real_pictures():
@@ -167,6 +183,7 @@ if __name__ == "__main__":
     bodies()
     pin_one()
     pointer()
+    holes_of_a_board()
     real_pictures()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'}")
     sys.exit(1 if FAILED else 0)

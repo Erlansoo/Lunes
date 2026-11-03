@@ -147,7 +147,10 @@ class Kinect:
             if status == usb1.TRANSFER_COMPLETED and data:
                 stream.packet(data)
         if self.resubmit:
-            transfer.submit()
+            try:
+                transfer.submit()
+            except usb1.USBError:  # the USB controller is out of room: the pictures stop, and _frame opens it again
+                pass
 
     def _command(self, cmd, data):
         with self.lock:

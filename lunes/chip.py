@@ -251,6 +251,70 @@ def orientation(chip, end):
     return round(angle, 1), words[nearest]
 
 
+def breadboard_grid(frame, px_per_mm):
+    """Where a breadboard's holes stand in a mosaic of it, row 1 at the left and column a at the bottom, from the holes
+    themselves: a comb at 2.54 mm finds the block, then each hole is looked for near its place and the whole grid is
+    fitted to them, turned as the board lies. A chip's top stands higher than the board and shows shifted, so the holes
+    are the way to know them. {"a1", "a63", "j1": (x, y) in pixels, "holes": how many, "off_px": their typical miss}, or
+    None if it is not a breadboard's grid."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, w = gray.shape
+    dark = np.clip(cv2.blur(gray, (121, 121)) - gray, 0, None)
+    pitch = 2.54 * px_per_mm
+    columns = np.array(list(range(5)) + list(range(7, 12)), float)
+    rows = np.arange(63, dtype=float)
+    if w < 63 * pitch or h < 12 * pitch:
+        return None
+    best = None
+    span = np.arange(int(w * 0.1), int(w * 0.9), 40)
+    for tilt in np.arange(-0.015, 0.0151, 0.001):  # across the block's whole length the tilt shifts a row by a whole pitch
+        ys = np.arange(h)[None, :] + (tilt * span)[:, None]
+        profile = np.mean([np.interp(np.arange(h), ys[i], dark[:, span[i]]) for i in range(len(span))], axis=0)
+        for y0 in range(int(11 * pitch) + 1, h - 1):
+            value = profile[(y0 - columns * pitch).astype(int)].mean()
+            if best is None or value > best[0]:
+                best = (float(value), float(tilt), float(y0))
+    _, tilt, y0 = best
+    x_best = None
+    for x0 in range(0, int(w - 62 * pitch) - 1, 2):
+        xs = (x0 + rows * pitch).astype(int)
+        yy = (y0 - tilt * xs).astype(int)
+        band = sum(dark[np.clip((yy - c * pitch).astype(int), 0, h - 1), xs].sum() for c in range(5))
+        if x_best is None or band > x_best[0]:
+            x_best = (float(band), float(x0))
+    x0 = x_best[1]
+    gx, gy = pitch, 0.0  # one row along, then one column up, in pixels
+    fit = np.array([[x0, gx, tilt * pitch], [y0 - tilt * x0, -tilt * pitch, -pitch]])  # x, y from 1, row, column
+    reach = int(0.32 * pitch)
+    for _ in range(3):
+        found, where = [], []
+        for r in rows:
+            for c in columns:
+                px, py = fit @ np.array([1.0, r, c])
+                x, y = int(round(px)), int(round(py))
+                if not (reach <= x < w - reach and reach <= y < h - reach):
+                    continue
+                patch = dark[y - reach:y + reach + 1, x - reach:x + reach + 1]
+                mask = patch > 0.5 * patch.max()
+                if patch.max() < 12 or not (0.04 * patch.size < mask.sum() < 0.5 * patch.size):
+                    continue
+                vy, vx = np.nonzero(mask)
+                found.append((x - reach + vx.mean(), y - reach + vy.mean()))
+                where.append((1.0, r, c))
+        if len(found) < 200:
+            return None
+        A, B = np.array(where), np.array(found)
+        keep = np.ones(len(A), bool)
+        for _ in range(3):
+            fit = np.linalg.lstsq(A[keep], B[keep], rcond=None)[0].T
+            miss = np.linalg.norm(A @ fit.T - B, axis=1)
+            keep = miss < max(6.0, 2.5 * np.median(miss[keep]))
+    if abs(math.hypot(fit[0, 1], fit[1, 1]) / pitch - 1) > 0.03:
+        return None
+    at = lambda r, c: tuple(float(v) for v in fit @ np.array([1.0, r, c]))  # noqa: E731
+    return {"a1": at(0, 0), "a63": at(62, 0), "j1": at(0, 11), "holes": int(keep.sum()), "off_px": round(float(np.median(miss[keep])), 1)}
+
+
 def pointer_tip(frame, px_per_mm):
     """The tip of a pointer laid over the board (a wooden stick, a toothpick): a long thin thing that comes in from the
     picture's edge; its tip is the end farthest from where it enters. Returns ((x, y), width_mm) or None."""

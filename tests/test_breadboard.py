@@ -37,8 +37,38 @@ def straight(a, b):
     return xa == xb or ya == yb
 
 
+def mirrored_board():
+    print("A board seen from a left-handed machine")
+    x, y = 57.83, -80.05  # pin 1 of the real chip, row 53; the board's rows run along +Y
+    place = breadboard.Placement("e53", (x, y), "e13", (x - 1.04, y - 101.6), mirrored=True)
+    ok(place.mm("f53")[0] > x + 7 and place.mm("a53")[0] < x - 9, "up the columns, a to j, goes towards +X, as the mosaic shows")
+    ok(place.mm("-53")[0] < place.mm("a53")[0] and place.mm("+53")[0] < place.mm("-53")[0], "the rails beyond column a, the red one last")
+    ok(all(breadboard.nearest_hole(place, *place.mm(h)) == h for h in ("a40", "j1", "c55", "+40", "-41")), "and each point goes back to its hole")
+
+
+def grid_of_the_real_board():
+    print("The real board, from three of its corners")
+    grid = breadboard.BoardGrid((48.58, -212.2), (48.15, -53.88), (76.31, -212.16))
+    ok(math.dist(grid.mm("a63"), (48.15, -53.88)) < 0.02 and math.dist(grid.mm("j1"), (76.31, -212.16)) < 0.02, "the corners stay where they were measured")
+    ok(abs(grid.mm("a40")[1] + 112.6) < 0.1 and grid.mm("f53")[0] > grid.mm("e53")[0] + 7, "row 40 where the mosaic has it, and a to j towards +X")
+    ok(all(breadboard.nearest_hole(grid, *grid.mm(h)) == h for h in ("a40", "+40", "-41", "j63")), "each point goes back to its hole")
+
+
+def around_the_chip():
+    print("Around a chip already on the board")
+    circuit = TEMPLATES["astable_555"](frequency_hz=2, duty=0.6, supply_v=5, led_color="green")[0]
+    laid = breadboard.plan(circuit, first_row=53)
+    ok(laid["chips"]["U1"]["first"] == "e53" and laid["holes"]["U1"][1] == "e53", "pin 1 where the chip really is, e53")
+    rows = [int(h[1:]) for pins in laid["holes"].values() for h in pins.values()]
+    ok(min(rows) >= 1 and max(rows) <= 63 and not breadboard.verify(circuit, laid), "the rest fits around it, and it is still the circuit")
+    aslant = [ref for ref, pins in laid["holes"].items() if len(pins) == 2 and ref != "V1" and not straight(*pins.values())]
+    ok(not aslant, f"every part still lies straight {aslant or ''}")
+
+
 def rails():
     print("The rails stand as on the real board")
+    ok([r for r in range(1, 64) if not breadboard.on_rail(r)][:6] == [1, 2, 8, 14, 20, 26] and not breadboard.on_rail(56)
+       and breadboard.on_rail(61) and not breadboard.on_rail(62), "groups of five from row 3 to 61, as the mosaic shows")
     ok(breadboard.RAIL_COLUMN["-"] > breadboard.RAIL_COLUMN["+"], "next to column a comes the blue one, then the red one at the edge")
     ok(breadboard.strip_of("-5") != breadboard.strip_of("+5") and breadboard.board_xy("-5")[0] == breadboard.board_xy("+5")[0],
        "they are two different rails, side by side")
@@ -56,6 +86,8 @@ def plans():
             ok(not twice, f"{name}: {len(result['steps'])} steps, {len(result['wires'])} wires"
                + (f", {twice} holes used twice" if twice else ""))
             outside = {item["ref"] for item in result["external"]}
+            lost = [h for h in ends if h[0] in "+-" and not breadboard.on_rail(int(h[1:]))]
+            ok(not lost, f"{name}: every rail hole exists {lost or ''}")
             aslant = [ref for ref, pins in result["holes"].items()
                       if len(pins) == 2 and ref not in outside and not straight(*pins.values())]
             ok(not aslant, f"{name}: every part lies straight {aslant or ''}")
@@ -125,6 +157,9 @@ def guide():
 
 if __name__ == "__main__":
     rails()
+    mirrored_board()
+    grid_of_the_real_board()
+    around_the_chip()
     plans()
     faulty()
     placement()

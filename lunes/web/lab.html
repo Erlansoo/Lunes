@@ -45,8 +45,20 @@ main { display:grid; gap:10px; padding:10px; min-height:0;
        grid-template-columns:minmax(0,1.6fr) minmax(290px,.86fr) minmax(320px,.94fr);
        grid-template-rows:minmax(0,1.2fr) minmax(0,1fr);
        grid-template-areas:"view machine talk" "scope bench talk"; }
-.panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; min-height:0; min-width:0;
+.panel { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:8px; min-height:0; min-width:0;
          display:flex; flex-direction:column; overflow:hidden; }
+.panel.floating { position:fixed; inset:4vh 5vw; z-index:40; box-shadow:0 24px 70px rgba(0,0,0,.65); border-color:#3d4a52; }
+.veil { position:fixed; inset:0; z-index:39; background:rgba(4,6,8,.62); }
+.grow { position:absolute; top:6px; right:7px; z-index:6; width:26px; height:26px; border-radius:5px; border:1px solid var(--line);
+        background:rgba(14,18,20,.86); color:var(--muted); font-size:15px; line-height:1; }
+.grow:hover { color:var(--ink); border-color:var(--accent); }
+.panel > .head { padding-right:42px; }
+.zoomed { cursor:grab; } .zoomed:active { cursor:grabbing; }
+.zoombox { overflow:hidden; touch-action:none; }
+.tip { position:fixed; z-index:60; max-width:340px; padding:7px 10px; border-radius:6px; border:1px solid #3d4a52; background:#10161a;
+       color:var(--ink); font-size:12.5px; line-height:1.45; white-space:pre-line; pointer-events:none; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+.tip b { color:var(--accent); font-weight:650; }
+.panel.floating .breadboard svg { max-height:calc(92vh - 150px); }
 .head { flex:none; display:flex; align-items:center; gap:10px; min-height:37px; padding:7px 12px; border-bottom:1px solid var(--line); }
 .head h2 { font-size:13px; font-weight:600; }
 .head .side { margin-left:auto; color:var(--muted); font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -148,6 +160,8 @@ body:not(.details) .detail { display:none; }
 }
 </style></head>
 <body>
+<div class="veil" id="veil" hidden></div>
+<div class="tip" id="tip" hidden></div>
 <header class="top">
   <div class="brand"><h1>Lunes</h1><span data-t="subtitle"></span></div>
   <div class="activity"><div class="state" id="state" data-on="listening"><i></i><span id="stateText"></span></div>
@@ -210,7 +224,7 @@ const TEXT = {
       asSimulated:"Lee como la simulación", notAsSimulated:"No lee como la simulación", serial:"Monitor serie",
       kinectOk:"Kinect confirma la posición", kinectOff:"Kinect ve el cabezal a", kinectNone:"Kinect todavía no confirmó la posición",
       hold:"Movimiento en pausa", doubtful:"Posición dudosa: los motores se liberaron", front:"frente", back:"fondo",
-      board_:"placa", head_:"cabezal", mosaics:"mosaicos", mapAll:"Toda la mesa", mapClose:"De cerca", chipUnread:"chip sin leer", details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
+      board_:"placa", head_:"cabezal", mosaics:"mosaicos", mapAll:"Toda la mesa", mapClose:"De cerca", chipUnread:"chip sin leer", grow:"Agrandar", shrink:"Volver a su lugar", wire:"Cable", wired:"conecta", value:"Valor", bands:"Bandas", pins:"Patas", strip:"Fila unida a", free:"libre", laserTip:"Último punto del láser", confirmed:"confirmado", unconfirmed:"sin confirmar", head_tip:"Cabezal", notchTip:"muesca", kinds:{R:"Resistencia",C:"Capacitor",L:"Bobina",D:"Diodo",ZENER:"Zener",LED:"LED",SW:"Interruptor",LDR:"Fotorresistencia",NTC:"Termistor",POT:"Potenciómetro",NPN:"Transistor NPN",PNP:"Transistor PNP",NMOS:"MOSFET N",PMOS:"MOSFET P",REG:"Regulador",IC:"Integrado",NE555:"Integrado",OPAMP:"Amplificador"}, bandNames:["negro","café","rojo","naranja","amarillo","verde","azul","violeta","gris","blanco"], details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
       lunes:"Lunes", noSignal:"Sin imagen", models:"Modelos Meta", api:"API", pc:"en la PC", new_:"Imagen nueva", clear:"Clara",
       noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
       remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
@@ -226,7 +240,7 @@ const TEXT = {
       asSimulated:"Reads as simulated", notAsSimulated:"Does not read as simulated", serial:"Serial monitor",
       kinectOk:"Kinect confirms the position", kinectOff:"Kinect sees the head", kinectNone:"Kinect has not confirmed the position yet",
       hold:"Moves on hold", doubtful:"Position doubtful: the motors were released", front:"front", back:"back",
-      board_:"board", head_:"head", mapAll:"Whole table", mapClose:"Close up", chipUnread:"unread chip", mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
+      board_:"board", head_:"head", mapAll:"Whole table", mapClose:"Close up", chipUnread:"unread chip", grow:"Enlarge", shrink:"Back in place", wire:"Wire", wired:"joins", value:"Value", bands:"Bands", pins:"Pins", strip:"Row joined to", free:"free", laserTip:"Laser's last point", confirmed:"confirmed", unconfirmed:"not confirmed", head_tip:"Head", notchTip:"notch", kinds:{R:"Resistor",C:"Capacitor",L:"Inductor",D:"Diode",ZENER:"Zener",LED:"LED",SW:"Switch",LDR:"Photoresistor",NTC:"Thermistor",POT:"Potentiometer",NPN:"NPN transistor",PNP:"PNP transistor",NMOS:"N MOSFET",PMOS:"P MOSFET",REG:"Regulator",IC:"Chip",NE555:"Chip",OPAMP:"Amplifier"}, bandNames:["black","brown","red","orange","yellow","green","blue","violet","grey","white"], mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
       lunes:"Lunes", noSignal:"No picture", models:"Meta models", api:"API", pc:"on the PC", new_:"New picture", clear:"Clear",
       noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
       remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
@@ -379,16 +393,18 @@ function renderMachine(m){
   }
   if (chip){
     const c = on(chip.center_mm), r = Math.max(...chip.size_mm)/2;
-    node("polygon",{points:chip.corners_mm.map(on).map(p => p.join(",")).join(" "),fill:"#3a3f45",stroke:"#d7dbe0","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    node("polygon",{points:chip.corners_mm.map(on).map(p => p.join(",")).join(" "),fill:"#3a3f45",stroke:"#d7dbe0","stroke-width":1,"vector-effect":"non-scaling-stroke",
+      "data-tip":`<b>${chip.name || T.chipUnread}</b>\nX ${fixed(chip.center_mm[0])}  Y ${fixed(chip.center_mm[1])}\n${age(chip.ago_s)}`});
     if (chip.notch_mm){ const [x,y] = on(chip.notch_mm); node("circle",{cx:x,cy:y,r:1.1,fill:"#101416",stroke:"#d7dbe0","stroke-width":1,"vector-effect":"non-scaling-stroke"}); }
     if (chip.pin1_mm){ const [x,y] = on(chip.pin1_mm); node("circle",{cx:x,cy:y,r:Math.max(.9,2.2*unit),fill:"#f5dc28"}); label(x+5*unit,y+4*unit,"1","start","#f5dc28"); }
     label(c[0],c[1]-r-6*unit,chip.name || T.chipUnread,"middle","#e6e9ec");
   }
   for (const n of mind.notes || []){ const [x,y] = on(n.mm); node("circle",{cx:x,cy:y,r:2.5*unit,fill:"#6db3f2"}); label(x+5*unit,y+4*unit,n.label,"start","#a9d1f7"); }
-  if (mind.laser){ const [x,y] = on(mind.laser.mm); node("circle",{cx:x,cy:y,r:3*unit,fill:"#e0261c",stroke:mind.laser.confirmed ? "#fff" : "none","stroke-width":1,"vector-effect":"non-scaling-stroke"}); }
+  if (mind.laser){ const [x,y] = on(mind.laser.mm); node("circle",{cx:x,cy:y,r:3*unit,fill:"#e0261c",stroke:mind.laser.confirmed ? "#fff" : "none","stroke-width":1,"vector-effect":"non-scaling-stroke",
+    "data-tip":`<b>${T.laserTip}</b>\nX ${fixed(mind.laser.mm[0])}  Y ${fixed(mind.laser.mm[1])}\n${mind.laser.confirmed ? T.confirmed : T.unconfirmed} · ${age(mind.laser.ago_s)}`}); }
   if (a.X !== undefined){
     const x = toX(a.X), y = toY(a.Y);
-    node("circle",{cx:x,cy:y,r:9*unit,fill:"none",stroke:"#6db3f2","stroke-width":1.5,"vector-effect":"non-scaling-stroke"});
+    node("circle",{cx:x,cy:y,r:9*unit,fill:"transparent",stroke:"#6db3f2","stroke-width":1.5,"vector-effect":"non-scaling-stroke","data-tip":`<b>${T.head_tip}</b>\nX ${fixed(a.X)}  Y ${fixed(a.Y)}  Z ${fixed(a.Z)}`});
     node("line",{x1:x-15*unit,y1:y,x2:x+15*unit,y2:y,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
     node("line",{x1:x,y1:y-15*unit,x2:x,y2:y+15*unit,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
   }
@@ -450,6 +466,7 @@ function renderScope(s){
   if (notes.length){ hints.textContent = say(notes[0]); hints.hidden = false; }
 }
 function section(title){ const s = el("div","section"); if (title) s.append(el("h3","",title)); return s; }
+let boardKey = "", boardBox = null;
 function renderBench(d){
   const body = $("benchBody"), c = d.circuit, g = d.diagnosis, a = d.arduino, parts = [];
   $("benchInfo").textContent = c ? `${si(c.supply_v,"V")} ${T.supply}` : "";
@@ -463,7 +480,9 @@ function renderBench(d){
   }
   if (d.breadboard){
     const b = d.breadboard, s = section(), now = b.guide || {};
-    s.classList.add("breadboard"); s.append(el("h3","",T.breadboard + (b.placed ? "" : ` · ${T.notPlaced}`)), drawBreadboard(b));
+    const sameBoard = JSON.stringify([b.parts, b.wires, b.holes, b.guide, lang]);
+    if (sameBoard !== boardKey){ boardKey = sameBoard; boardBox = el("div","zoombox"); boardBox.append(drawBreadboard(b)); zoomable(boardBox, () => [boardBox.firstChild], "breadboard"); }
+    s.classList.add("breadboard"); s.append(el("h3","",T.breadboard + (b.placed ? "" : ` · ${T.notPlaced}`)), boardBox);
     if (now.says){ const n = el("div","stepnow"); if (now.step && !now.net) n.append(el("b","",`${T.stepOf} ${now.step}/${b.total} `)); n.append(document.createTextNode(now.says)); s.append(n); }
     parts.push(s);
   }
@@ -520,8 +539,9 @@ function drawBreadboard(b){
   // drawn from its own data (package, pins, value, colour), so a chip Lunes learnt a minute ago needs no drawing of its own
   const P = 6, W = 63 * P + 12, H = 19 * P, svg = document.createElementNS(NS,"svg");
   // only the rows in use, so the parts read at their size; a real board is long and a circuit takes one end of it
-  const last = Math.max(...b.holes.concat(b.wires.flatMap(w => [w[0], w[1]])).map(h => +h.slice(1)));
-  svg.setAttribute("viewBox",`0 0 ${Math.min(63, Math.max(24, last + 4)) * P + 12} ${H}`); svg.setAttribute("role","img"); svg.setAttribute("aria-label",T.breadboard);
+  const used = b.holes.concat(b.wires.flatMap(w => [w[0], w[1]])).map(h => +h.slice(1)), far = Math.min(63, Math.max(...used) + 3);
+  const near = Math.max(1, Math.min(Math.min(...used) - 2, far - 23));
+  svg.setAttribute("viewBox",`${(near - 1) * P} 0 ${(far - near + 1) * P + 12} ${H}`); svg.setAttribute("role","img"); svg.setAttribute("aria-label",T.breadboard);
   const at = hole => { const c = hole[0], row = +hole.slice(1), rails = {"-":-3,"+":-4},
     y = c in rails ? rails[c] : "abcde".includes(c) ? "abcde".indexOf(c) : 7 + "fghij".indexOf(c);
     return [6 + (row - .5) * P, H - (y + 4.5) * P]; };
@@ -536,17 +556,30 @@ function drawBreadboard(b){
     return d === 100 ? [1, 0, e + 1] : [Math.floor(d / 10), d % 10, e]; };
   add("line",{x1:0,x2:W,y1:H-10*P,y2:H-10*P,stroke:"#d9d4c5","stroke-width":P*1.6});
   add("line",{x1:0,x2:W,y1:H-.5*P+2,y2:H-.5*P+2,stroke:"#d33","stroke-width":.6}); add("line",{x1:0,x2:W,y1:H-1.5*P-2,y2:H-1.5*P-2,stroke:"#35a","stroke-width":.6});
-  for (let r=1;r<=63;r++) for (const c of "abcdefghij+-") { const [x,y] = at(c+r); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#a9a596"}); }
-  for (const [f,t,color] of b.wires){ const [x1,y1] = at(f), [x2,y2] = at(t), long = Math.hypot(x2-x1,y2-y1), bow = Math.min(9, long*.18) / long;
-    add("path",{d:`M ${x1} ${y1} Q ${(x1+x2)/2+(y2-y1)*bow} ${(y1+y2)/2-(x2-x1)*bow} ${x2} ${y2}`,fill:"none",stroke:WIRE[color],"stroke-width":1.1,"stroke-linecap":"round"}); }
+  const strip = h => "+-".includes(h[0]) ? h[0] : `${h.slice(1)}${"abcde".includes(h[0]) ? "L" : "R"}`, netOf = {};
+  for (const p of b.parts || []) for (const q of p.pins || []) if (q.hole) netOf[strip(q.hole)] = q.net;
+  for (const [f,t,,net] of b.wires){ netOf[strip(f)] = net; netOf[strip(t)] = net; }
+  for (let r=1;r<=63;r++) for (const c of "abcdefghij+-") { if ("+-".includes(c) && (r < 3 || r > 61 || r % 6 === 2)) continue; const [x,y] = at(c+r), net = netOf[strip(c+r)];
+    add("rect",{x:x-1.1,y:y-1.1,width:2.2,height:2.2,fill:"transparent","data-tip":`<b>${c}${r}</b>\n${T.strip} ${net || T.free}`}); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#a9a596","pointer-events":"none"}); }
+  for (let r = near; r <= far; r++) if (r === 1 || r % 5 === 0) label(at(`j${r}`)[0], at(`j${r}`)[1] - 4.6, r, "#6f6a5c", 3.4);
+  for (const c of "abcdefghij") label(at(`${c}${near}`)[0] - 3.8, at(`${c}${near}`)[1], c, "#6f6a5c", 2.8);
+  for (const [f,t,color,net] of b.wires){ const [x1,y1] = at(f), [x2,y2] = at(t), long = Math.hypot(x2-x1,y2-y1), bow = Math.min(9, long*.18) / long;
+    const d = `M ${x1} ${y1} Q ${(x1+x2)/2+(y2-y1)*bow} ${(y1+y2)/2-(x2-x1)*bow} ${x2} ${y2}`;
+    add("path",{d,fill:"none",stroke:WIRE[color],"stroke-width":1.1,"stroke-linecap":"round","pointer-events":"none"});
+    add("path",{d,fill:"none",stroke:"transparent","stroke-width":3.4,"data-tip":`<b>${T.wire} ${color}</b>\n${net}: ${f} → ${t}`}); }
   const body = (a, c, draw) => { // a two-legged part between two holes, drawn along the line that joins them
     const [x1,y1] = at(a), [x2,y2] = at(c), mx = (x1+x2)/2, my = (y1+y2)/2, g = add("g",{transform:`translate(${mx} ${my}) rotate(${Math.atan2(y2-y1,x2-x1)*180/Math.PI})`});
     add("line",{x1,y1,x2,y2,stroke:"#8d8d8d","stroke-width":.7}); svg.append(g); draw(g); return [mx,my,x1===x2]; };
   for (const p of b.parts || []){
-    const holes = Object.values(p.holes), tip = add("title",{},undefined,`${p.ref} ${p.label}${p.value ? " " + p.value : ""}`);
+    const holes = Object.values(p.holes), said = [`<b>${p.ref}</b> ${T.kinds[p.kind] || p.kind}${p.kind === "IC" || p.kind === "NE555" ? " " + p.label : ""}`];
+    if (p.value !== undefined && p.value !== null) said.push(`${T.value}: ${p.value}${p.kind === "R" ? " Ω" : p.kind === "C" ? "F" : ""}`);
+    if (p.kind === "R" && bands(p.value).length) said.push(`${T.bands}: ${bands(p.value).map(n => T.bandNames[n] || "?").join(", ")}`);
+    if (p.color) said.push(p.color);
+    if (p.pins) said.push(`${T.pins}:\n` + p.pins.map(q => `  ${q.pin} → ${q.hole} (${q.net})`).join("\n"));
+    const tip = said.join("\n"), mark = g => { g.setAttribute("data-tip", tip); };
     if (p.chip){
       const half = p.chip.pins / 2, first = +p.chip.first.slice(1), [x0] = at(`e${first}`), [x1] = at(`e${first + half - 1}`), [,yb] = at(`e${first}`), [,yt] = at(`f${first}`);
-      const g = add("g",{}); g.append(tip);
+      const g = add("g",{}); mark(g);
       for (let i = 0; i < half; i++){ const [x] = at(`e${first + i}`); for (const y of [yb, yt]) add("rect",{x:x-1,y:y-1.4,width:2,height:2.8,fill:"#b8b8b8"},g); }
       add("rect",{x:x0-2.6,y:yt+.2,width:x1-x0+5.2,height:yb-yt-.4,rx:.8,fill:"#26272b"},g);
       add("circle",{cx:x0-2.6,cy:(yb+yt)/2,r:2.2,fill:"#d9d4c5"},g);                      // the notch, to the left
@@ -556,7 +589,7 @@ function drawBreadboard(b){
       continue;
     }
     if (["POT","NPN","PNP","NMOS","PMOS","REG"].includes(p.kind) || (p.kind === "IC" && !p.chip)){
-      const pts = holes.map(at), xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), cx = xs.reduce((a,c) => a+c)/xs.length, cy = ys.reduce((a,c) => a+c)/ys.length, g = add("g",{}); g.append(tip);
+      const pts = holes.map(at), xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), cx = xs.reduce((a,c) => a+c)/xs.length, cy = ys.reduce((a,c) => a+c)/ys.length, g = add("g",{}); mark(g);
       if (p.kind === "POT"){ add("rect",{x:Math.min(...xs)-3,y:cy-5.5,width:Math.max(...xs)-Math.min(...xs)+6,height:9,rx:1,fill:"#2f5fb3"},g); add("circle",{cx,cy:cy-1,r:2.8,fill:"#f0f0f0"},g); add("line",{x1:cx-1.8,x2:cx+1.8,y1:cy-1,y2:cy-1,stroke:"#333","stroke-width":.6},g); }
       else if (p.package === "TO-220" || p.kind === "REG" || ["IRLZ44N","IRF540","IRF9540"].includes(p.label)){ add("rect",{x:Math.min(...xs)-3,y:cy-7,width:Math.max(...xs)-Math.min(...xs)+6,height:2.4,fill:"#c4c4c4"},g); add("rect",{x:Math.min(...xs)-3,y:cy-4.6,width:Math.max(...xs)-Math.min(...xs)+6,height:6,fill:"#26272b"},g); }
       else add("path",{d:`M ${Math.min(...xs)-2.4} ${cy+1.5} a ${(Math.max(...xs)-Math.min(...xs))/2+2.4} 6 0 0 1 ${Math.max(...xs)-Math.min(...xs)+4.8} 0 z`,fill:"#26272b"},g);
@@ -566,7 +599,7 @@ function drawBreadboard(b){
     }
     if (holes.length === 2){
       const [a, c] = p.kind === "LED" || p.kind === "D" || p.kind === "ZENER" ? [p.holes.A, p.holes.K] : holes;
-      const [mx, my, upright] = body(a, c, g => { g.append(tip);
+      const [mx, my, upright] = body(a, c, g => { mark(g);
         if (p.kind === "R"){ add("rect",{x:-6,y:-1.6,width:12,height:3.2,rx:1.2,fill:"#d9bd8e"},g); bands(p.value).forEach((n,i) => add("rect",{x:-4+i*2.1,y:-1.6,width:1.1,height:3.2,fill:BANDS[n] || "#111"},g)); add("rect",{x:3.2,y:-1.6,width:1.1,height:3.2,fill:"#b5902e"},g); }
         else if (p.kind === "C"){ const big = /u|µ/.test(p.value); add("circle",{cx:0,cy:0,r:big ? 3 : 2.3,fill:big ? "#26406e" : "#c9913f"},g); }
         else if (p.kind === "LED") add("circle",{cx:0,cy:0,r:3,fill:{red:"#e33",green:"#2ea84f",blue:"#2d62d3",yellow:"#e6c82a",white:"#f2f2f2"}[p.color] || "#e33",stroke:"#555","stroke-width":.4},g);
@@ -637,6 +670,46 @@ $("mapView").onclick = () => { mapClose = !mapClose; if (window.lastLab) renderM
 $("details").onclick = () => { document.body.classList.toggle("details"); $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details; };
 setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString("en-GB", {hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}); }, 1000);
 window.addEventListener("resize", () => { if (lab){ drawOverlay(); drawTrace(lab.scope); } });
+// any panel floats big over the page and goes back to its place; the picture inside zooms with the wheel, and a drag moves it
+let floating = null;
+function float(panel){
+  const next = floating === panel ? null : panel;
+  if (floating) floating.classList.remove("floating");
+  floating = next;
+  if (floating) floating.classList.add("floating");
+  $("veil").hidden = !floating;
+  document.querySelectorAll(".grow").forEach(b => { const on = b.parentElement === floating; b.textContent = on ? "✕" : "⤢"; b.title = on ? T.shrink : T.grow; b.setAttribute("aria-label", b.title); });
+  requestAnimationFrame(() => { if (lab){ drawOverlay(); drawTrace(lab.scope); } });
+}
+document.querySelectorAll(".panel").forEach(panel => { const b = el("button","grow"); b.onclick = () => float(panel); panel.append(b); });
+$("veil").onclick = () => float(floating);
+addEventListener("keydown", e => { if (e.key === "Escape" && floating) float(floating); });
+const zooms = {};
+function zoomable(box, targets, key){
+  const z = zooms[key] = zooms[key] || {k:1, x:0, y:0};
+  let drag = null, moved = false;
+  const show = () => { const r = box.getBoundingClientRect();
+    z.x = Math.min(0, Math.max(z.x, r.width * (1 - z.k))); z.y = Math.min(0, Math.max(z.y, r.height * (1 - z.k)));
+    for (const t of targets()){ t.style.transformOrigin = "0 0"; t.style.transform = z.k === 1 ? "" : `translate(${z.x}px,${z.y}px) scale(${z.k})`; }
+    box.classList.toggle("zoomed", z.k > 1); };
+  box.classList.add("zoombox");
+  box.addEventListener("wheel", e => { e.preventDefault(); const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    const k = Math.min(14, Math.max(1, z.k * (e.deltaY < 0 ? 1.25 : 0.8))); z.x = px - (px - z.x) * k / z.k; z.y = py - (py - z.y) * k / z.k; z.k = k; show(); }, {passive:false});
+  box.addEventListener("pointerdown", e => { if (z.k > 1 && e.button === 0){ drag = [e.clientX, e.clientY, z.x, z.y]; moved = false; box.setPointerCapture(e.pointerId); } });
+  box.addEventListener("pointermove", e => { if (!drag) return; z.x = drag[2] + e.clientX - drag[0]; z.y = drag[3] + e.clientY - drag[1]; moved = moved || Math.abs(e.clientX - drag[0]) + Math.abs(e.clientY - drag[1]) > 4; show(); });
+  box.addEventListener("pointerup", () => { drag = null; });
+  box.addEventListener("click", e => { if (moved){ e.stopPropagation(); moved = false; } }, true);
+  box.addEventListener("dblclick", () => { z.k = 1; z.x = 0; z.y = 0; show(); });
+  show();
+}
+zoomable($("stage"), () => [$("big"), $("overlay")], "view");
+zoomable($("map").parentElement, () => [$("map")], "map");
+zoomable($("trace").parentElement, () => [$("trace")], "scope");
+addEventListener("mousemove", e => { const t = e.target.closest && e.target.closest("[data-tip]"), tip = $("tip");
+  if (!t){ tip.hidden = true; return; }
+  tip.innerHTML = t.getAttribute("data-tip"); tip.hidden = false;
+  tip.style.left = `${Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8)}px`; tip.style.top = `${Math.min(e.clientY + 14, innerHeight - tip.offsetHeight - 8)}px`; });
+float(null);
 translate(); poll(); thumbs(); setInterval(thumbs, 2000);
 </script>
 </body></html>

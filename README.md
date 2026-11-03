@@ -198,7 +198,9 @@ set up as this README describes.
   - Nothing leaves the PC, and the page loads nothing from outside it.
   - `python tools/lab_preview.py` shows it on a simulated bench with no hardware: a 555 with a planted fault,
     diagnosed by ngspice and the simulated scope. No model is called, and the conversation is scripted.
-- **Guided by the laser, on a breadboard** (`lunes/breadboard.py`). Tried so far with the laser simulated.
+- **Guided by the laser, on a breadboard** (`lunes/breadboard.py`). The holes are read from a mosaic of the real board,
+  and the dot lands about 0.2 mm from where it is sent, measured in microscope pictures. The whole guide by voice is still
+  to be tried on the real board.
   - `breadboard_plan` lays any circuit Lunes designs out on a breadboard by rule, then rebuilds the connections from
     the holes alone and refuses a plan that is not the circuit.
   - `guide_step` shows each lead, wire and supply connection with the laser's dot, in words. During a diagnosis,

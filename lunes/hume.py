@@ -223,6 +223,11 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
+- Antes de actuar, planifica en una línea: qué vas a hacer, cómo y con qué herramientas, y sigue ese plan; no
+  pruebes la primera herramienta que se te ocurra. Un componente del circuito está donde su protoboard lo dibuja:
+  con la protoboard ubicada, laser_point o move_to a su agujero; si no, cerca del chip, por posición desde el chip
+  (move_by de unos mm y look_microscope), no saltando por el mosaico punto por punto. Con tres intentos fallidos,
+  para y pregúntale a Erlan dónde está (Erlan, 3 nov: "planifica bien qué vas a hacer, cómo y con qué herramientas").
 - Si te falta algo que Erlan sabe (dónde está la placa, qué es, qué quiere), pregúntale en una frase.
 
 Reglas:

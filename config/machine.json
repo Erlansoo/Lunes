@@ -51,22 +51,22 @@
       480
     ],
     "px_per_mm": {
-      "X": 37.427,
-      "Y": 37.082
+      "X": 38.368,
+      "Y": 38.211
     },
     "image_shift_px_per_mm": {
       "X": [
-        -0.395,
-        37.425
+        -0.43596670307241236,
+        38.36506987037229
       ],
       "Y": [
-        -37.08,
-        -0.385
+        -38.20630690577295,
+        -0.594320329645357
       ]
     },
-    "x_axis_angle_deg": 90.6,
-    "angle_between_axes_deg": 89.99,
-    "calibrated_at": "2026-11-02T20:06:07"
+    "x_axis_angle_deg": 90.65,
+    "angle_between_axes_deg": 90.24,
+    "calibrated_at": "2026-11-02T23:03:01"
   },
   "workspace_mm": {
     "X": [
@@ -92,77 +92,66 @@
     "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
   },
   "laser": {
-    "pwm": 32,
-    "at": "2026-11-02T11:13",
+    "pwm": 30,
+    "at": "2026-11-02T23:47",
     "surfaces": [
       {
-        "z": 17.05,
-        "pwm": 32,
-        "dot_mm": 0.77,
+        "z": 13.7,
+        "pwm": 30,
+        "dot_mm": 0.29,
         "offset_mm": {
-          "X": 4.843,
-          "Y": -4.014
+          "X": 4.111,
+          "Y": -2.633
         },
-        "at": "2026-11-02T11:13",
-        "surface": "chip"
-      },
-      {
-        "z": 12.85,
-        "pwm": 31,
-        "dot_mm": 0.503,
-        "offset_mm": {
-          "X": 2.561,
-          "Y": -2.451
-        },
-        "at": "2026-11-02T11:13",
+        "at": "2026-11-02T23:47",
         "surface": "protoboard"
       },
       {
-        "z": 5.65,
+        "z": 16.5,
         "pwm": 30,
-        "dot_mm": 0.54,
+        "dot_mm": 0.276,
         "offset_mm": {
-          "X": -0.838,
-          "Y": -0.226
+          "X": 4.349,
+          "Y": -2.75
         },
-        "at": "2026-11-02T11:13",
-        "surface": "mesa"
+        "at": "2026-11-02T23:44",
+        "surface": "chip"
       }
     ],
     "slant_mm_per_mm": {
-      "X": 0.4955,
-      "Y": -0.3298
+      "X": 0.085,
+      "Y": -0.0418
     }
   },
   "kinect_head": {
     "P": [
       [
-        -528.3634696309158,
-        -316.89187973909156,
-        -81.90012987840869,
-        196852.295903579
+        -242.01970095296522,
+        -143.11815254081446,
+        354.85885977168664,
+        75137.0336499663
       ],
       [
-        13.952510383434964,
-        -80.20385018831254,
-        -601.3087742777506,
-        154991.97719179565
+        1.875303349982832,
+        -38.0957790258314,
+        -70.83462627400462,
+        63429.970872763006
       ],
       [
-        0.012436169627170295,
-        -0.9761997159162008,
-        -0.21651664215513103,
-        516.7550153628908
+        -0.010489805903091636,
+        -0.4517925252726172,
+        0.8920613645259541,
+        199.99807815489444
       ]
     ],
     "model": "camera",
-    "typical_error_mm": 0.4,
+    "typical_error_mm": 3.7,
     "tolerance_mm": {
-      "X": 5.0,
-      "Y": 5.0,
+      "X": 12.6,
+      "Y": 13.1,
       "Z": 1000000000.0
     },
-    "points": 18,
+    "points": 17,
     "covers_mm": {
       "X": [
         -30.0,
@@ -173,12 +162,12 @@
         -32.5
       ],
       "Z": [
-        19.7,
-        46.7
+        25.0,
+        47.3
       ]
     },
-    "at": "2026-11-02T20:01",
-    "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column and row, at the height the machine knows, give X and Y (Z is not checked); made by calibrate_kinect"
+    "at": "2026-11-02T23:51",
+    "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column and row, at the height the machine knows, give X and Y (Z is not checked); made by calibrate_kinect. Nov 3: X tolerance widened to the worst error of this calibration (12.6 mm) after a false hold at a corner; the next calibrate_kinect sets it from its own held-out misses"
   },
   "scope": {
     "zero": {
@@ -221,13 +210,13 @@
     ],
     "model": "camera",
     "pairs": 16,
-    "ring_above_mm": 101.39,
+    "ring_above_mm": 98.06,
     "taught": {
-      "u": 2555.821752265861,
-      "v": 1778.8429003021147,
-      "X": 61.942596477081764,
-      "Y": -76.16413064275037,
-      "Z": 17.750367149543123
+      "u": 2552.0087719298244,
+      "v": 1761.1783625730993,
+      "X": 60.669913333141224,
+      "Y": -82.03571978076731,
+      "Z": 16.700025131862418
     },
     "errors_mm": [
       0.7,
@@ -361,7 +350,7 @@
         47.300230584651956
       ]
     ],
-    "at": "2026-11-02T20:57",
+    "at": "2026-11-02T23:48",
     "typical_error_mm": 0.6,
     "held_out_mm": 0.72,
     "note": "the bench camera's 3 x 4 projection over the whole work area, from the ring light seen at two heights (calibrate_bench); ring_above_mm is the ring's height over the surface in focus, taught from one thing seen by both (teach_bench_height); the heights are focus heights"

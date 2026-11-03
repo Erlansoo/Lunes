@@ -36,6 +36,7 @@ class Dashboard:
         (lunes.lab.state)."""
         self.camera, self.bench, self.kinect, self.speaking, self.lab = camera, bench, kinect, speaking, lab
         self.on_tap = None  # on_tap(x, y) for a tap on the microscope's picture, fractions of it
+        self.on_scope_live = None  # on_scope_live(on) for the scope's "live" button; returns what happened
         self.mosaic = None  # gives the last mosaic's picture, for the machine's map
         self.events = deque(maxlen=500)
         self.count = 0
@@ -103,6 +104,12 @@ class Dashboard:
                         return self._send(b'{"ok": true}', "application/json")
                     except (KeyError, ValueError):
                         return self._send(b'{"ok": false}', "application/json")
+                if path == "/scope_live":
+                    on = query == "on=1"
+                    done = board.on_scope_live(on) if board.on_scope_live else {"ok": False, "error": "no scope"}
+                    board.add("info", "osciloscopio en vivo: " + ("encendido" if on and done.get("ok") else
+                                                                  "apagado" if done.get("ok") else done.get("error", "")))
+                    return self._send(json.dumps(done, default=float).encode(), "application/json")
                 if path == "/events":
                     since = int(query.split("=")[1]) if query.startswith("since=") else 0
                     with board._lock:

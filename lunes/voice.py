@@ -68,6 +68,23 @@ def plain(word):
     return unicodedata.normalize("NFD", word).encode("ascii", "ignore").decode()
 
 
+# Words said all the time at the bench. Lunes' own voice coming back from the speakers is heard garbled, as words that
+# are not Spanish ("sevea laes tierda luse inseiter"); a long phrase mostly made of these is a person talking.
+EVERYDAY = {plain(w) for w in """a al algo ahora ahí así bien bueno cable cables chip circuito como cómo con conexión
+conexiones configuración cual cuál cuánto de del dime donde dónde el en es esa ese eso esta está este esto favor
+frecuencia hace hacer haz he hice integrado la las le led lo los lunes me mi mira mide muy no nos o para pero placa
+por porque protoboard pues que qué quería quiero quisiera resistencia revisa revisar revises se si sí sin su también
+te tengo todo toda tu tú un una uno voltaje y ya yo""".split()}
+
+
+def sounds_like_speech(text, least=8, share=0.45):
+    """Whether what was heard over Lunes' voice is someone talking, not its own voice coming back: a long phrase most
+    of whose words are everyday Spanish. On Nov 2 three requests of Erlan's (16 to 23 words, two thirds of them
+    everyday) were dropped as echo, while that night's echoes had at most 3 such words in 5 to 10."""
+    heard = [plain(w) for w in words(text)]
+    return len(heard) >= least and sum(w in EVERYDAY for w in heard) >= share * len(heard)
+
+
 def _cuda_dlls():
     """No CUDA toolkit on this PC: the CUDA and cuDNN DLLs come in the nvidia-* wheels; make them findable for ONNX
     Runtime's CUDA provider inside sherpa-onnx."""

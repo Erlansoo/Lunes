@@ -183,6 +183,10 @@ def trimmed():
     real, hume_module.calibrate = hume_module.calibrate, reading(bad)
     careful._calibrate_here(18.0)
     ok(rig.config["microscope"] is good, "axes at 86.8 degrees and pixels 6 % out of square: refused, the last one stays")
+    drifted = {"px_per_mm": {"X": 37.41, "Y": 38.27}, "angle_between_axes_deg": 88.6}  # tonight's second, over the grid too
+    hume_module.calibrate = reading(drifted)
+    careful._calibrate_here(18.0)
+    ok(rig.config["microscope"] is good, "a scale 3 % off the last, with the focus wheel untouched: refused too")
     fresh = {"px_per_mm": {"X": 37.3, "Y": 37.2}, "angle_between_axes_deg": 90.2}
     hume_module.calibrate = reading(fresh)
     careful._calibrate_here(18.0)

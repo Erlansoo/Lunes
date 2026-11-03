@@ -6,7 +6,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 TESTS = ("test_geometry.py", "test_scope_auto.py", "test_supply.py", "test_breadboard.py", "test_chip.py", "test_bench.py",
-         "test_calc.py", "test_parts.py", "test_catalog.py", "test_lab.py", "test_simulated_bench.py")
+         "test_calc.py", "test_parts.py", "test_catalog.py", "test_voice.py", "test_lab.py", "test_simulated_bench.py")
 
 failed = []
 for name in TESTS:

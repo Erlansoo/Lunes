@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from microscope import autofocus, calibrate, sharpness  # noqa: E402
 from survey import (Interrupted, board_corner_in_picture, closeup_for_reading, component_box,  # noqa: E402
                     distance_in_picture, find_perimeter, geometry, grid_for, hole_in_picture, hop, locate_in_mosaic,
-                    mosaic_point_to_mm, pixels_to_mm, survey)
+                    mm_to_mosaic_px, mosaic_point_to_mm, pixels_to_mm, survey)
 
 OLLAMA = "http://127.0.0.1:11434/api/chat"
 MODEL = "muse-glimmer:30b"
@@ -428,6 +428,12 @@ TOOLS = [
             "x1": {"type": "number"}, "y1": {"type": "number"}, "x2": {"type": "number"}, "y2": {"type": "number"}},
             "required": ["x1", "y1", "x2", "y2"]}}},
     {"type": "function", "function": {
+        "name": "scope_live",
+        "description": "Erlan's continuous view of the oscilloscope in the web lab, on or off, when he asks to watch it "
+                       "live ('quiero verlo en continuo') or to stop. It is his view: your scope_measure pauses it a "
+                       "moment and it goes on by itself.",
+        "parameters": {"type": "object", "properties": {"on": {"type": "boolean"}}, "required": ["on"]}}},
+    {"type": "function", "function": {
         "name": "scope_measure",
         "description": "Measure with the oscilloscope (a Hantek 6022BE, two channels) what is on its probe(s) now. By "
                        "default the code picks the range and the sample rate itself (auto) and measures: min, max, "
@@ -659,10 +665,12 @@ TOOLS = [
         "description": "Measure the net where Erlan put the CH1 probe now, with the scope, and update the diagnosis: "
                        "returns the reading, the likeliest explanations with their probability, and the next net "
                        "to measure, or the verdict once one explanation is clear (90 %). If Erlan measured with "
-                       "his multimeter instead, give mean_v and source 'multimeter'.",
+                       "his multimeter instead, give mean_v and source 'multimeter'. net is where the probe IS: if "
+                       "Erlan said where he put it, that net, not the one you asked for. sure=true only when Erlan "
+                       "confirmed the probe is on that net after a reading was refused as being elsewhere.",
         "parameters": {"type": "object", "properties": {
             "net": {"type": "string"}, "source": {"type": "string", "enum": ["scope", "multimeter"]},
-            "mean_v": {"type": "number"}}, "required": ["net"]}}},
+            "mean_v": {"type": "number"}, "sure": {"type": "boolean"}}, "required": ["net"]}}},
     {"type": "function", "function": {
         "name": "mcu_program",
         "description": "Put the program of the circuit's microcontroller board (set with circuit_set or "
@@ -937,6 +945,7 @@ class Hume:
         self.last_trace = None  # its waveforms, for the web lab
         self.supply = json.loads(SUPPLY.read_text(encoding="utf-8")) if SUPPLY.exists() else None  # the last reading
         self.supply_seen = None  # what the bench camera said the last time it looked: a reading, or why there is none
+        self.scope_lock, self.scope_live = threading.Lock(), False  # Erlan's continuous view, paused by a measurement
         self.layout, self.placement = None, None  # the circuit laid out on the breadboard, and where the board lies
         self.layout_for = None  # the circuit that layout is of
         self.guide = {"step": 0, "holes": [], "says": ""}  # what the laser is showing Erlan
@@ -1151,24 +1160,30 @@ class Hume:
     # The oscilloscope ---------------------------------------------------------------------------------------------
     def _scope_measure(self, channel="CH1", auto=True, range_v=None, rate=None):
         """Measure what is on the probe(s): the code sets the scope up (auto) or uses the given setting."""
-        from lunes.hantek import ranges
-        from lunes.signals import autoset, fit_range, measure, notes, picture, step_v, trace
+        from lunes.signals import autoset, fit_range
         if self.scope is None:
             return {"ok": False, "error": "the oscilloscope is not connected"}, None
         names = ["CH1", "CH2"] if channel == "both" else [channel]
-        try:
-            if auto:
-                cap, _, _ = autoset(self.scope, names[0], alone=channel == "CH1")
-                if len(names) == 2:  # CH2 gets its own range at the sample rate CH1 needs
-                    fit_range(self.scope, "CH2")
+        with self.scope_lock:  # Erlan's live view waits while Lunes measures, then goes on with Lunes' setting
+            try:
+                if auto:
+                    cap, _, _ = autoset(self.scope, names[0], alone=channel == "CH1")
+                    if len(names) == 2:  # CH2 gets its own range at the sample rate CH1 needs
+                        fit_range(self.scope, "CH2")
+                        cap = self.scope.capture(20000)
+                else:
+                    given = {names[0]: float(range_v)} if range_v else None
+                    self.scope.configure(rate=float(rate) if rate else None, range_v=given,
+                                         channels=2 if "CH2" in names else None)
                     cap = self.scope.capture(20000)
-            else:
-                given = {names[0]: float(range_v)} if range_v else None
-                self.scope.configure(rate=float(rate) if rate else None, range_v=given,
-                                     channels=2 if "CH2" in names else None)
-                cap = self.scope.capture(20000)
-        except (RuntimeError, ValueError) as e:
-            return {"ok": False, "error": str(e)}, None
+            except (RuntimeError, ValueError) as e:
+                return {"ok": False, "error": str(e)}, None
+        return self._scope_result(cap, names)
+
+    def _scope_result(self, cap, names, live=False):
+        """A capture turned into the measurements, the web's trace and the picture; kept as the last reading."""
+        from lunes.hantek import ranges
+        from lunes.signals import measure, notes, picture, step_v, trace
         result, shown = {"ok": True, "sample_rate": cap.rate, "probe": dict(self.scope.probe)}, {}
         for ch in cap.volts:
             m = measure(cap.volts[ch], cap.rate, step_v(cap.range_v[ch]))
@@ -1179,9 +1194,46 @@ class Hume:
                                   notes=notes(m, cap.range_v[ch], cap.clipped[ch], allowed[0], allowed[-1]))
         if getattr(self.scope, "signals", None) is not None:
             result["simulated"] = "made-up signals from the simulated scope, not the bench: say so if you report them"
-        self.last_scope = {"at": time.time(), "result": result}
+        flat = any(abs(result[ch]["mean_v"]) < 0.2 and result[ch]["vpp_v"] < 0.1 for ch in names if ch in result)
+        supply = getattr(self, "supply", None)
+        if flat and supply and supply.get("out") is False and time.time() - supply.get("at", 0) < 120:
+            # Nov 3: a flat 0 V was put down to the probe while the camera had just read the supply's output off
+            result["supply_note"] = (f"the supply's output was OFF when the bench camera last read it "
+                                     f"({time.time() - supply['at']:.0f} s ago): a flat 0 V is that. Say it first, "
+                                     f"before blaming the probe or the circuit")
+        self.last_scope = {"at": time.time(), "result": result, "live": live}
         self.last_trace = trace(cap, shown)
-        return result, picture(cap, shown, title=" + ".join(names))
+        return result, (None if live else picture(cap, shown, title=" + ".join(names)))
+
+    def scope_live_on(self, on):
+        """Erlan's continuous view of the scope, on or off (from the web's button or by voice). It starts from a
+        setting the code finds for what is on CH1, as a measurement does."""
+        from lunes.signals import autoset
+        if self.scope is None:
+            return {"ok": False, "error": "the oscilloscope is not connected"}
+        if on and not self.scope_live:
+            with self.scope_lock:
+                try:
+                    autoset(self.scope, "CH1")
+                except (RuntimeError, ValueError) as e:
+                    return {"ok": False, "error": str(e)}
+        self.scope_live = bool(on)
+        return {"ok": True, "live": self.scope_live,
+                "note": "the web shows the scope continuously; a measurement of yours pauses it a moment" if on else
+                        "the web keeps the last trace"}
+
+    def scope_live_frame(self):
+        """One picture of the live view, at the setting the scope has; skipped while a measurement holds the scope."""
+        if not self.scope_live or self.scope is None or not self.scope_lock.acquire(blocking=False):
+            return False
+        try:
+            cap = self.scope.capture(20000)
+        except Exception:  # noqa: BLE001  (a USB hiccup, or the scope closing at shutdown: the view just skips)
+            return False
+        finally:
+            self.scope_lock.release()
+        self._scope_result(cap, ["CH1"], live=True)
+        return True
 
     def _scope_selftest(self, channel="CH1"):
         """The probe on the scope's 1 kHz calibration output: frequency, shape and amplitude, and what a wrong x1/x10
@@ -1412,7 +1464,7 @@ class Hume:
                                  "mcu_program), before asking Erlan for the probe")
         return out, None
 
-    def _diagnose_measure(self, net, source="scope", mean_v=None):
+    def _diagnose_measure(self, net, source="scope", mean_v=None, sure=False):
         if self.diagnosis is None:
             return {"ok": False, "error": "no diagnosis running: diagnose_start first"}, None
         view = None
@@ -1430,6 +1482,15 @@ class Hume:
             if m.get("notes"):
                 reading["scope_notes"] = m["notes"]
         notes = reading.pop("scope_notes", None)
+        want = ((self.expected or {}).get("nets") or {}).get(net) or {}
+        if not sure and want.get("shape") == "dc" and (reading.get("vpp_v") or 0) > 0.5:
+            # a steady net read as a moving signal: the probe is on another net more likely than a fault (Nov 3: the
+            # probe on the LED, taken for VCC, named C1 open on a 555 that was oscillating at 1843 Hz)
+            return {"ok": False, "net": net, "reading": reading,
+                    "error": f"{net} should be steady at {want.get('mean_v')} V, and this reading moves ({reading['vpp_v']} V "
+                             f"peak to peak): the probe is most likely on another net. Ask Erlan where it is (he may have "
+                             f"said it) and measure that net; if he says it is on {net}, measure again with sure=true. "
+                             f"Nothing went into the diagnosis"}, view
         try:
             self.diagnosis.update(net, reading)
         except ValueError as e:
@@ -1901,13 +1962,16 @@ class Hume:
         then moved with the chip on it."""
         from lunes import chip as chips
         ppm = float(np.mean(list(self.m.config["microscope"]["px_per_mm"].values())))
-        grid = chips.breadboard_grid(mosaic, ppm)
+        chip, first = self.world["chip"], self.world.get("first_row")
+        grid = chips.breadboard_grid(mosaic, ppm, mm_to_mosaic_px(summary, *chip["center_mm"]) if chip else None,
+                                     first + 1.5 if first else None)  # a DIP-8's centre is a row and a half past its first
         if grid is None:
             return None
         h, w = mosaic.shape[:2]
         holes = {name: [round(v, 2) for v in mosaic_point_to_mm(summary, grid[name][0] / w, grid[name][1] / h)] for name in ("a1", "a63", "j1")}
-        chip = self.world["chip"]
-        self.world["grid"] = dict(holes, chip_mm=chip["center_mm"] if chip else None, holes=grid["holes"], off_px=grid["off_px"])
+        # where the chip stands on this mosaic is known only once the microscope sees it again: an older look at it
+        # would read as the board having moved
+        self.world["grid"] = dict(holes, chip_mm=None, at=time.time(), holes=grid["holes"], off_px=grid["off_px"])
         self._place_board()
         return self.world["grid"]
 
@@ -1919,11 +1983,18 @@ class Hume:
         if not grid:
             return
         dx, dy = 0.0, 0.0
+        if chip and not grid.get("chip_mm") and chip["at"] > grid.get("at", 0):
+            grid["chip_mm"] = chip["center_mm"]  # the first look after the mosaic says where the chip stands on it
         if chip and grid.get("chip_mm"):
             dx, dy = chip["center_mm"][0] - grid["chip_mm"][0], chip["center_mm"][1] - grid["chip_mm"][1]
             if not 0.6 < math.hypot(dx, dy) < 8.0:
                 dx, dy = 0.0, 0.0
-        self.placement = BoardGrid(*((grid[n][0] + dx, grid[n][1] + dy) for n in ("a1", "a63", "j1")))
+        placed = BoardGrid(*((grid[n][0] + dx, grid[n][1] + dy) for n in ("a1", "a63", "j1")))
+        if chip and not placed.holds_chip(*chip["center_mm"]):
+            self.world["grid"], self.placement = None, None  # a wrong grid points the laser at the wrong holes
+            self._save_world()
+            return
+        self.placement = placed
 
     def _breadboard_place(self, args):
         from lunes.breadboard import Placement
@@ -2303,6 +2374,11 @@ class Hume:
             self.supply_seen = {"ok": False, "why": "no tengo cámara del banco, así que no veo la fuente"}
             return self.supply_seen
         seen = supply.look(self.bench)
+        for _ in range(2):  # a glimpse can catch the display mid-refresh, a digit half lit: the next picture reads it
+            if seen["ok"] or "dígito" not in seen.get("why", ""):
+                break
+            time.sleep(0.3)
+            seen = supply.look(self.bench)
         self.supply_seen = dict(seen, at=time.time())
         if seen["ok"]:
             self.supply = {k: seen[k] for k in ("volts", "amps", "out", "cc", "cv")} | {"at": time.time()}
@@ -2649,7 +2725,9 @@ class Hume:
             self.hold = {"why": f"the Kinect sees the head {self.last_kinect_check['off_mm']:.0f} mm from where the "
                                 f"machine thinks it is" + (f"; the microscope finds itself in the mosaic "
                                                            f"{mosaic_off:.1f} mm from it" if mosaic_off is not None
-                                                           else "")}
+                                                           else ""),
+                         "off_mm": round(self.last_kinect_check["off_mm"], 1),
+                         "mosaic_mm": None if mosaic_off is None else round(mosaic_off, 1)}
         out["on_hold"] = self.hold is not None
         if self.hold:
             out["note"] = ("moving is ON HOLD: every tool that moves the machine refuses until Erlan allows it "
@@ -2728,8 +2806,10 @@ class Hume:
         mapping, errors = fit_camera(points)
         typical = round(float(np.median(errors)), 1)
         unseen = np.array(held_out(points))
-        tolerance = {"X": round(max(5.0, 3 * float(np.median(unseen[:, 0]))), 1),
-                     "Y": round(max(5.0, 3 * float(np.median(unseen[:, 1]))), 1), "Z": 1e9}  # Z is not checked
+        # a difference the calibration itself showed the Kinect can make is no sign that the carriage moved: the
+        # worst held-out miss counts too (Nov 3: X held at 5 mm while a corner reading missed by 5.7, a false hold)
+        tolerance = {a: round(max(5.0, 3 * float(np.median(unseen[:, i])), float(unseen[:, i].max())), 1)
+                     for i, a in enumerate("XY")} | {"Z": 1e9}  # Z is not checked
         reached = {a: [round(min(p[a] for _, p in points), 1), round(max(p[a] for _, p in points), 1)] for a in "XYZ"}
         self.m.config["kinect_head"] = {
             "P": mapping, "model": "camera", "typical_error_mm": typical, "tolerance_mm": tolerance,
@@ -2997,9 +3077,13 @@ class Hume:
             self.m.move_to(Z=z)
         except Exception:  # bare solder mask has nothing to track: keep the last calibration
             return
-        # square pixels on a machine nearly square: a reading that says otherwise was fooled by the picture (a repeated
-        # grid of holes, a reflection), and kept, it would step every mosaic and shift every mm read from a picture
-        if before and (abs(new["angle_between_axes_deg"] - 90) > 1.5 or abs(new["px_per_mm"]["X"] / new["px_per_mm"]["Y"] - 1) > 0.03):
+        # with the focus wheel untouched the lens magnifies the same at every focus, so a reading that moves the scale
+        # was fooled by the picture (a breadboard's grid of holes repeats every 2.54 mm, a reflection): kept, it would
+        # step every mosaic and shift every mm read from a picture. Square pixels on a machine nearly square, too
+        old = (before or {}).get("px_per_mm") or {}
+        drift = max((abs(new["px_per_mm"][a] / old[a] - 1) for a in ("X", "Y") if old.get(a)), default=0.0)
+        if before and (drift > 0.015 or abs(new["angle_between_axes_deg"] - 90) > 1.0
+                       or abs(new["px_per_mm"]["X"] / new["px_per_mm"]["Y"] - 1) > 0.03):
             self.m.config["microscope"] = before
             self.m.save_config()
 
@@ -3270,6 +3354,8 @@ class Hume:
             return self._measure_hole(float(args.get("x", -1)), float(args.get("y", -1)))
         if name == "measure_distance":
             return self._measure_distance(*(float(args.get(k, -1)) for k in ("x1", "y1", "x2", "y2")))
+        if name == "scope_live":
+            return self.scope_live_on(bool(args.get("on"))), None
         if name == "scope_measure":
             return self._scope_measure(str(args.get("channel", "CH1")), bool(args.get("auto", True)),
                                        args.get("range_v"), args.get("rate"))
@@ -3316,7 +3402,7 @@ class Hume:
             return self._diagnose_start()
         if name == "diagnose_measure":
             return self._diagnose_measure(str(args.get("net", "")), str(args.get("source", "scope")),
-                                          args.get("mean_v"))
+                                          args.get("mean_v"), bool(args.get("sure")))
         if name == "laser":
             if not hasattr(self.m, "laser"):
                 return {"ok": False, "error": "this machine has no laser"}, None

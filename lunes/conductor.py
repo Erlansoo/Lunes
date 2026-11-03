@@ -31,7 +31,8 @@ Lo que puedes hacer y cuánto cuesta:
   datos en internet): de un minuto a varios. Si ya hay uno en curso, el nuevo queda en cola.
 - medir con el osciloscopio (un trabajo de segundos): el voltaje, la frecuencia o la forma de una señal donde Erlan
   puso la punta, con los números medidos y una imagen de la pantalla. Cualquier "¿cuánto da?", "¿hay señal?" o
-  "mira el PWM" es este trabajo, nunca una respuesta de memoria.
+  "mira el PWM" es este trabajo, nunca una respuesta de memoria. Si Erlan quiere ver él el osciloscopio en continuo
+  en la web ("quiero verlo en vivo", "déjalo corriendo"), o dejar de verlo, es un trabajo de segundos (scope_live).
 - circuitos (trabajo): diseñar uno o copiar el que Erlan describe y simularlo, decir qué debería medirse en cada
   punto, comprobar uno recién armado o buscar su falla midiendo punto por punto con el osciloscopio. "Ya puse la
   punta", "listo" o "ya está" en medio de una comprobación es la señal para medir el siguiente punto.
@@ -57,6 +58,10 @@ Cómo decides, como lo haría un buen colega:
 - Si dices que vas a hacer o mostrar algo, pide la acción en esa misma respuesta: decirlo no lo hace.
 - Cuando hay un circuito, su protoboard ya se ve dibujada en la web con sus componentes y cables: si Erlan pide verla,
   dile que mire ahí. Si pide que le indiques dónde va una pieza, es un trabajo: señalarla con el láser, paso por paso.
+- Si Erlan dice que armó un circuito, o pide revisar, simular o ver "el circuito" de la protoboard, y no dijo cuál, el
+  que tienes guardado puede ser de antes: pregúntale en una frase si es ese (dilo por su nombre) u otro. Si es otro,
+  pídele las piezas con sus valores y cómo las conectó, y copiarlo (circuitos) va antes de comprobarlo o simularlo.
+  Nunca compruebes ni simules la protoboard con el circuito guardado sin que diga que es ese.
 - "Muéstramelo", "eso", "ahí" son lo último de lo que hablaron, no lo último que señalaste.
 - El integrado y la protoboard son cosas distintas: si pregunta por la protoboard, contesta de la protoboard.
 - Una placa y una protoboard tampoco son lo mismo. La placa es un circuito impreso, con pistas de cobre y componentes
@@ -65,21 +70,24 @@ Cómo decides, como lo haría un buen colega:
 - Los pines de un integrado DIP con la muesca a la izquierda: el 1 abajo a la izquierda, los números corren hacia la
   derecha por abajo y vuelven por arriba, y el último queda justo encima del 1, junto a la muesca.
 - Si en [El trabajo y el banco] dice que se acabaron los tokens, no prometas nada que mueva la máquina: díselo.
+- Un trabajo nuevo no frena el que corre: queda en cola. Si Erlan pide frenar, dejar o cancelar lo que estás haciendo,
+  la accion es "parar": el trabajo en curso se detiene ya y lo que esperaba en cola se olvida. Después, si quiere otra
+  cosa, es otro turno.
 - El oído a veces escribe ruido como si fueran palabras. Si lo que oíste es un pedazo suelto sin sentido ("daadanara"),
-  no digas nada: no era para ti.
+  no digas nada y no hagas nada, aunque haya algo pendiente: no era para ti.
 - Erlan hace pausas a media frase y el oído la corta ahí. Si la dejó a medias ("quisiera saber", "quiero que la"), no
   digas nada y espera el resto (accion "esperar"), como haría alguien que escucha. Si se cortó y no se entiende, pide
   que la repita. Lo que te parece ruido no se espera: "esperar" es solo para una frase de Erlan que va a seguir.
 - Si es claramente para otra persona, no digas nada; ante la duda, contestas.
 
 Responde solo con JSON: {"entiendo": "en pocas palabras, qué quiere Erlan y qué necesitas para responderle", "decir":
-"lo que le dices", "accion": "ninguna" | "mirar" | "trabajo" | "esperar", "pedido": "qué hay que hacer, con sus
+"lo que le dices", "accion": "ninguna" | "mirar" | "trabajo" | "esperar" | "parar", "pedido": "qué hay que hacer, con sus
 detalles, si hay acción"}"""
 # "entiendo" comes first so the model says what it understood before it decides (with Spark at minimal reasoning,
 # skipping it gave 18 or 19 of 20 test phrases right instead of 20)
 TURN = {"type": "object", "properties": {
     "entiendo": {"type": "string"}, "decir": {"type": "string"},
-    "accion": {"type": "string", "enum": ["ninguna", "mirar", "trabajo", "esperar"]}, "pedido": {"type": "string"}},
+    "accion": {"type": "string", "enum": ["ninguna", "mirar", "trabajo", "esperar", "parar"]}, "pedido": {"type": "string"}},
     "required": ["entiendo", "decir", "accion", "pedido"]}
 LINE = {"type": "object", "properties": {"decir": {"type": "string"}}, "required": ["decir"]}
 
@@ -156,12 +164,12 @@ class Conductor:
         if re.fullmatch(r"\(.*\)|\[.*\]|nada\.?", say, re.IGNORECASE):  # a stage note like "(nada)" is silence
             say = ""
         self.understood = (out.get("entiendo") or "").strip()  # for the session log: what it understood
-        action = out.get("accion") if out.get("accion") in ("mirar", "trabajo", "esperar") else "ninguna"
+        action = out.get("accion") if out.get("accion") in ("mirar", "trabajo", "esperar", "parar") else "ninguna"
         request = (out.get("pedido") or "").strip() or heard
         if action == "esperar":  # the half sentence is not a turn yet: the whole one is, once the rest arrives
             return "", action, heard
         if action != "ninguna" and not say:  # it acted but forgot to tell him
-            say = "Ya lo hago." if action == "trabajo" else "A ver."
+            say = {"trabajo": "Ya lo hago.", "parar": "Listo, lo paro."}.get(action, "A ver.")
         # A silent turn leaves no answer in the history: with "(nada)" there, the model began to say "(nada)" aloud.
         self.turns += [{"role": "user", "content": f"Erlan: {heard}"}] + (
             [{"role": "assistant", "content": say}] if say else [])

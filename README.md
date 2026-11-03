@@ -192,7 +192,10 @@ set up as this README describes.
   http://127.0.0.1:8765, in Spanish or English.
   - The microscope with its scale bar and position, the bench camera, the Kinect and the last picture the model
     looked at.
-  - The scope's traces and readings, and the machine on a map of its table, with the Kinect's check.
+  - The scope's traces and readings, and the machine on a map of its table, with the Kinect's check. A **live** button
+    (or "quiero verlo en vivo") keeps the scope's trace running for Erlan a few times a second; a measurement by
+    Lunes pauses it a moment and it goes on by itself.
+  - Every panel opens up in a floating view; the wheel zooms the pictures, Ctrl + wheel the breadboard.
   - The circuit, what the engine thinks is wrong, where to probe next, and each net simulated against measured.
   - The Arduino's readings and serial lines, and the conversation with the tools Lunes used.
   - Nothing leaves the PC, and the page loads nothing from outside it.
@@ -201,6 +204,9 @@ set up as this README describes.
 - **Guided by the laser, on a breadboard** (`lunes/breadboard.py`). The holes are read from a mosaic of the real board,
   and the dot lands about 0.2 mm from where it is sent, measured in microscope pictures. The whole guide by voice is still
   to be tried on the real board.
+  - **Nov 3:** the grid of holes is fitted with the chip's help: a DIP always straddles the board's channel, so a grid
+    that would put it anywhere else (the rails taken for columns, 13 mm off, as one night's mosaic did) is refused.
+    With it Lunes pointed the laser at hole +3 of the VCC rail on the real board, 165 mm from the chip.
   - `breadboard_plan` lays any circuit Lunes designs out on a breadboard by rule, then rebuilds the connections from
     the holes alone and refuses a plan that is not the circuit.
   - `guide_step` shows each lead, wire and supply connection with the laser's dot, in words. During a diagnosis,
@@ -222,7 +228,7 @@ set up as this README describes.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about three minutes. It runs eleven files:
+- **Tests with no hardware:** `python tests/run_all.py`, about five minutes. It runs twelve files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -235,7 +241,10 @@ set up as this README describes.
     - serial data at 9600 and 115200 baud.
   - `test_supply.py`: every digit of the panel on drawn panels, unreadable panels, and the check before powering.
   - `test_chip.py`: drawn DIPs turned any way, the notch end and pin 1, a body with no notch refused, a pointer's tip.
-  - `test_breadboard.py`: every design laid out and rebuilt from its holes, holes in mm with the board turned, the guide.
+  - `test_breadboard.py`: every design laid out and rebuilt from its holes, holes in mm with the board turned, the guide,
+    and a grid of holes refused when it would not put the chip on the board's channel.
+  - `test_voice.py`: Erlan's long requests heard over Lunes' own voice, and its own voice coming back from the
+    speakers kept out, on the phrases of a real night.
   - `test_bench.py`: the ring light found in a drawn webcam picture (the supply's digits refused), the bench camera
     fitted from the ring at two heights, the ring's height learnt from one thing seen by both (a point that is not
     the thing refused), points on the table and above it located, the height kept through a new fit, and what is

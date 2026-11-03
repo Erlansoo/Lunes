@@ -63,6 +63,11 @@ main { display:grid; gap:10px; padding:10px; min-height:0;
 .head h2 { font-size:13px; font-weight:600; }
 .head .side { margin-left:auto; color:var(--muted); font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tag { font-size:11px; font-weight:700; letter-spacing:.03em; color:var(--warn); border:1px solid #5a4a26; border-radius:4px; padding:0 5px; }
+.live { font:inherit; font-size:11.5px; color:var(--muted); background:transparent; border:1px solid var(--line); border-radius:4px; padding:1px 7px; cursor:pointer; }
+.live:hover { color:var(--text); }
+.live.on { color:var(--text); border-color:#b33; }
+.live.on::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:#e33; margin-right:5px; animation:blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity:.25; } }
 .body { flex:1; min-height:0; overflow:auto; padding:10px 12px; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
 .empty { color:var(--quiet); font-size:13px; }
 
@@ -186,7 +191,7 @@ body:not(.details) .detail { display:none; }
   </section>
 
   <section class="panel" id="scope">
-    <div class="head"><h2 data-t="scope"></h2><span class="tag" id="scopeSim" hidden></span><span class="side num" id="scopeInfo"></span></div>
+    <div class="head"><h2 data-t="scope"></h2><span class="tag" id="scopeSim" hidden></span><button class="live" id="scopeLive" type="button"></button><span class="side num" id="scopeInfo"></span></div>
     <div class="screen"><canvas id="trace"></canvas><div class="note" id="scopeNote"></div></div>
     <div class="measures" id="measures" hidden></div>
     <div class="hints" id="hints" hidden></div>
@@ -217,34 +222,34 @@ const TEXT = {
   es:{subtitle:"Laboratorio de electrónica", scope:"Osciloscopio", machine:"Máquina", benchTitle:"Circuito y diagnóstico",
       conversation:"Conversación", listening:"Escuchando", working:"Trabajando", speaking:"Hablando", microscope:"Microscopio",
       bench:"Banco", kinect:"Kinect", analysis:"Análisis IA", cnc:"CNC", arduino:"Arduino", noScope:"Osciloscopio no conectado",
-      noMeasure:"Todavía no hay mediciones", simulated:"SIMULADO", shape:"Forma", mean:"Media", freq:"Frecuencia", duty:"Ciclo",
+      noMeasure:"Todavía no hay mediciones", liveOn:"En vivo", liveOff:"Ver en vivo", liveHint:"Ver el osciloscopio en continuo; una medición de Lunes lo pausa un momento", simulated:"SIMULADO", shape:"Forma", mean:"Media", freq:"Frecuencia", duty:"Ciclo",
       rise:"Subida", range:"Rango", div:"/div", ago:"hace", noCircuit:"No hay ningún circuito en el banco", supply:"alimentación",
       goals:"metas cumplidas", likely:"Explicaciones más probables", verdict:"Veredicto", probeHere:"Pon la punta en",
       touches:"toca", nets:"Redes: simulado y medido", net:"Red", sim:"Simulado", read:"Medido", board:"Arduino",
       asSimulated:"Lee como la simulación", notAsSimulated:"No lee como la simulación", serial:"Monitor serie",
       kinectOk:"Kinect confirma la posición", kinectOff:"Kinect ve el cabezal a", kinectNone:"Kinect todavía no confirmó la posición",
-      hold:"Movimiento en pausa", doubtful:"Posición dudosa: los motores se liberaron", front:"frente", back:"fondo",
+      hold:"Movimiento en pausa", holdWhy:h => `el Kinect ve el cabezal a ${h.off_mm} mm de donde la máquina cree estar` + (h.mosaic_mm !== null && h.mosaic_mm !== undefined ? ` · el mosaico lo ve a ${h.mosaic_mm} mm` : "") + " · di «sigue» para seguir", doubtful:"Posición dudosa: los motores se liberaron", front:"frente", back:"fondo",
       board_:"placa", head_:"cabezal", mosaics:"mosaicos", mapAll:"Toda la mesa", mapClose:"De cerca", chipUnread:"chip sin leer", grow:"Agrandar", shrink:"Volver a su lugar", wire:"Cable", wired:"conecta", value:"Valor", bands:"Bandas", pins:"Patas", strip:"Fila unida a", free:"libre", laserTip:"Último punto del láser", confirmed:"confirmado", unconfirmed:"sin confirmar", head_tip:"Cabezal", notchTip:"muesca", kinds:{R:"Resistencia",C:"Capacitor",L:"Bobina",D:"Diodo",ZENER:"Zener",LED:"LED",SW:"Interruptor",LDR:"Fotorresistencia",NTC:"Termistor",POT:"Potenciómetro",NPN:"Transistor NPN",PNP:"Transistor PNP",NMOS:"MOSFET N",PMOS:"MOSFET P",REG:"Regulador",IC:"Integrado",NE555:"Integrado",OPAMP:"Amplificador"}, bandNames:["negro","café","rojo","naranja","amarillo","verde","azul","violeta","gris","blanco"], details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
       lunes:"Lunes", noSignal:"Sin imagen", models:"Modelos Meta", api:"API", pc:"en la PC", new_:"Imagen nueva", clear:"Clara",
       noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
       remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
-      notPlaced:"falta ubicar la protoboard", tapHint:"Toca el pin 1 en la foto del microscopio para decírselo a Lunes",
+      notPlaced:"falta ubicar la protoboard", ctrlZoom:"Ctrl + rueda para acercar; doble clic vuelve", tapHint:"Toca el pin 1 en la foto del microscopio para decírselo a Lunes",
       chipSeen:"Chip visto", pin1In:"pin 1 en", asPlanned:"como en el plan", notAsPlanned:"NO como en el plan, que lo tiene en", pin1Unknown:"pin 1 sin ver: tócalo en la foto"},
   en:{subtitle:"Electronics lab", scope:"Oscilloscope", machine:"Machine", benchTitle:"Circuit and diagnosis",
       conversation:"Conversation", listening:"Listening", working:"Working", speaking:"Speaking", microscope:"Microscope",
       bench:"Bench", kinect:"Kinect", analysis:"AI analysis", cnc:"CNC", arduino:"Arduino", noScope:"Oscilloscope not connected",
-      noMeasure:"No measurements yet", simulated:"SIMULATED", shape:"Shape", mean:"Mean", freq:"Frequency", duty:"Duty",
+      noMeasure:"No measurements yet", liveOn:"Live", liveOff:"Watch live", liveHint:"Watch the scope continuously; a measurement by Lunes pauses it a moment", simulated:"SIMULATED", shape:"Shape", mean:"Mean", freq:"Frequency", duty:"Duty",
       rise:"Rise", range:"Range", div:"/div", ago:"", noCircuit:"No circuit on the bench", supply:"supply",
       goals:"goals met", likely:"Likeliest explanations", verdict:"Verdict", probeHere:"Put the probe on",
       touches:"touches", nets:"Nets: simulated and measured", net:"Net", sim:"Simulated", read:"Measured", board:"Arduino",
       asSimulated:"Reads as simulated", notAsSimulated:"Does not read as simulated", serial:"Serial monitor",
       kinectOk:"Kinect confirms the position", kinectOff:"Kinect sees the head", kinectNone:"Kinect has not confirmed the position yet",
-      hold:"Moves on hold", doubtful:"Position doubtful: the motors were released", front:"front", back:"back",
+      hold:"Moves on hold", holdWhy:h => `the Kinect sees the head ${h.off_mm} mm from where the machine thinks it is` + (h.mosaic_mm !== null && h.mosaic_mm !== undefined ? ` · the mosaic puts it ${h.mosaic_mm} mm off` : "") + " · say “go on” to continue", doubtful:"Position doubtful: the motors were released", front:"front", back:"back",
       board_:"board", head_:"head", mapAll:"Whole table", mapClose:"Close up", chipUnread:"unread chip", grow:"Enlarge", shrink:"Back in place", wire:"Wire", wired:"joins", value:"Value", bands:"Bands", pins:"Pins", strip:"Row joined to", free:"free", laserTip:"Laser's last point", confirmed:"confirmed", unconfirmed:"not confirmed", head_tip:"Head", notchTip:"notch", kinds:{R:"Resistor",C:"Capacitor",L:"Inductor",D:"Diode",ZENER:"Zener",LED:"LED",SW:"Switch",LDR:"Photoresistor",NTC:"Thermistor",POT:"Potentiometer",NPN:"NPN transistor",PNP:"PNP transistor",NMOS:"N MOSFET",PMOS:"P MOSFET",REG:"Regulator",IC:"Chip",NE555:"Chip",OPAMP:"Amplifier"}, bandNames:["black","brown","red","orange","yellow","green","blue","violet","grey","white"], mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
       lunes:"Lunes", noSignal:"No picture", models:"Meta models", api:"API", pc:"on the PC", new_:"New picture", clear:"Clear",
       noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
       remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
-      notPlaced:"breadboard not located yet", tapHint:"Tap pin 1 on the microscope's picture to tell Lunes",
+      notPlaced:"breadboard not located yet", ctrlZoom:"Ctrl + wheel to zoom; double-click resets", tapHint:"Tap pin 1 on the microscope's picture to tell Lunes",
       chipSeen:"Chip seen", pin1In:"pin 1 in", asPlanned:"as planned", notAsPlanned:"NOT as planned, which has it in", pin1Unknown:"pin 1 not seen: tap it on the picture"}
 };
 // The engine's sentences are in English, as the code is; they read in Spanish on the Spanish page.
@@ -413,7 +418,7 @@ function renderMachine(m){
   $("mind").hidden = !said.length; $("mind").textContent = said.join("  ·  ");
   const c = $("check"), span = c.querySelector("span");
   c.className = "line";
-  if (m.hold){ c.classList.add("bad"); span.textContent = `${T.hold}: ${m.hold}`; }
+  if (m.hold){ c.classList.add("bad"); span.textContent = `${T.hold}: ${T.holdWhy(m.hold)}`; }
   else if (m.doubtful){ c.classList.add("bad"); span.textContent = T.doubtful; }
   else if (m.kinect && m.kinect.agrees){ c.classList.add("ok"); span.textContent = `${T.kinectOk} · ${m.kinect.off_mm} mm · ${age(m.kinect.ago_s)}`; }
   else if (m.kinect){ c.classList.add("bad"); span.textContent = `${T.kinectOff} ${m.kinect.off_mm} mm · ${age(m.kinect.ago_s)}`; }
@@ -443,6 +448,7 @@ function drawTrace(s){
 }
 function renderScope(s){
   const note = $("scopeNote"); $("scopeSim").hidden = !s.simulated; $("scopeSim").textContent = T.simulated;
+  const live = $("scopeLive"); live.hidden = !s.connected; live.classList.toggle("on", !!s.live); live.textContent = s.live ? T.liveOn : T.liveOff; live.title = T.liveHint;
   note.textContent = !s.connected ? T.noScope : !s.channels ? T.noMeasure : ""; note.hidden = !note.textContent;
   drawTrace(s);
   const box = $("measures"), hints = $("hints");
@@ -468,7 +474,9 @@ function renderScope(s){
 function section(title){ const s = el("div","section"); if (title) s.append(el("h3","",title)); return s; }
 let boardKey = "", boardBox = null;
 function renderBench(d){
-  const body = $("benchBody"), c = d.circuit, g = d.diagnosis, a = d.arduino, parts = [];
+  // the scroll first: taking the breadboard's drawing out to rebuild the panel shortens it, and the browser scrolls
+  // it back to the top before the end of this function could read where it was
+  const body = $("benchBody"), top = body.scrollTop, c = d.circuit, g = d.diagnosis, a = d.arduino, parts = [];
   $("benchInfo").textContent = c ? `${si(c.supply_v,"V")} ${T.supply}` : "";
   if (!c && !a){ body.replaceChildren(el("div","empty",T.noCircuit)); return; }
   if (c){
@@ -481,7 +489,7 @@ function renderBench(d){
   if (d.breadboard){
     const b = d.breadboard, s = section(), now = b.guide || {};
     const sameBoard = JSON.stringify([b.parts, b.wires, b.holes, b.guide, lang]);
-    if (sameBoard !== boardKey){ boardKey = sameBoard; boardBox = el("div","zoombox"); boardBox.append(drawBreadboard(b)); zoomable(boardBox, () => [boardBox.firstChild], "breadboard"); }
+    if (sameBoard !== boardKey){ boardKey = sameBoard; boardBox = el("div","zoombox"); boardBox.title = T.ctrlZoom; boardBox.append(drawBreadboard(b)); zoomable(boardBox, () => [boardBox.firstChild], "breadboard", true); }
     s.classList.add("breadboard"); s.append(el("h3","",T.breadboard + (b.placed ? "" : ` · ${T.notPlaced}`)), boardBox);
     if (now.says){ const n = el("div","stepnow"); if (now.step && !now.net) n.append(el("b","",`${T.stepOf} ${now.step}/${b.total} `)); n.append(document.createTextNode(now.says)); s.append(n); }
     parts.push(s);
@@ -521,7 +529,7 @@ function renderBench(d){
     if (a.serial && a.serial.length){ s.append(el("h3","",T.serial), el("div","serial",a.serial.slice(-6).join("\n"))); }
     parts.push(s);
   }
-  const top = body.scrollTop; body.replaceChildren(...parts); body.scrollTop = top;
+  body.replaceChildren(...parts); body.scrollTop = top;
 }
 function renderPower(p){
   const box = $("power"); box.className = "power"; box.replaceChildren(el("span","",T.supply));
@@ -667,6 +675,9 @@ async function poll(){
 }
 $("lang").onclick = () => { lang = lang === "es" ? "en" : "es"; T = TEXT[lang]; store.set("lunes.lang",lang); translate(); };
 $("mapView").onclick = () => { mapClose = !mapClose; if (window.lastLab) renderMachine(window.lastLab.machine); };
+$("scopeLive").onclick = async () => { const on = !$("scopeLive").classList.contains("on"); $("scopeLive").disabled = true;
+  try { const r = await (await fetch("/scope_live?on=" + (on ? 1 : 0))).json(); if (r.ok && window.lastLab){ window.lastLab.scope.live = r.live; renderScope(window.lastLab.scope); } }
+  finally { $("scopeLive").disabled = false; } };
 $("details").onclick = () => { document.body.classList.toggle("details"); $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details; };
 setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString("en-GB", {hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}); }, 1000);
 window.addEventListener("resize", () => { if (lab){ drawOverlay(); drawTrace(lab.scope); } });
@@ -685,7 +696,8 @@ document.querySelectorAll(".panel").forEach(panel => { const b = el("button","gr
 $("veil").onclick = () => float(floating);
 addEventListener("keydown", e => { if (e.key === "Escape" && floating) float(floating); });
 const zooms = {};
-function zoomable(box, targets, key){
+function zoomable(box, targets, key, ctrl){
+  // ctrl: the box lies in a panel that scrolls, so the plain wheel scrolls it and Ctrl + wheel zooms
   const z = zooms[key] = zooms[key] || {k:1, x:0, y:0};
   let drag = null, moved = false;
   const show = () => { const r = box.getBoundingClientRect();
@@ -693,7 +705,7 @@ function zoomable(box, targets, key){
     for (const t of targets()){ t.style.transformOrigin = "0 0"; t.style.transform = z.k === 1 ? "" : `translate(${z.x}px,${z.y}px) scale(${z.k})`; }
     box.classList.toggle("zoomed", z.k > 1); };
   box.classList.add("zoombox");
-  box.addEventListener("wheel", e => { e.preventDefault(); const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  box.addEventListener("wheel", e => { if (ctrl && !e.ctrlKey) return; e.preventDefault(); const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
     const k = Math.min(14, Math.max(1, z.k * (e.deltaY < 0 ? 1.25 : 0.8))); z.x = px - (px - z.x) * k / z.k; z.y = py - (py - z.y) * k / z.k; z.k = k; show(); }, {passive:false});
   box.addEventListener("pointerdown", e => { if (z.k > 1 && e.button === 0){ drag = [e.clientX, e.clientY, z.x, z.y]; moved = false; box.setPointerCapture(e.pointerId); } });
   box.addEventListener("pointermove", e => { if (!drag) return; z.x = drag[2] + e.clientX - drag[0]; z.y = drag[3] + e.clientY - drag[1]; moved = moved || Math.abs(e.clientX - drag[0]) + Math.abs(e.clientY - drag[1]) > 4; show(); });

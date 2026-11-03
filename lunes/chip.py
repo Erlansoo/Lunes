@@ -251,12 +251,15 @@ def orientation(chip, end):
     return round(angle, 1), words[nearest]
 
 
-def breadboard_grid(frame, px_per_mm):
+def breadboard_grid(frame, px_per_mm, chip_px=None, chip_row=None):
     """Where a breadboard's holes stand in a mosaic of it, row 1 at the left and column a at the bottom, from the holes
     themselves: a comb at 2.54 mm finds the block, then each hole is looked for near its place and the whole grid is
     fitted to them, turned as the board lies. A chip's top stands higher than the board and shows shifted, so the holes
-    are the way to know them. {"a1", "a63", "j1": (x, y) in pixels, "holes": how many, "off_px": their typical miss}, or
-    None if it is not a breadboard's grid."""
+    are the way to know them. chip_px, where a DIP on the board is in the mosaic, keeps the comb to the places that put
+    the middle channel under it: the rails and the parts beside them match the comb too (Nov 3: five columns off).
+    chip_row, the row its centre is on (from 1), keeps the rows too: a mosaic wider than the board slid them 15 rows.
+    {"a1", "a63", "j1": (x, y) in pixels, "holes": how many, "off_px": their typical miss}, or None if it is not a
+    breadboard's grid."""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
     h, w = gray.shape
     dark = np.clip(cv2.blur(gray, (121, 121)) - gray, 0, None)
@@ -271,17 +274,25 @@ def breadboard_grid(frame, px_per_mm):
         ys = np.arange(h)[None, :] + (tilt * span)[:, None]
         profile = np.mean([np.interp(np.arange(h), ys[i], dark[:, span[i]]) for i in range(len(span))], axis=0)
         for y0 in range(int(11 * pitch) + 1, h - 1):
+            if chip_px is not None and abs(y0 - tilt * chip_px[0] - 5.5 * pitch - chip_px[1]) > 1.5 * pitch:
+                continue  # column c runs at y0 - tilt x - c pitch, and the channel, 5.5, under the chip
             value = profile[(y0 - columns * pitch).astype(int)].mean()
             if best is None or value > best[0]:
                 best = (float(value), float(tilt), float(y0))
+    if best is None:
+        return None
     _, tilt, y0 = best
     x_best = None
     for x0 in range(0, int(w - 62 * pitch) - 1, 2):
+        if chip_px is not None and chip_row is not None and abs((chip_px[0] - x0) / pitch - (chip_row - 1)) > 2.5:
+            continue
         xs = (x0 + rows * pitch).astype(int)
         yy = (y0 - tilt * xs).astype(int)
         band = sum(dark[np.clip((yy - c * pitch).astype(int), 0, h - 1), xs].sum() for c in range(5))
         if x_best is None or band > x_best[0]:
             x_best = (float(band), float(x0))
+    if x_best is None:
+        return None
     x0 = x_best[1]
     gx, gy = pitch, 0.0  # one row along, then one column up, in pixels
     fit = np.array([[x0, gx, tilt * pitch], [y0 - tilt * x0, -tilt * pitch, -pitch]])  # x, y from 1, row, column

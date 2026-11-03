@@ -98,6 +98,16 @@ class BoardGrid:
         u, v = x / (62 * PITCH), y / (11 * PITCH)
         return round(self.a1[0] + u * self.along[0] + v * self.across[0], 2), round(self.a1[1] + u * self.along[1] + v * self.across[1], 2)
 
+    def across_of(self, x, y):
+        """How far across the board a point in machine mm lies, in pitches from column a (j is 11, the channel 5.5)."""
+        (lx, ly), (cx, cy) = self.along, self.across
+        return 11 * (lx * (y - self.a1[1]) - ly * (x - self.a1[0])) / (lx * cy - ly * cx)
+
+    def holds_chip(self, x, y):
+        """Whether a DIP centred here straddles this grid's channel, as every DIP on a breadboard does: a grid that puts
+        it elsewhere took the rails or the board's edge for holes (Nov 3: one put the chip on column a, 13 mm off)."""
+        return abs(self.across_of(x, y) - 5.5) <= 1.0
+
 
 class _Layout:
     def __init__(self):

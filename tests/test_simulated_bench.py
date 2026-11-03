@@ -72,6 +72,28 @@ def new_parts():
         ok(not blind, f"{name}: every one of its {len(table)} faults simulates" + (f"; not: {blind}" if blind else ""))
 
 
+def probe_elsewhere():
+    print("A steady net read as a moving signal is the probe elsewhere, not a fault")
+    machine = types.SimpleNamespace(s=types.SimpleNamespace(port="COM8"), config={})
+    hume = Hume(machine, None)
+    hume.run_tool("circuit_set", {"circuit": BLINKER})
+    hume.run_tool("diagnose_start", {})
+    before = hume.diagnosis.state()
+    rate, v = waveform(hume.circuit, "LED", hume.expected["simulated_s"])  # Nov 3: the probe on the LED, asked for VCC
+    hume.scope = SimulatedScope({"CH1": periodic_signal(rate, v), "CH2": lambda t: np.zeros_like(t)})
+    out, _ = hume.run_tool("diagnose_measure", {"net": "VCC"})
+    ok(not out["ok"] and "another net" in out["error"], f"the LED's signal taken on VCC is refused: {out.get('error', '')[:70]}")
+    ok(hume.diagnosis.state() == before, "and nothing went into the diagnosis")
+    # Nov 3: a flat 0 V put down to the probe while the camera had read the supply's output off
+    hume.scope = SimulatedScope({"CH1": lambda t: np.zeros_like(t), "CH2": lambda t: np.zeros_like(t)})
+    hume.supply = {"volts": 5.0, "amps": 0.5, "out": False, "at": time.time()}
+    flat, _ = hume.run_tool("scope_measure", {"channel": "CH1"})
+    ok("OFF" in (flat.get("supply_note") or ""), "a flat reading with the supply's output off says so first")
+    hume.supply["out"] = True
+    flat, _ = hume.run_tool("scope_measure", {"channel": "CH1"})
+    ok("supply_note" not in flat, "and not when the output is on")
+
+
 def bench(template, params, fault):
     """Hume on a simulated board with fault planted; returns the diagnosis' last state."""
     machine = types.SimpleNamespace(s=types.SimpleNamespace(port="COM8"), config={})
@@ -142,6 +164,7 @@ def diagnosis_555():
 
 if __name__ == "__main__":
     t0 = time.time()
+    probe_elsewhere()
     templates()
     new_parts()
     arduino_diagnosis()

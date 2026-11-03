@@ -43,7 +43,7 @@ from lunes.lab import state as lab_state  # noqa: E402
 from lunes.mcu import SimulatedBoard  # noqa: E402
 from lunes.kinect import Kinect  # noqa: E402
 from lunes.machine import Machine  # noqa: E402
-from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, latin, local_transcriber  # noqa: E402
+from lunes.voice import FAST_EAR, Ear, Voice, find_microphone, latin, local_transcriber, sounds_like_speech  # noqa: E402
 from microscope import Camera, sharpness  # noqa: E402
 
 # The wake word. "el lunes", "este lunes"... are the weekday, not a call, so they do not count. The ear also writes
@@ -58,6 +58,12 @@ BYE = re.compile(r"\b(adi[oó]s|cha[ou]|apágate|termina|descansa)\b", re.IGNORE
 # order. ("alto" is left out: "mide el alto" is a job.)
 CLEAR_STOP = re.compile(r"\b(basta|det[eé]nte|de\s?[td][eé]nte|det[ií]nte\w*|c[aá]llate|silencio|stop)\b", re.IGNORECASE)
 SOFT_STOP = re.compile(r"\b(p[aá]r[aá](te)?|espera)(\W+(ya|lunes|por favor|ahí|un momento))*\W*$", re.IGNORECASE)
+
+
+# The steps that take minutes: when one of them fails Erlan hears it, not only the retry's silence
+LONG_STEPS = {"survey_board": "el recorrido con el microscopio", "measure_board": "la medida de la placa",
+              "inspect_component": "la foto de cerca del componente", "calibrate_kinect": "la calibración del Kinect",
+              "calibrate_bench": "la calibración de la cámara del banco", "laser_calibrate": "la calibración del láser"}
 
 
 def is_stop(text):
@@ -316,6 +322,12 @@ class Worker:
             self.narrator_ref().update(f"Ahora {step}.", lambda: self.hume.status == name)
 
     def _result(self, name, result):
+        if isinstance(result, dict) and result.get("ok") is False and result.get("error"):
+            # a tool that failed shows here, with why: the worker may try again without a word. A long step that
+            # failed is also said (Erlan, Nov 3: "la próxima vez por favor avísame")
+            log("info", f"   ({name} falló: {str(result['error'])[:240]})")
+            if name in LONG_STEPS and not result.get("refused"):
+                self.narrator_ref().must(f"Ojo: se cortó {LONG_STEPS[name]}. Veo qué pasó y te digo.")
         if name not in ("where", "look_microscope", "look_bench", "look_kinect", "kinect_distance", "look_survey"):
             got = json.dumps(result, ensure_ascii=False, default=float)[:160] if isinstance(result, dict) else ""
             self.actions.append(f"{name} {json.dumps(self._args, ensure_ascii=False)} -> {got}")
@@ -530,6 +542,17 @@ def main():
     hume.on_image = lambda image, what: board.set_seen(image, what)
     board.mosaic = hume.bench_mosaic
     board.on_tap = lambda x, y: hume.taps.append((x, y))
+    board.on_scope_live = hume.scope_live_on
+
+    def scope_live_loop():  # Erlan's continuous view: a few pictures a second, paused while Lunes measures
+        while True:
+            try:
+                shown = hume.scope_live_frame()
+            except Exception:  # noqa: BLE001  (never let the view's thread die)
+                shown = False
+            time.sleep(0.25 if shown else 0.5)
+
+    threading.Thread(target=scope_live_loop, daemon=True).start()
     print(f"página en vivo: {board.url}")
 
     def watch_supply():  # always knows what the supply shows, and says when it changes
@@ -774,8 +797,9 @@ def main():
                 heard, called, half["now"] = f"{waiting['text']} {heard}", called or waiting["called"], None
                 if kind == "audio" and waiting["audio"] is not None:
                     audio = np.concatenate([waiting["audio"], audio])
-            # Over Lunes' own voice only an explicit call counts: the rest is mostly its own words coming back.
-            if over_lunes and not called:
+            # Over Lunes' own voice only an explicit call counts, or a long phrase of plain Spanish (Erlan starting
+            # his request as Lunes ends its answer): the rest is mostly its own words coming back, garbled.
+            if over_lunes and not called and not sounds_like_speech(heard):
                 log("info", f"(oí «{heard}» encima de mi voz: no respondo)")
                 continue
             in_conversation = (args.no_wake or args.text or worker.running or
@@ -838,6 +862,10 @@ def main():
                 log("think", f"   (espero el resto de la frase: {conductor.understood})")
                 threading.Timer(NUDGE_AFTER_S, nudge, args=(half["now"],)).start()
                 continue
+            if action == "parar":  # before saying so: stopping also silences what was queued to be said
+                worker.queued.clear()
+                if worker.running:
+                    interrupt()
             if say:
                 narrator.say(say, remember=False)
             if action == "mirar":  # a quick look, not a job: one picture and what it shows

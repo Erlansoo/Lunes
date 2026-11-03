@@ -33,7 +33,8 @@ def _machine(hume):
     return {"at_mm": {k: round(float(v), 2) for k, v in (getattr(hume.m, "at_mm", None) or {}).items()},
             "area_mm": WORKSPACE, "focus_z_mm": hume.focus_z,
             "board": {k: board[k] for k in ("center_mm", "size_mm") if k in board} or None,
-            "hold": hume.hold["why"] if hume.hold else None, "doubtful": bool(hume.position_doubtful),
+            "hold": {k: hume.hold.get(k) for k in ("off_mm", "mosaic_mm")} if hume.hold else None,  # the page words it
+            "doubtful": bool(hume.position_doubtful),
             "kinect": {"agrees": check.get("agrees"), "off_mm": round(check.get("off_mm", 0), 1),
                        "ago_s": _ago(check.get("at"))} if check else None,
             "px_per_mm": float(np.mean(list(scale.values()))) if scale else None,
@@ -45,7 +46,8 @@ def _scope(hume):
     scope, last = hume.scope, hume.last_scope
     if scope is None:
         return {"connected": False}
-    out = {"connected": True, "simulated": getattr(scope, "signals", None) is not None, "probe": dict(scope.probe)}
+    out = {"connected": True, "simulated": getattr(scope, "signals", None) is not None, "probe": dict(scope.probe),
+           "live": bool(getattr(hume, "scope_live", False))}
     if last:
         result = last["result"]
         out.update(ago_s=_ago(last["at"]), rate=result.get("sample_rate"),

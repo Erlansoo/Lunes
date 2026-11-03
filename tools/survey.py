@@ -594,6 +594,14 @@ def mosaic_point_to_mm(summary, x_frac, y_frac):
     return summary["home_mm"]["X"] + float(d_x), summary["home_mm"]["Y"] + float(d_y)
 
 
+def mm_to_mosaic_px(summary, x, y):
+    """The mosaic pixel (x, y) of a machine position: mosaic_point_to_mm the other way round."""
+    m = np.column_stack([summary["shift_px_per_mm"]["X"], summary["shift_px_per_mm"]["Y"]])
+    q = np.array([320.0, 240.0]) - m @ np.array([x - summary["home_mm"]["X"], y - summary["home_mm"]["Y"]])
+    px, py = q - np.array(summary["origin_px"])
+    return float(px), float(py)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("port", nargs="?", default="COM8")

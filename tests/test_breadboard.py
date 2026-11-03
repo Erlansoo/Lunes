@@ -52,6 +52,11 @@ def grid_of_the_real_board():
     ok(math.dist(grid.mm("a63"), (48.15, -53.88)) < 0.02 and math.dist(grid.mm("j1"), (76.31, -212.16)) < 0.02, "the corners stay where they were measured")
     ok(abs(grid.mm("a40")[1] + 112.6) < 0.1 and grid.mm("f53")[0] > grid.mm("e53")[0] + 7, "row 40 where the mosaic has it, and a to j towards +X")
     ok(all(breadboard.nearest_hole(grid, *grid.mm(h)) == h for h in ("a40", "+40", "-41", "j63")), "each point goes back to its hole")
+    middle = [(a + b) / 2 for a, b in zip(grid.mm("e53"), grid.mm("f53"))]
+    ok(grid.holds_chip(*middle) and not grid.holds_chip(*grid.mm("a53")), "a chip straddles the channel, never column a")
+    # Nov 3: a mosaic's grid took the rails for holes and put the chip, at 62.45, -82.15, on its column a
+    wrong = breadboard.BoardGrid((61.06, -219.61), (64.54, -61.02), (89.27, -219.52))
+    ok(not wrong.holds_chip(62.45, -82.15), "a grid that puts the chip on column a is not the board's")
 
 
 def around_the_chip():

@@ -23,6 +23,7 @@ from lunes.machine import Machine  # noqa: E402
 CAPTURES = Path(__file__).resolve().parent.parent / "captures"
 STEPS_MM = (0.01, 0.1, 1.0, 5.0)
 CAL_MOVE_MM = 3.0  # about 140 px: long enough for a precise ratio, short enough to keep most of the view
+CAL_SLACK_MM = 0.5  # more than any axis' backlash
 KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN = 2424832, 2490368, 2555904, 2621440  # cv2.waitKeyEx on Windows
 KEY_PGUP, KEY_PGDN = 2162688, 2228224
 
@@ -116,10 +117,16 @@ def calibrate(m, cam, move_by=None):
 
     move_by(axis, mm) does the moves; the default is a plain move, a caller can lift Z around it instead."""
     move_by = move_by or (lambda axis, mm: m.move_by(**{axis: mm}))
-    ref = cam.fresh_gray()
-    window = cv2.createHanningWindow(ref.shape[::-1], cv2.CV_32F)
-    vectors = {}
+    window, vectors, ref = None, {}, None
     for axis in ("X", "Y"):
+        # the screws' slack: a move that reverses first takes it up and travels that much less, and the last axis'
+        # return leaves the picture off by it. Both read as scale and skew (Nov 3: axes 89.0 deg apart, Y 2.7 % short),
+        # so each axis takes up its slack in the measured direction and gets a picture of its own
+        move_by(axis, -CAL_SLACK_MM)
+        move_by(axis, CAL_SLACK_MM)
+        ref = cam.fresh_gray()
+        if window is None:
+            window = cv2.createHanningWindow(ref.shape[::-1], cv2.CV_32F)
         move_by(axis, CAL_MOVE_MM)
         img = cam.fresh_gray()
         (dx, dy), response = cv2.phaseCorrelate(ref, img, window)
@@ -137,6 +144,7 @@ def calibrate(m, cam, move_by=None):
         "x_axis_angle_deg": round(math.degrees(math.atan2(vx[1], vx[0])), 2),
         "angle_between_axes_deg": round(between, 2),
         "calibrated_at": datetime.now().isoformat(timespec="seconds"),
+        "slack_taken_up": True,
     }
     m.config["microscope"] = result
     m.save_config()

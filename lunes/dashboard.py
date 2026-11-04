@@ -81,6 +81,11 @@ class Dashboard:
             self.seen, self.seen_label = _jpeg(image, 1600, 85), label
             self.seen_version += 1
 
+    def clear_seen(self):
+        """No analysed picture: a new project starts with the AI analysis view blank. Version 0 tells the page so."""
+        with self._lock:
+            self.seen, self.seen_label, self.seen_version = None, "", 0
+
     # what the page asks for ------------------------------------------------------------------------------------
     def _kinect_frame(self):
         if self.kinect is None:
@@ -214,8 +219,14 @@ class Dashboard:
                     return self._send(json.dumps(body, ensure_ascii=False, default=float).encode(), "application/json")
                 for name, camera in (("/img/microscope.jpg", board.camera), ("/img/bench.jpg", board.bench)):
                     if path == name and camera is not None:
+                        # ?w=1920 for a recording of the camera (the video's B-roll); the page asks for the small one
+                        q = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
                         try:
-                            return self._send(_jpeg(camera.frame(), 640, 75), "image/jpeg")
+                            side = min(max(int(q.get("w", 640)), 160), 3840)
+                        except ValueError:
+                            side = 640
+                        try:
+                            return self._send(_jpeg(camera.frame(), side, 75 if side <= 640 else 88), "image/jpeg")
                         except Exception:
                             pass
                 if path == "/img/kinect.jpg":

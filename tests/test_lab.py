@@ -237,6 +237,9 @@ def trimmed():
     ok("name" not in mapped.world["chip"], "a chip somewhere else is another chip: the old name does not follow it")
     ok("NE555P" not in mapped.brief() and "sin leer" in mapped.brief(), "the conductor is told what is on the map")
     mapped.world["chip"]["center_mm"] = [62.65, -74.6]
+    # the breadboard's height comes from the laser's calibration: a fixed one here, not the bench's of the day
+    mapped.m.config = dict(mapped.m.config, laser={"pwm": 30, "surfaces": [
+        {"z": 13.7, "pwm": 30, "dot_mm": 0.29, "offset_mm": {"X": 4.1, "Y": -2.6}, "surface": "protoboard"}]})
     mapped.m.at_mm = {"X": 62.0, "Y": -74.0, "Z": 20.0}
     low, near = {"X": 62.0, "Y": -74.0, "Z": 8.0}, {"X": 62.0, "Y": -74.0, "Z": 15.0}
     ok(mapped._no_go(low) and not mapped._no_go(near), "the last guard: below the breadboard next to the chip, refused; above it, not")

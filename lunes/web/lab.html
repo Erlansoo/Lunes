@@ -245,7 +245,7 @@ body:not(.details) .detail { display:none; }
   <section class="panel" id="view">
     <div class="tabs" role="tablist" id="tabs"></div>
     <div class="stage" id="stage">
-      <img id="big" alt="">
+      <img id="big" alt="" draggable="false">
       <svg class="overlay" id="overlay" aria-hidden="true"></svg>
       <div class="badge" id="badge" hidden></div>
       <div class="caption num" id="caption" hidden></div>
@@ -308,7 +308,7 @@ const TEXT = {
       zoomIn:"Acercar", zoomOut:"Alejar", zoomReset:"Volver al 100 %", boardZoomHint:"Ctrl + rueda para acercar o alejar; arrastra para moverte; doble clic vuelve al 100 %",
       projects:"Proyectos", projectsNone:"No hay proyectos guardados", projectsFail:"No pude leer la lista", loadAsk:"¿Abrir este proyecto? Trae su circuito, su conversación y su historial.",
       newProject:"Proyecto nuevo", newTitle:"Proyecto nuevo: su propia conversación, memoria e historial", newPlaceholder:"Nombre del proyecto",
-      create:"Crear", newFail:"No se pudo crear", emptyProject:"sin circuito todavía", projectNow:"Proyecto",
+      create:"Iniciar proyecto", newFail:"No se pudo crear", emptyProject:"sin circuito todavía", projectNow:"Proyecto",
       loadFail:"No se pudo cargar", loadNone:"No hay banco donde cargarlo: Lunes no está corriendo", onBench:"en el banco", noPlan:"sin plan", loading:"Leyendo…",
       editBoard:"Editar", editClose:"Cerrar edición", wireColor:"Cable", del:"Eliminar", undo:"Deshacer", save:"Guardar", cancel:"Cancelar",
       editHint:"Arrastra la pata de una pieza a otro agujero (un chip entero, por cualquier pata); clic en dos agujeros pone un cable; clic en un cable y Eliminar lo quita",
@@ -338,7 +338,7 @@ const TEXT = {
       zoomIn:"Zoom in", zoomOut:"Zoom out", zoomReset:"Back to 100 %", boardZoomHint:"Ctrl + wheel to zoom; drag to pan; double-click goes back to 100 %",
       projects:"Projects", projectsNone:"No saved projects", projectsFail:"Could not read the list", loadAsk:"Open this project? It brings its circuit, its conversation and its history.",
       newProject:"New project", newTitle:"New project: its own conversation, memory and history", newPlaceholder:"Project name",
-      create:"Create", newFail:"Could not create it", emptyProject:"no circuit yet", projectNow:"Project",
+      create:"Start project", newFail:"Could not create it", emptyProject:"no circuit yet", projectNow:"Project",
       loadFail:"Could not load it", loadNone:"No bench to load it on: Lunes is not running", onBench:"on the bench", noPlan:"no plan", loading:"Reading…",
       editBoard:"Edit", editClose:"Close editing", wireColor:"Wire", del:"Delete", undo:"Undo", save:"Save", cancel:"Cancel",
       editHint:"Drag a part's lead to another hole (a whole chip by any pin); click two holes to add a wire; click a wire and Delete to remove it",
@@ -396,7 +396,7 @@ function translate(){
   $("projectNew").title = T.newTitle; $("projectNew").setAttribute("aria-label", T.newTitle); $("newName").placeholder = T.newPlaceholder;
   $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details;
   buildTabs(); showState(); layoutButtons(); $("askText").placeholder = T.askLunes; showMic(micState);
-  $("boardIn").title = T.zoomIn; $("boardOut").title = T.zoomOut; $("boardReset").title = T.zoomReset; if (boardBox) boardBox.title = T.boardZoomHint;
+  $("boardIn").title = T.zoomIn; $("boardOut").title = T.zoomOut; $("boardReset").title = T.zoomReset; $("boardZoom").title = T.boardZoomHint;
   $("editBoard").textContent = editing ? T.editClose : T.editBoard;
   if (lab) render(lab);
 }
@@ -467,7 +467,10 @@ function renderMachine(m){
   $("mosaics").textContent = m.mosaics ? `${m.mosaics} ${T.mosaics}` : "";
   // the map holds what Lunes has in mind, in machine mm: close around it, or the whole table
   const svg = $("map"), area = m.area_mm, W = area.X[1]-area.X[0], H = area.Y[1]-area.Y[0], pad = 16, mind = m.mind || {}, chip = mind.chip;
-  const toX = x => x - area.X[0], toY = y => area.Y[1] - y, on = ([x,y]) => [toX(x), toY(y)];
+  // drawn as Erlan sees the table from the front (config como_lo_ve_erlan): +X goes to his left, +Y away from him
+  // (the back is up). With +X to the right the map was a mirror of the bench: the mosaic's printed numbers read
+  // backwards (Nov 3: "lo estoy viendo al revés o volcado")
+  const toX = x => area.X[1] - x, toY = y => area.Y[1] - y, on = ([x,y]) => [toX(x), toY(y)];
   const known = [...(chip ? chip.corners_mm : []), ...(mind.notes || []).map(n => n.mm), ...(mind.laser ? [mind.laser.mm] : []), ...(mind.mosaic ? mind.mosaic.corners_mm : [])].map(on);
   if (m.board && m.board.center_mm){ const [cx,cy] = m.board.center_mm, [w,h] = m.board.size_mm; known.push(on([cx-w/2,cy-h/2]), on([cx+w/2,cy+h/2])); }
   let box = [-pad, -pad, W+2*pad, H+2*pad];
@@ -492,8 +495,9 @@ function renderMachine(m){
   }
   if (m.board && m.board.center_mm){
     const [cx,cy] = m.board.center_mm, [w,h] = m.board.size_mm;
-    node("rect",{x:cx-w/2-area.X[0],y:toY(cy+h/2),width:w,height:h,rx:1.5,fill:mind.mosaic ? "none" : "#1e4a35",stroke:"#4cc38a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
-    if (m.bed) label(cx-area.X[0],toY(cy+h/2)-4*unit,m.bed,"middle","#7fd6ae");
+    const [x0, y0] = on([cx+w/2, cy+h/2]);  // the corner nearest the page's top left: largest X, largest Y
+    node("rect",{x:x0,y:y0,width:w,height:h,rx:1.5,fill:mind.mosaic ? "none" : "#1e4a35",stroke:"#4cc38a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
+    if (m.bed) label(toX(cx),y0-4*unit,m.bed,"middle","#7fd6ae");
   }
   if (chip){
     const c = on(chip.center_mm), r = Math.max(...chip.size_mm)/2;
@@ -605,7 +609,8 @@ function renderBench(d){
           probeNet = (g && g.next ? g.next.net : null) || ((b.guide || {}).net || null);
     // check_build's findings with a priority, worst first; the button shows while there are any, and lights them up
     const faults = (b.check_items || []).map((x, i) => ({...x, i})).filter(x => x.priority).sort((x, y) => x.priority - y.priority);
-    $("errors").hidden = !faults.length; $("errors").classList.toggle("on", errorsOn && faults.length > 0);
+    const checked = Object.keys(b.check || {}).length > 0;
+    $("errors").hidden = !faults.length && !checked; $("errors").classList.toggle("on", errorsOn && (faults.length > 0 || checked));
     const sameBoard = JSON.stringify([b.parts, b.wires, b.holes, b.guide, probeNet, c && c.supply_v, b.check, errorsOn && faults, lang]);
     if (sameBoard !== boardKey){ boardKey = sameBoard; boardBox = el("div","zoombox"); boardBox.append(drawBreadboard(b, probeNet, c ? c.supply_v : null)); boardZoomable(boardBox);
       findingsBox = errorsOn && faults.length ? findingsList(faults) : null; }
@@ -754,8 +759,9 @@ function drawBreadboard(b, probeNet, supplyV){
     const t = label(Math.min(Math.max(cx, left + 22), right - 22), cy > 12 ? cy - 6.4 : cy + 7.4, text, color, 3.4);
     t.setAttribute("paint-order","stroke"); t.setAttribute("stroke","#f2efe6"); t.setAttribute("stroke-width",1.4); t.setAttribute("stroke-linejoin","round"); };
   if (probeNet && b.probe){ probeMark(b.probe[probeNet], "#c47a00", `${T.probeTip} · ${probeNet}`); if (probeNet !== "GND") probeMark(b.probe.GND, "#1c1c1c", T.clipGnd); }
-  // check_build: what the vision model saw in each planned hole of the real board, a check or a cross on it
-  for (const [hole, state] of Object.entries(b.check || {})){
+  // check_build: what the vision model saw in each planned hole of the real board, a check or a cross on it; shown only
+  // with the Errores button on, so a doubtful look does not cover the plan (Erlan, 3 Nov, filming)
+  for (const [hole, state] of Object.entries(errorsOn ? (b.check || {}) : {})){
     let xy; try { xy = at(hole); } catch (e) { continue; }
     const [cx, cy] = xy, color = state === "yes" ? "#1f9d55" : state === "no" ? "#d22" : "#c99700";
     add("circle",{cx,cy,r:2.9,fill:"none",stroke:color,"stroke-width":1.4,"data-tip":`<b>${hole}</b>\n${state === "yes" ? "✓" : state === "no" ? "✗" : "?"}`});
@@ -908,9 +914,13 @@ function zoomable(box, targets, key, ctrl){
   box.classList.add("zoombox");
   box.addEventListener("wheel", e => { if (ctrl && !e.ctrlKey) return; e.preventDefault(); const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
     const k = Math.min(14, Math.max(1, z.k * (e.deltaY < 0 ? 1.25 : 0.8))); z.x = px - (px - z.x) * k / z.k; z.y = py - (py - z.y) * k / z.k; z.k = k; show(); }, {passive:false});
-  box.addEventListener("pointerdown", e => { if (z.k > 1 && e.button === 0){ drag = [e.clientX, e.clientY, z.x, z.y]; moved = false; box.setPointerCapture(e.pointerId); } });
-  box.addEventListener("pointermove", e => { if (!drag) return; z.x = drag[2] + e.clientX - drag[0]; z.y = drag[3] + e.clientY - drag[1]; moved = moved || Math.abs(e.clientX - drag[0]) + Math.abs(e.clientY - drag[1]) > 4; show(); });
-  box.addEventListener("pointerup", () => { drag = null; });
+  // a drag on a picture starts the browser's own drag of the image, which cancels the pointer without a pointerup:
+  // the pan then stuck to the mouse until another click (Nov 3). No native drag, and any end of the pointer ends it
+  box.addEventListener("dragstart", e => e.preventDefault());
+  box.addEventListener("pointerdown", e => { if (z.k > 1 && e.button === 0){ e.preventDefault(); drag = [e.clientX, e.clientY, z.x, z.y]; moved = false; box.setPointerCapture(e.pointerId); } });
+  box.addEventListener("pointermove", e => { if (!drag) return; if (!(e.buttons & 1)){ drag = null; return; }
+    z.x = drag[2] + e.clientX - drag[0]; z.y = drag[3] + e.clientY - drag[1]; moved = moved || Math.abs(e.clientX - drag[0]) + Math.abs(e.clientY - drag[1]) > 4; show(); });
+  for (const end of ["pointerup", "pointercancel", "lostpointercapture"]) box.addEventListener(end, () => { drag = null; });
   box.addEventListener("click", e => { if (moved){ e.stopPropagation(); moved = false; } }, true);
   box.addEventListener("dblclick", () => { z.k = 1; z.x = 0; z.y = 0; show(); });
   show();
@@ -949,8 +959,7 @@ function boardZoom(k, at){  // at: the point of the window to keep still, as fra
 }
 function boardHome(){ const svg = boardSvg(); if (!svg) return; boardView.k = 1; boardView.cx = boardView.cy = null; store.set("lunes.boardZoom", "1"); boardWindow(svg); }
 function boardZoomable(box){
-  let drag = null;
-  box.title = T.boardZoomHint;
+  let drag = null;  // the how-to sits on the zoom buttons: a tooltip on the board covered its labels (Erlan, 3 Nov)
   box.addEventListener("wheel", e => { if (!e.ctrlKey) return; e.preventDefault(); const f = fit(box.firstChild);
     boardZoom(boardView.k * (e.deltaY < 0 ? 1.25 : .8), [(e.clientX - f.left) / (f.w * f.s), (e.clientY - f.top) / (f.h * f.s)]); }, {passive:false});
   box.addEventListener("pointerdown", e => { if (editing){ editDown(e, box); return; } if (e.button === 0 && box.classList.contains("zoomed")){ drag = [e.clientX, e.clientY, boardView.cx, boardView.cy]; box.setPointerCapture(e.pointerId); } });

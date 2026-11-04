@@ -921,9 +921,13 @@ def main():
         conductor.turns = list(saved.get("turns") or [])[-2 * conductor.keep_turns:]
         worker.last = saved.get("last_result") or ""
         name = hume.project_name()
+        board.clear_seen()  # the AI analysis view starts blank: the last picture was the other project's
         show_project()
         log("info", f"proyecto abierto: {name}" + ("" if conductor.turns else " (nuevo: conversación en blanco)"))
         save_talk(new)
+        if getattr(hume, "just_created", None):  # the web's "Iniciar proyecto": the one greeting, for this project
+            hume.just_created = None
+            narrator.say(f"Empezamos el proyecto {name}. ¿Qué armamos?")
 
     global project_log
     project_log = hume.project_log
@@ -936,8 +940,8 @@ def main():
         line = f"Sigo con {name}." if name else "Sigo donde quedamos."
         log("lunes", f"Lunes: {line}")
         voice.say_soon(line)
-    else:
-        narrator.must(greeting(conductor, kinect))
+    else:  # no greeting at a restart (Erlan, 3 Nov): Lunes greets when a project is started with its button
+        log("info", f"listo, en el proyecto {hume.project_name() or 'sin nombre'}")
 
     last_exchange, turn = 0.0, 0
     # Two things in a row that were not for Lunes (Erlan talking with his father) close the conversation until he

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 from lunes.machine import Machine  # noqa: E402
-from microscope import Camera, autofocus, calibrate, sharpness  # noqa: E402
+from microscope import CAL_SLACK_MM, Camera, autofocus, calibrate, sharpness  # noqa: E402
 
 OVERLAP = 0.3
 LIFT_MM = 3.0  # Z goes up this much for every XY move, so tall parts (connectors) never meet the lens
@@ -36,9 +36,14 @@ def show_window(frame, text):
     cv2.waitKey(1)
 
 
-def hop(m, z_focus, **xy):
-    """XY move with Z lifted, then back down to the focus height (the lead screw repeats it exactly)."""
+def hop(m, z_focus, same_side=False, **xy):
+    """XY move with Z lifted, then back down to the focus height (the lead screw repeats it exactly).
+
+    same_side=True arrives from below on every axis, as calibrate measures: the screws' slack then leaves every
+    picture off by the same amount, and a mosaic's back-and-forth rows no longer step (Nov 4)."""
     m.move_to(Z=z_focus + LIFT_MM)
+    if same_side:
+        m.move_to(**{a: v - CAL_SLACK_MM for a, v in xy.items()})
     m.move_to(**xy)
     m.move_to(Z=z_focus)
 
@@ -188,7 +193,7 @@ def survey(m, cam, grid=3, span=0.3, show=show_window, recalibrate=True, cols=No
             if stop and stop():
                 hop(m, z, X=home["X"], Y=home["Y"])
                 raise Interrupted()
-            hop(m, z, X=home["X"] + dx, Y=home["Y"] + dy)
+            hop(m, z, same_side=True, X=home["X"] + dx, Y=home["Y"] + dy)
             time.sleep(0.25)
             cam.fresh_gray(1)  # drop frames taken while moving
             frame = cam.frame()

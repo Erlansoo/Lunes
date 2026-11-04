@@ -61,14 +61,39 @@ def chip_darkness(mosaic, summary, grid, layout):
     return float(np.mean(values)) if values else None
 
 
+def shifted(grid, columns):
+    """The same grid slid along the board by a number of columns: hole N of the result is hole N + columns of grid."""
+    a1, a63, j1 = (np.array(grid[k], float) for k in ("a1", "a63", "j1"))
+    step = (a63 - a1) / 62
+    return {"a1": [round(v, 2) for v in a1 + columns * step], "a63": [round(v, 2) for v in a63 + columns * step],
+            "j1": [round(v, 2) for v in j1 + columns * step]}
+
+
 def orient(mosaic, summary, grid, layout):
-    """(grid, note): the grid as read, or turned half round if only that puts the plan's chip on a dark body."""
-    here, there = chip_darkness(mosaic, summary, grid, layout), chip_darkness(mosaic, summary, turned(grid), layout)
+    """(grid, note): the grid as read, or the one the holes also fit that puts the plan's chip on a dark body.
+
+    A breadboard's holes fit a grid in more than one way: turned half round (row r is 64 - r, column a is j), and slid
+    by a group of five columns, since the rails' holes come in fives (Nov 3, 23:13: both at once put the 555, standing
+    in e3-f6, at column 53 and sent the laser to the empty end). Of those, the one whose chip area is darkest wins, if
+    it is clearly darker than the grid as read."""
+    here = chip_darkness(mosaic, summary, grid, layout)
     if here is None:
         return grid, "no chip in the plan to check the board's orientation with"
-    if there is not None and there < 0.6 * here and there < 110:
-        return dict(grid, **turned(grid)), (f"the grid was read turned half round (the plan's chip area was bright, "
-                                            f"{here:.0f}, and dark, {there:.0f}, the other way): turned back")
+    best, best_dark, how = grid, here, None
+    for turn in (False, True):
+        base = turned(grid) if turn else grid
+        for slide in (-10, -5, 0, 5, 10):
+            if not turn and slide == 0:
+                continue
+            candidate = shifted(base, slide) if slide else base
+            dark = chip_darkness(mosaic, summary, candidate, layout)
+            if dark is not None and dark < best_dark:
+                best, best_dark, how = candidate, dark, (turn, slide)
+    if how is not None and best_dark < 0.6 * here and best_dark < 110:
+        words = " and ".join(w for w in ("turned half round" if how[0] else "",
+                                          f"slid {abs(how[1])} columns" if how[1] else "") if w)
+        return dict(grid, **best), (f"the grid was read {words} (the plan's chip area was bright, {here:.0f}, and dark, "
+                                    f"{best_dark:.0f}, on the other fit): turned back")
     return grid, f"the plan's chip falls on a dark body ({here:.0f} of 255): the board is read the right way round"
 
 

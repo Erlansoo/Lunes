@@ -250,6 +250,9 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   dice la simulación. Sus entradas analógicas miden sus redes sin la punta: en un diagnóstico, mcu_read antes de
   pedirle a Erlan que mida. Para ver lo que imprime cualquier programa de una placa (mensajes, valores de un
   sensor), serial_monitor, como el monitor serie del Arduino IDE; si el texto sale basura, baud 'auto'.
+- Después de un mosaico de la protoboard, survey_board trae readiness: dile a Erlan si con ese mosaico puedes revisar
+  su armado y por qué, y espera a que él decida; check_build solo cuando lo pide. El láser se confirma contra el
+  mosaico: si laser_point trae warning, la posición no es confiable y lo dices, nunca señalas a ciegas.
 - Cada proyecto (la lista de circuit_list) tiene su propia conversación, memoria e historial; abrirlo con
   circuit_load los trae. Lo que pasó en otro proyecto no es de este: no lo mezcles. remember guarda en el proyecto
   abierto; lo que vale para todos (la máquina, sus cámaras, las calibraciones) con bench=true. Un rediseño queda en
@@ -1357,9 +1360,18 @@ class Hume:
         self.circuit = self.expected = self.layout = self.layout_for = None
         self.diagnosis = self.fault_table = self.goals = None
         self.guide = {"step": 0, "holes": [], "says": ""}
+        # the machine's map starts clean too: the last project's notes, laser mark and mosaic were its own (Nov 3: "en
+        # la sección máquina se tiene un proyecto anterior ahí guardado"); where the board lies and its holes stay,
+        # since the bench did not move, and the next mosaic shows what is on it now
+        self.world["notes"], self.world["laser"], self.world["mosaic"] = [], None, None
+        if self.world.get("chip"):
+            self.world["chip"].pop("name", None)
+        self.last_mosaic = None
+        self._save_world()
         self.circuit_file = path
         CIRCUIT.write_text(json.dumps({**saved, "file": path.name}, ensure_ascii=False, indent=1), encoding="utf-8")
         self.project_log("note", f"Proyecto creado: {name}")
+        self.just_created = name  # talk.py greets once, for this project
         self._project_changed(old)
         return {"ok": True, "project": name, "file": path.name,
                 "note": "a new project, with nothing in it yet: the circuit you design or set now is its circuit"}
@@ -2052,6 +2064,19 @@ class Hume:
                              f"peak to peak): the probe is most likely on another net. Ask Erlan where it is (he may have "
                              f"said it) and measure that net; if he says it is on {net}, measure again with sure=true. "
                              f"Nothing went into the diagnosis"}, view
+        supply = getattr(self, "supply", None) or {}
+        # a circuit run by the microcontroller board takes its power from USB: the bench supply being off says nothing
+        unpowered = abs(reading["mean_v"]) < 0.2 and (reading.get("vpp_v") or 0) < 0.1 and self._mcu_part(None)[1] and \
+            abs(want.get("mean_v") or 0) > 0.5 and supply.get("out") is False and time.time() - supply.get("at", 0) < 120
+        if not sure and unpowered:
+            # Nov 3: a flat 0 V on VCC, read with the supply's output off, went into the diagnosis and turned it to
+            # "C1 open": a circuit without power says nothing about its parts
+            return {"ok": False, "net": net, "reading": reading,
+                    "error": f"a flat {reading['mean_v']:.2f} V on {net}, where {want.get('mean_v')} V is expected, and "
+                             f"the bench camera saw the supply's output OFF {time.time() - supply['at']:.0f} s ago: the "
+                             f"circuit has no power, which says nothing about its parts. Nothing went into the diagnosis. "
+                             f"Ask Erlan to turn the output on and check its leads reach the rails, then measure the "
+                             f"same point again; sure=true only if he says the output is on"}, view
         try:
             self.diagnosis.update(net, reading)
         except ValueError as e:
@@ -2506,11 +2531,30 @@ class Hume:
             confirmed = on_body
         if not seen_dot:
             level = levels[0]  # none showed it: the bright one blinds the picture for nothing
-        self.m.laser(level)  # the brightness that showed the dot here; off by itself in a minute
+        # not blind: the microscope must find itself in the last mosaic where the machine thinks it is, or the position
+        # (lost steps, a board moved) is not to be trusted, and neither is the dot (Nov 3: "que se fije bien en el
+        # mosaico para confirmar si de verdad se está moviendo donde debe")
+        mosaic_off = self._mosaic_offset() if self.surveys else None
+        if mosaic_off is not None and mosaic_off > 1.5:
+            confirmed = False
+        # the microscope finds the dot at a faint level; Erlan needs to see it on the bench under the room's light
+        # (Nov 3: "el láser no se nota"), so once placed it shines brighter, never dimmer than what the microscope used
+        show = max(level, int((cal.get("show_pwm") or 150)))
+        self.m.laser(show)  # off by itself in a minute
         self.world["laser"] = {"mm": [round(x, 2), round(y, 2)], "confirmed": confirmed, "pin": pin, "at": time.time()}
         self._save_world()
         out = {"ok": True, "confirmed": confirmed, "dot_at_mm": {"X": round(x, 2), "Y": round(y, 2)},
-               "head_at_mm": moved["position_mm"], "level": level, "focus_z_mm": round(at["Z"], 2)}
+               "head_at_mm": moved["position_mm"], "level": show, "focus_z_mm": round(at["Z"], 2),
+               "mosaic_check_mm": None if mosaic_off is None else round(mosaic_off, 2)}
+        if mosaic_off is not None and mosaic_off > 1.5:
+            out["warning"] = (f"the microscope finds itself {mosaic_off:.1f} mm away from where the machine thinks it is, in "
+                              f"the last mosaic: the position is not to be trusted (lost steps, or the board moved). Say "
+                              f"so to Erlan; measure_board and survey_board again before pointing")
+        elif mosaic_off is None and self.surveys:
+            out["mosaic_check"] = "the microscope could not find itself in the last mosaic here (a plain stretch of holes)"
+        grid_note = (self.world.get("grid") or {}).get("orientation") or ""
+        if grid_note and "turned back" not in grid_note and "right way round" not in grid_note:
+            out["grid_note"] = f"the board's orientation is not confirmed ({grid_note}): say so if you name a hole"
         if pin is not None:
             leg = seen["pin_mm"]
             out.update(pin=pin, pin_mm=leg, notch=seen.get("notch"), sure=seen.get("sure"),
@@ -2596,6 +2640,15 @@ class Hume:
         # where the chip stands on this mosaic is known only once the microscope sees it again: an older look at it
         # would read as the board having moved
         self.world["grid"] = dict(holes, chip_mm=None, at=time.time(), holes=grid["holes"], off_px=grid["off_px"])
+        # a board's holes read the same turned half round: the plan's chip must fall on the dark body in this mosaic,
+        # every time, not only in check_build (Nov 3, 23:13: after a new mosaic the laser went to the empty end of the
+        # board, the 555's pin 1 taken for f57 instead of e3)
+        if self.layout and self.layout.get("chips"):
+            from lunes import buildcheck
+            fixed, note = buildcheck.orient(mosaic, summary, self.world["grid"], self.layout)
+            if "turned back" in note:
+                self.world["grid"].update({k: fixed[k] for k in ("a1", "a63", "j1")})
+            self.world["grid"]["orientation"] = note
         self._place_board()
         return self.world["grid"]
 
@@ -3070,6 +3123,27 @@ class Hume:
             ref = ref or self._chip_ref()
             planned = chip_pin1_hole(self.layout, ref) if self.layout and ref else None
             out = {"ok": True, "pin1_hole": hole, "pin1_mm": {"X": x, "Y": y}, "how": "Erlan named the hole", "sure": 1.0}
+            # the microscope measured the leg; Erlan says which hole it is in: the grid slides so that hole falls on the
+            # leg (Nov 3, 23:45: the 555's pin 1 seen at the grid's e2, in e3 on the board, a column off), if the gap is
+            # small enough to be the fit's error and not another hole
+            leg = (self.world.get("chip") or {}).get("pin1_mm")
+            grid = self.world.get("grid")
+            if leg and grid:
+                dx, dy = leg[0] - x, leg[1] - y
+                gap = math.hypot(dx, dy)
+                if 0.8 < gap <= 3.8:
+                    for k in ("a1", "a63", "j1"):
+                        grid[k] = [round(grid[k][0] + dx, 2), round(grid[k][1] + dy, 2)]
+                    grid["anchored"] = f"pin 1 in {hole}, said by Erlan, on the leg the microscope measured ({gap:.1f} mm)"
+                    self._place_board()
+                    self._save_world()
+                    x, y = leg
+                    out.update(pin1_mm={"X": x, "Y": y}, grid_moved_mm=round(gap, 2),
+                               note=f"the grid of holes slid {gap:.1f} mm so that {hole} falls on pin 1's leg: every hole "
+                                    f"is named as on the board now")
+                elif gap > 3.8:
+                    out["warning"] = (f"the leg the microscope measured is {gap:.1f} mm from {hole} on the grid: more than a "
+                                      f"hole away, so the grid was not moved; ask Erlan to check the hole")
             if planned:
                 out.update(planned_hole=planned, as_planned=hole == planned)
             self.chip_seen = dict(self.chip_seen or {}, **out, at=time.time())
@@ -3843,7 +3917,8 @@ class Hume:
         # with the focus wheel untouched the lens magnifies the same at every focus, so a reading that moves the scale
         # was fooled by the picture (a breadboard's grid of holes repeats every 2.54 mm, a reflection): kept, it would
         # step every mosaic and shift every mm read from a picture. Square pixels on a machine nearly square, too
-        old = (before or {}).get("px_per_mm") or {}
+        # a calibration made before the slack was taken up is no yardstick: it was the skewed one
+        old = (before or {}).get("px_per_mm") or {} if (before or {}).get("slack_taken_up") else {}
         drift = max((abs(new["px_per_mm"][a] / old[a] - 1) for a in ("X", "Y") if old.get(a)), default=0.0)
         if before and (drift > 0.015 or abs(new["angle_between_axes_deg"] - 90) > 1.0
                        or abs(new["px_per_mm"]["X"] / new["px_per_mm"]["Y"] - 1) > 0.03):
@@ -3953,9 +4028,47 @@ class Hume:
         SURVEYS.write_text(json.dumps({"surveys": self.surveys, "side": self.side}, default=float), encoding="utf-8")
         if self.board and not (width_mm and height_mm):
             result["board_size_mm"] = self.board["size_mm"]
+        if self.world["bed"] == "protoboard":
+            result["readiness"] = self._readiness(summary)
         if note:
             result["note"] = note
         return result, mosaic
+
+    def _readiness(self, summary):
+        """Whether this mosaic can carry a check of the build against the plan, and why: the whole board in it, a
+        breadboard's shape (a cable beside it taken for its edge makes it wider), its holes found and the board read
+        the right way round, the tiles aligned. Erlan decides from this; the check never starts by itself (Nov 3:
+        "prefiero dar el criterio de saber si podrá o no con esa placa")."""
+        reasons, ok = [], True
+        box = (summary.get("board_in_mosaic") or {}).get("box")
+        if box and (box[0] <= 0.01 or box[1] <= 0.01 or box[2] >= 0.99 or box[3] >= 0.99):
+            ok = False
+            reasons.append("the board touches the mosaic's edge: part of it was left out")
+        if self.board:
+            long, short = max(self.board["size_mm"]), min(self.board["size_mm"])
+            if short and long / short < 2.4:
+                ok = False
+                reasons.append(f"the board measured {short:.0f} x {long:.0f} mm, not a breadboard's shape (about 3 to 1): "
+                               f"something beside it, a cable most likely, was taken for its edge; move it and measure "
+                               f"the board again")
+        grid = self.world.get("grid")
+        if not grid:
+            ok = False
+            reasons.append("its grid of holes was not found")
+        else:
+            reasons.append(grid.get("orientation") or "the board's orientation was not checked (no plan with a chip)")
+            if "turned back" in (grid.get("orientation") or ""):
+                reasons.append("the grid was corrected by the chip's dark body: the holes are named as the plan's")
+        worst = (summary.get("alignment") or {}).get("worst_residual_px")
+        if worst is not None and worst > 12:
+            ok = False
+            reasons.append(f"the pictures were stitched with up to {worst:.0f} px of error: holes may sit a row off")
+        if self.layout is None:
+            ok = False
+            reasons.append("there is no plan on the bench to check it against")
+        return {"can_check": ok, "reasons": reasons,
+                "note": "tell Erlan in a sentence or two whether this mosaic can carry a check of his build against the "
+                        "plan, and why; then wait for him to decide. Never start check_build on your own after a survey"}
 
     def _inspect(self, x, y):
         if self.last_mosaic is None:

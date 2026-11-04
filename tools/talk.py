@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from lunes.conductor import Conductor  # noqa: E402
 from lunes.cameras import cameras, find_camera  # noqa: E402
 from lunes.dashboard import Dashboard  # noqa: E402
-from lunes.hume import MODEL, THINK, Hume  # noqa: E402
+from lunes.hume import MODEL, PROJECTS, THINK, Hume  # noqa: E402
 from lunes.hantek import Scope, SimulatedScope, sine, square  # noqa: E402
 from lunes.lab import state as lab_state  # noqa: E402
 from lunes.mcu import SimulatedBoard  # noqa: E402
@@ -200,11 +200,25 @@ def shut_down():
     os._exit(0)
 
 
+HISTORY_KINDS = {"tu": ("Tú: ", "Tú (parar): "), "lunes": ("Lunes: ",), "result": ("   (resultado completo) ",)}
+project_log = None  # the open project's history (Hume.project_log), once Lunes is up
+
+
 def log(kind, text):
-    """One line of the session: printed for the log file and shown on the dashboard page."""
+    """One line of the session: printed for the log file, shown on the dashboard page, and what Erlan and Lunes said
+    kept in the open project's history."""
     print(text)
     if board is not None:
         board.add(kind, text.strip())
+    if project_log is not None and kind in HISTORY_KINDS:
+        said = text
+        for prefix in HISTORY_KINDS[kind]:
+            if said.startswith(prefix):
+                said = said[len(prefix):]
+        try:
+            project_log(kind, re.sub(r"\s+\(oído [\d.]+ s\)$", "", said.strip()))
+        except Exception:  # noqa: BLE001  (the history never stops the conversation)
+            pass
 
 
 def show(frame, text):
@@ -848,28 +862,77 @@ def main():
     threading.Thread(target=read_typed, daemon=True).start()
     print("(también puedes escribirle aquí; /mic off apaga el micrófono, /mic on lo enciende)", flush=True)
     # Continuity: a restart within a few hours picks the conversation up where it was, with no greeting (Erlan, 3 Nov:
-    # "ya estoy harto de que me diga buenas tardes... directamente continuidad del trabajo")
-    talk_file = ROOT / "runs" / "conversation.json"
-    resumed = False
-    try:
-        saved_talk = json.loads(talk_file.read_text(encoding="utf-8"))
-        if time.time() - float(saved_talk.get("at", 0)) < 3 * 3600 and saved_talk.get("turns"):
-            conductor.turns = saved_talk["turns"][-2 * conductor.keep_turns:]
-            worker.last = saved_talk.get("last_result") or ""
-            resumed = True
-    except (OSError, ValueError):
-        pass
+    # "ya estoy harto de que me diga buenas tardes... directamente continuidad del trabajo"). Each project keeps its
+    # own conversation (runs/projects/<id>/conversation.json); the one in runs/ from before projects goes to the
+    # project open at the first start.
+    legacy_talk = ROOT / "runs" / "conversation.json"
 
-    def save_talk():
+    def talk_file(pid):
+        return PROJECTS / pid / "conversation.json" if pid else legacy_talk
+
+    def read_talk(pid, legacy=False):
+        """A project's saved conversation; legacy=True also takes the one from before projects (only at start)."""
+        for f in (talk_file(pid), legacy_talk) if legacy else (talk_file(pid),):
+            try:
+                return json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+        return {}
+
+    def save_talk(pid=None):
+        pid = pid or hume.project_id()
+        f = talk_file(pid)
         try:
-            talk_file.write_text(json.dumps({"at": time.time(), "turns": conductor.turns, "last_job": worker.job,
-                                             "last_result": worker.last}, ensure_ascii=False), encoding="utf-8")
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({"at": time.time(), "turns": conductor.turns, "last_job": worker.job,
+                                     "last_result": worker.last}, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass
 
+    resumed = False
+    saved_talk = read_talk(hume.project_id(), legacy=True)
+    if saved_talk.get("turns"):
+        conductor.turns = saved_talk["turns"][-2 * conductor.keep_turns:]
+        worker.last = saved_talk.get("last_result") or ""
+        resumed = time.time() - float(saved_talk.get("at", 0)) < 3 * 3600
+    if hume.project_id() and legacy_talk.exists():  # the conversation from before projects now lives in its project
+        save_talk()
+        legacy_talk.replace(legacy_talk.with_name("conversation.before-projects.json"))
+
+    def show_project():
+        """The page shows the open project's name and its conversation so far."""
+        board.project = {"id": hume.project_id(), "name": hume.project_name()}
+        with board._lock:  # opened before in this session: its lines are on the page already
+            shown = any(e.get("project") == board.project["id"] for e in board.events)
+        for turn in [] if shown else conductor.turns[-12:]:
+            text = str(turn.get("content") or "").strip()
+            if not text or turn.get("role") not in ("user", "assistant"):
+                continue
+            if turn["role"] == "user":
+                board.add("tu", re.sub(r"^Erlan:\s*", "", text), at="antes")
+            else:
+                board.add("lunes", text, at="antes")
+
+    def switch_project(old, new):
+        """Another project opened (the web's list, the + button, or Lunes' own tools): the conductor's conversation
+        is kept with the old one and the new one's comes back."""
+        save_talk(old)
+        saved = read_talk(new) if new else {}
+        conductor.turns = list(saved.get("turns") or [])[-2 * conductor.keep_turns:]
+        worker.last = saved.get("last_result") or ""
+        name = hume.project_name()
+        show_project()
+        log("info", f"proyecto abierto: {name}" + ("" if conductor.turns else " (nuevo: conversación en blanco)"))
+        save_talk(new)
+
+    global project_log
+    project_log = hume.project_log
+    hume.on_project_change = switch_project
+    board.on_project_new = hume.project_new
+    show_project()
     worker.on_done = save_talk
     if resumed:
-        name = (hume.circuit or {}).get("name")
+        name = hume.project_name()
         line = f"Sigo con {name}." if name else "Sigo donde quedamos."
         log("lunes", f"Lunes: {line}")
         voice.say_soon(line)

@@ -23,6 +23,7 @@ import re
 import sys
 import threading
 import time
+import unicodedata
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,30 @@ MODEL = "muse-glimmer:30b"
 THINK = "medium"  # Erlan prefers a slower answer that is right over a fast guess
 LOG = ROOT / "runs" / "hume_calls.jsonl"
 MEMORY = ROOT / "runs" / "hume_memory.jsonl"
+# One folder per project (a file of runs/circuits): its conversation, its history of what was said and done, and the
+# versions of its circuit. Erlan, 3 Nov: "por cada proyecto una memoria y un chat nuevo... que no estemos mezclando"
+PROJECTS = ROOT / "runs" / "projects"
+QUIET_TOOLS = {"where", "check_position", "circuit_list", "circuit_guide", "inventory", "calculate", "remember",
+               "chip_catalog", "supply_read", "allow_moves"}  # not worth a line in a project's history
+
+
+def _tool_line(name, args, result):
+    """A tool's call and outcome in one short line, for a project's history."""
+    def short(v):
+        if isinstance(v, str):
+            return v if len(v) <= 60 else f"<{len(v)} caracteres>"
+        if isinstance(v, (list, dict)):
+            text = json.dumps(v, ensure_ascii=False, default=str)
+            return text if len(text) <= 80 else f"<{type(v).__name__} de {len(v)}>"
+        return v
+    said = ", ".join(f"{k}={short(v)}" for k, v in (args or {}).items())
+    result = result if isinstance(result, dict) else {}
+    if result.get("ok") is False:
+        why = result.get("error") or result.get("errors") or result.get("refused") or "falló"
+        return f"{name}({said}) falló: {str(why)[:200]}"
+    facts = [f"{k}={short(v)}" for k, v in result.items()
+             if k not in ("ok", "note", "path") and isinstance(v, (str, int, float, bool)) and v != ""][:5]
+    return f"{name}({said})" + (f" -> {'; '.join(facts)}" if facts else " -> ok")
 SURVEYS = ROOT / "runs" / "hume_surveys.json"  # the board mosaics taken so far, kept across restarts
 CONFIG = ROOT / "config" / "machine.json"
 MARGIN_MM = {"X": 10.0, "Y": 10.0, "Z": 3.0}  # kept clear of the travel ends Erlan measured
@@ -225,6 +250,10 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   dice la simulación. Sus entradas analógicas miden sus redes sin la punta: en un diagnóstico, mcu_read antes de
   pedirle a Erlan que mida. Para ver lo que imprime cualquier programa de una placa (mensajes, valores de un
   sensor), serial_monitor, como el monitor serie del Arduino IDE; si el texto sale basura, baud 'auto'.
+- Cada proyecto (la lista de circuit_list) tiene su propia conversación, memoria e historial; abrirlo con
+  circuit_load los trae. Lo que pasó en otro proyecto no es de este: no lo mezcles. remember guarda en el proyecto
+  abierto; lo que vale para todos (la máquina, sus cámaras, las calibraciones) con bench=true. Un rediseño queda en
+  el mismo proyecto (su versión anterior se guarda); un proyecto nuevo solo si Erlan lo pide (project_new).
 - Si la placa tiene que hacer algo (decidir, recordar, temporizar, contar, avisar), el programa de pines no basta:
   escribe tú el programa entero con mcu_code, como un ingeniero de firmware (circuit_guide firmware). Antes de
   cargarlo, pruébalo en seco con mcu_dry_run: todas las situaciones, los bordes entre ellas y la vuelta al inicio,
@@ -1010,9 +1039,18 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}}},
     {"type": "function", "function": {
-        "name": "remember", "description": "Save a fact for later, with the observation that supports it.",
+        "name": "remember", "description": "Save a fact for later, with the observation that supports it. It belongs "
+                                            "to the project open now; bench=true for what holds for every project "
+                                            "(the machine, its cameras and calibrations, the instruments).",
         "parameters": {"type": "object", "properties": {
-            "fact": {"type": "string"}, "evidence": {"type": "string"}}, "required": ["fact", "evidence"]}}},
+            "fact": {"type": "string"}, "evidence": {"type": "string"}, "bench": {"type": "boolean"}},
+            "required": ["fact", "evidence"]}}},
+    {"type": "function", "function": {
+        "name": "project_new",
+        "description": "Open a new, empty project with the name Erlan gives it, only when he asks for a new project: "
+                       "it gets its own conversation, memory and history, and the circuit you design next is its "
+                       "circuit. The project that was open keeps all of its own.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}},
 ]
 
 
@@ -1168,8 +1206,9 @@ class Hume:
                  if self.brain == "spark" else f"Muse Glimmer, el modelo abierto de Meta, en la RTX 3090 de esta PC")
         # what Lunes runs on, so it can say it when asked instead of guessing
         made_of = f"\nCon qué funcionas: tu cerebro es {brain}. {about}\n"
-        self.messages = [{"role": "system", "content": SYSTEM + made_of + (SPARK_HELP if self.spark else "") +
-                          self._memory_text()}]
+        self.system_base = SYSTEM + made_of + (SPARK_HELP if self.spark else "")
+        self.on_project_change, self.reset_pending = None, False  # talk.py swaps the conductor's chat on a change
+        self.messages = [{"role": "system", "content": self.system_base + self._memory_text()}]
 
     # Focus ------------------------------------------------------------------------------------------------
     def _scan_focus(self, top, bottom):
@@ -1207,14 +1246,123 @@ class Hume:
 
     # Memory ------------------------------------------------------------------------------------------------
     def _memory_text(self, last=15):
+        """What Lunes remembers: of the bench (true for every project), and of the project open now only; another
+        project's facts stay with that project."""
         if not MEMORY.exists():
             return ""
-        notes = [json.loads(line) for line in MEMORY.read_text(encoding="utf-8").splitlines() if line.strip()][-last:]
-        if not notes:
+        notes = [json.loads(line) for line in MEMORY.read_text(encoding="utf-8").splitlines() if line.strip()]
+        pid = self.project_id()
+        bench = [n for n in notes if not n.get("project")][-last:]
+        mine = [n for n in notes if pid and n.get("project") == pid][-last:]
+        if not bench and not mine:
             return ""
-        lines = "\n".join(f"- {n['fact']} (evidencia: {n['evidence']}; {n['at']})" for n in notes)
-        return ("\nLo que recuerdas de sesiones anteriores. Puede ser de otra placa que ya no está en la máquina: "
-                "compruébalo mirando antes de decirlo como cierto.\n" + lines + "\n")
+        say = lambda ns: "\n".join(f"- {n['fact']} (evidencia: {n['evidence']}; {n['at']})" for n in ns)  # noqa: E731
+        out = ""
+        if bench:
+            out += ("\nLo que recuerdas del banco, de sesiones anteriores. Puede ser de otra placa que ya no está en la "
+                    "máquina: compruébalo mirando antes de decirlo como cierto.\n" + say(bench) + "\n")
+        if mine:
+            out += "\nLo que recuerdas de este proyecto:\n" + say(mine) + "\n"
+        return out
+
+    # Projects ------------------------------------------------------------------------------------------------
+    # A project is a file of runs/circuits (its circuit, simulation and plan; the circuit is None while it is new),
+    # with a folder runs/projects/<file's stem>/: conversation.json (kept by talk.py), history.jsonl (what Erlan and
+    # Lunes said and every tool's outcome, one JSON line each) and versions/ (the circuit as it was before each change).
+    def project_id(self):
+        f = getattr(self, "circuit_file", None)
+        return f.stem if f is not None else None
+
+    def project_name(self):
+        f = getattr(self, "circuit_file", None)
+        if f is not None and f.exists():
+            try:
+                saved = json.loads(f.read_text(encoding="utf-8"))
+                return saved.get("project") or (saved.get("circuit") or {}).get("name") or f.stem
+            except (OSError, ValueError):
+                pass
+        return (self.circuit or {}).get("name")
+
+    def project_dir(self):
+        pid = self.project_id()
+        return PROJECTS / pid if pid and self.world_file else None  # a test's bench keeps no history
+
+    def project_log(self, kind, text, **more):
+        """One line in the open project's history: kind tu (Erlan), lunes, result, tool, note."""
+        folder, text = self.project_dir(), str(text or "").strip()
+        if folder is None or not text:
+            return
+        folder.mkdir(parents=True, exist_ok=True)
+        entry = {"at": datetime.now().isoformat(timespec="seconds"), "kind": kind, "text": text[:600], **more}
+        with (folder / "history.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def project_history(self, last=40):
+        folder = self.project_dir()
+        path = folder / "history.jsonl" if folder else None
+        if path is None or not path.exists():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+        return rows[-last:]
+
+    def _project_text(self):
+        name = self.project_name()
+        if not name:
+            return ""
+        who = {"tu": "Erlan", "lunes": "Lunes", "result": "Lunes (resultado)", "tool": "herramienta",
+               "note": "nota", "summary": "resumen"}
+        rows = self.project_history(40)
+        lines = "\n".join(f"- {r['at'][5:16].replace('T', ' ')} {who.get(r['kind'], r['kind'])}: {r['text'][:300]}"
+                          for r in rows)
+        return (f"\nProyecto abierto: {name}. Cada proyecto tiene su conversación, su memoria y su historial: lo de "
+                f"otros proyectos no es de este, no lo mezcles.\n" +
+                (f"Historial de este proyecto, lo último:\n{lines}\n" if lines else
+                 "Es un proyecto nuevo: todavía no hay historial ni circuito.\n"))
+
+    def _reset_conversation(self):
+        """The worker's own conversation starts again for the project open now: the system prompt with this project's
+        memory and history, nothing of the other project's turns."""
+        self.messages = [{"role": "system", "content": self.system_base + self._memory_text() + self._project_text()}]
+        self.reset_pending = False
+
+    def _project_changed(self, old):
+        if old == self.project_id():
+            return
+        # inside a job the conversation is still in use: it starts again before the next request
+        self.reset_pending = True
+        if self.on_project_change:
+            self.on_project_change(old, self.project_id())
+
+    def project_new(self, name):
+        """A new, empty project named by Erlan: its own file in the list, conversation, memory and history."""
+        name = re.sub(r"\s+", " ", str(name or "")).strip()[:80]
+        if not name:
+            return {"ok": False, "error": "the project needs a name"}
+        if not self.world_file:
+            return {"ok": False, "error": "no bench to keep a project on"}
+        old = self.project_id()
+        folder = CIRCUIT.parent / "circuits"
+        folder.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", unicodedata.normalize("NFKD", name.lower()).encode("ascii", "ignore")
+                      .decode()).strip("-")[:40] or "proyecto"
+        path = folder / f"{datetime.now():%Y%m%d-%H%M%S}-{slug}.json"
+        saved = {"project": name, "circuit": None, "expected": None, "layout": None,
+                 "saved_at": datetime.now().isoformat(timespec="minutes")}
+        path.write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
+        self.circuit = self.expected = self.layout = self.layout_for = None
+        self.diagnosis = self.fault_table = self.goals = None
+        self.guide = {"step": 0, "holes": [], "says": ""}
+        self.circuit_file = path
+        CIRCUIT.write_text(json.dumps({**saved, "file": path.name}, ensure_ascii=False, indent=1), encoding="utf-8")
+        self.project_log("note", f"Proyecto creado: {name}")
+        self._project_changed(old)
+        return {"ok": True, "project": name, "file": path.name,
+                "note": "a new project, with nothing in it yet: the circuit you design or set now is its circuit"}
 
     # Moves -------------------------------------------------------------------------------------------------
     def _z_floor(self):
@@ -1450,7 +1598,8 @@ class Hume:
         goals = verify(sim, as_spec(spec)) if spec else []
         self.circuit, self.expected, self.diagnosis, self.fault_table = circuit, sim, None, None
         self.goals = goals
-        self.circuit_file = None  # a new circuit: a new file in the list
+        # the open project keeps its file: a redesign is a new version of it (kept in its folder), not a new project;
+        # a new project only when Erlan asks for one (project_new, the web's + button)
         self._save_circuit()
 
         def table():  # ready by the time Erlan has built it or picked up the probe
@@ -2612,41 +2761,53 @@ class Hume:
             self.world.update(json.loads(self.world_file.read_text(encoding="utf-8")))
         if CIRCUIT.exists():
             saved = json.loads(CIRCUIT.read_text(encoding="utf-8"))
-            self.circuit, self.expected = saved["circuit"], saved["expected"]
-            if saved.get("layout"):  # the plan Erlan built from: kept, never laid out again after a restart
+            self.circuit, self.expected = saved.get("circuit"), saved.get("expected")
+            if saved.get("layout") and self.circuit:  # the plan Erlan built from: kept, never laid out again
                 self.layout, self.layout_for = saved["layout"], self.circuit
             # which file of the list this is: without it, after a restart no saved circuit was "current" and Lunes
             # asked Erlan which of two same-named circuits was open (3 Nov, 15:22)
             folder = CIRCUIT.parent / "circuits"
-            for f in sorted(folder.glob("*.json"), reverse=True) if folder.exists() else []:
-                try:
-                    other = json.loads(f.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                if other.get("circuit") == self.circuit:
-                    self.circuit_file = f
-                    break
+            named = folder / saved["file"] if saved.get("file") else None
+            if named is not None and named.exists():  # saved since projects: it says which file it is
+                self.circuit_file = named
+            elif self.circuit is not None and folder.exists():  # older: the file whose circuit is this one
+                for f in sorted(folder.glob("*.json"), reverse=True):
+                    try:
+                        other = json.loads(f.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        continue
+                    if other.get("circuit") == self.circuit:
+                        self.circuit_file = f
+                        break
         self._place_board()
         self.m.no_go = self._no_go
+        self._reset_conversation()  # the open project's memory and history in the worker's prompt
 
     def _save_circuit(self):
         """The circuit on the bench, its simulation and its breadboard plan, on disk: runs/circuit.json (what a restart
         comes back to) and a copy in runs/circuits/ (the list Erlan picks from with circuit_list / circuit_load)."""
         if not self.world_file or self.circuit is None:  # a test's circuit is not the one on the bench
             return
-        saved = {"circuit": self.circuit, "expected": self.expected,
-                 "layout": self.layout if self.layout_for is self.circuit else None,
-                 "saved_at": datetime.now().isoformat(timespec="minutes")}
-        text = json.dumps(saved, ensure_ascii=False, indent=1)
-        CIRCUIT.parent.mkdir(exist_ok=True)
-        CIRCUIT.write_text(text, encoding="utf-8")
         folder = CIRCUIT.parent / "circuits"
-        folder.mkdir(exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
         slug = re.sub(r"[^a-z0-9]+", "-", (self.circuit.get("name") or "circuit").lower()).strip("-")[:40] or "circuit"
-        # the same project keeps its file (a new circuit set circuit_file to None first)
-        self.circuit_file = self.circuit_file if getattr(self, "circuit_file", None) and self.circuit_file.exists() \
-            else folder / f"{datetime.now():%Y%m%d-%H%M}-{slug}.json"
-        self.circuit_file.write_text(text, encoding="utf-8")
+        # the open project keeps its file; with no project open, this circuit starts one
+        first = getattr(self, "circuit_file", None) is None or not self.circuit_file.exists()
+        if first:
+            self.circuit_file = folder / f"{datetime.now():%Y%m%d-%H%M}-{slug}.json"
+        before = {} if first else json.loads(self.circuit_file.read_text(encoding="utf-8"))
+        if before.get("circuit") and before["circuit"] != self.circuit:  # the project's circuit as it was, kept
+            versions = PROJECTS / self.circuit_file.stem / "versions"
+            versions.mkdir(parents=True, exist_ok=True)
+            (versions / f"{datetime.now():%Y%m%d-%H%M%S}.json").write_text(
+                json.dumps(before, ensure_ascii=False, indent=1), encoding="utf-8")
+        saved = {"project": before.get("project") or self.circuit.get("name"), "circuit": self.circuit,
+                 "expected": self.expected, "layout": self.layout if self.layout_for is self.circuit else None,
+                 "saved_at": datetime.now().isoformat(timespec="minutes")}
+        self.circuit_file.write_text(json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
+        CIRCUIT.parent.mkdir(exist_ok=True)
+        CIRCUIT.write_text(json.dumps({**saved, "file": self.circuit_file.name}, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
 
     def _circuit_list(self):
         folder = CIRCUIT.parent / "circuits"
@@ -2657,16 +2818,21 @@ class Hume:
             except (OSError, ValueError):
                 continue
             c = saved.get("circuit") or {}
-            out.append({"file": f.name, "name": c.get("name"), "saved_at": saved.get("saved_at"),
+            out.append({"file": f.name, "name": saved.get("project") or c.get("name"), "circuit": c.get("name"),
+                        "saved_at": saved.get("saved_at"), "empty": not c,
                         "parts": [f"{p.get('ref')} {p.get('value') or p.get('model') or p.get('kind')}" for p in c.get("parts", [])],
                         "plan": bool(saved.get("layout")),
                         "current": getattr(self, "circuit_file", None) is not None and f == self.circuit_file})
-        on_bench = None if self.circuit is None else {
-            "name": self.circuit.get("name"), "file": getattr(self, "circuit_file", None) and self.circuit_file.name,
-            "parts": [f"{p.get('ref')} {p.get('value') or p.get('model') or p.get('kind')}" for p in self.circuit.get("parts", [])]}
+        open_file = getattr(self, "circuit_file", None)
+        on_bench = None if self.circuit is None and open_file is None else {
+            "project": self.project_name(), "name": (self.circuit or {}).get("name"),
+            "file": open_file and open_file.name, "empty": self.circuit is None,
+            "parts": [f"{p.get('ref')} {p.get('value') or p.get('model') or p.get('kind')}"
+                      for p in (self.circuit or {}).get("parts", [])]}
         return {"ok": True, "on_the_bench": on_bench, "circuits": out,
-                "note": "on_the_bench is the circuit open now, the one Erlan has: use it, do not ask which unless he says "
-                        "it is another; circuit_load only when he picks another"}, None
+                "note": "each entry is a project; on_the_bench is the one open now, the one Erlan has: use it, do not "
+                        "ask which unless he says it is another; circuit_load only when he picks another. An empty "
+                        "project has no circuit yet: the next one you design is its circuit"}, None
 
     def layout_edit(self, edited):
         """Erlan's own breadboard, edited by hand in the web lab (leads moved, wires added or removed): the circuit is
@@ -2702,24 +2868,39 @@ class Hume:
         if not file or path.parent != folder or not path.exists():
             return {"ok": False, "error": "file must be one of circuit_list's"}, None
         saved = json.loads(path.read_text(encoding="utf-8"))
-        self.circuit, self.expected = saved["circuit"], saved.get("expected")
-        self.layout = saved.get("layout")
+        old = self.project_id()
+        self.circuit, self.expected = saved.get("circuit"), saved.get("expected")
+        self.layout = saved.get("layout") if self.circuit else None
         self.layout_for = self.circuit if self.layout else None
         self.guide = {"step": 0, "holes": [], "says": ""}
         self.diagnosis = self.fault_table = None
         self.circuit_file = path
+        name = saved.get("project") or (self.circuit or {}).get("name") or path.stem
+        if self.circuit is None:  # a project with no circuit yet
+            if self.world_file:
+                CIRCUIT.write_text(json.dumps({**saved, "file": path.name}, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
+            self.project_log("note", f"Abrí el proyecto {name}")
+            self._project_changed(old)
+            return {"ok": True, "project": name, "empty": True,
+                    "note": "a project with no circuit yet: the circuit you design or set now is its circuit"}, None
         if self.expected is None:
             try:
                 from lunes.simulator import expected
                 self.expected = expected(self.circuit)
             except Exception as e:  # noqa: BLE001
                 return {"ok": False, "error": f"loaded, but it does not simulate now: {e}"}, None
-        self._save_circuit()
+            self._save_circuit()
+        elif self.world_file:  # what a restart comes back to; the project's own file stays as it was saved
+            CIRCUIT.write_text(json.dumps({**saved, "file": path.name}, ensure_ascii=False, indent=1), encoding="utf-8")
         self._place_board()
-        return {"ok": True, "name": self.circuit.get("name"), "parts": len(self.circuit["parts"]),
+        self.project_log("note", f"Abrí el proyecto {name}")
+        self._project_changed(old)
+        return {"ok": True, "project": name, "name": self.circuit.get("name"), "parts": len(self.circuit["parts"]),
                 "plan": bool(self.layout), "saved_at": saved.get("saved_at"),
-                "note": "this is the circuit on the bench now, with the plan Erlan built from; check his build against "
-                        "THIS plan, hole by hole as nodes (holes_connected)"}, None
+                "note": "this is the project and circuit on the bench now, with the plan Erlan built from, its own "
+                        "conversation and history; check his build against THIS plan, hole by hole as nodes "
+                        "(holes_connected)"}, None
 
     def _no_go(self, target):
         """The last guard on a move, whatever asked for it: near the chip on the map the head never goes below the
@@ -3854,7 +4035,17 @@ class Hume:
 
     # Tools -------------------------------------------------------------------------------------------------
     def run_tool(self, name, args):
-        """Runs one tool; returns (result for the model, image to show the model or None)."""
+        """Runs one tool; returns (result for the model, image to show the model or None). Its outcome goes into the
+        open project's history."""
+        result, image = self._run_tool(name, args)
+        if name not in QUIET_TOOLS and self.world_file:
+            try:
+                self.project_log("tool", _tool_line(name, args, result), tool=name)
+            except Exception:  # noqa: BLE001  (the history never stops the work)
+                pass
+        return result, image
+
+    def _run_tool(self, name, args):
         if self.on_fallback and name in MOVING_TOOLS:
             return {"ok": False, "refused": self.fallback_line, "error": self.fallback_line}, None
         if self.hold and name in MOVING_TOOLS:
@@ -4167,10 +4358,14 @@ class Hume:
         if name == "calculate":
             from lunes.calc import run as calculate
             return calculate(args), None
+        if name == "project_new":
+            return self.project_new(args.get("name")), None
         if name == "remember":
             MEMORY.parent.mkdir(exist_ok=True)
             note = {"at": datetime.now().isoformat(timespec="seconds"), "fact": args["fact"],
                     "evidence": args["evidence"]}
+            if not args.get("bench") and self.project_id():  # of this project; the bench's facts are for all
+                note["project"] = self.project_id()
             with MEMORY.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(note, ensure_ascii=False) + "\n")
             return {"ok": True}, None
@@ -4370,6 +4565,8 @@ class Hume:
         Setting self.stop (Erlan said "para") ends it at the next step. on_thought(text) gets what the agent says it
         thinks alongside a tool call, so Erlan hears its reasoning while it works."""
         self.stop.clear()
+        if self.reset_pending:  # the project changed since the last request: its own conversation from here
+            self._reset_conversation()
         self.request, self.status = text, "pensando"
         self.brain_seconds, self.brain_steps = 0.0, 0
         # which way each axis goes as Erlan sees it, read now: a correction he made a minute ago already counts

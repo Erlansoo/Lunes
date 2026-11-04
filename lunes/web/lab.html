@@ -176,6 +176,17 @@ svg .fault.p3 { stroke:#e3c21a; animation:blink 1.6s step-end infinite; } svg .f
 .project .name { font-weight:600; } .project .name small { font-weight:500; color:var(--accent); margin-left:6px; }
 .project .sub { color:var(--muted); font-size:12px; margin-top:2px; overflow-wrap:anywhere; }
 .project .mini { margin-top:5px; } .project .mini svg { max-height:120px; }
+/* a new project: the one green thing on the page, so it is found */
+.live.new { color:#06200f; background:var(--ok); border-color:var(--ok); font-weight:800; font-size:14px; line-height:1; padding:2px 8px;
+  box-shadow:0 0 0 0 rgba(76,195,138,.6); animation:newglow 2.4s ease-out infinite; }
+.live.new:hover { color:#000; background:#6ee0a8; }
+@keyframes newglow { 0% { box-shadow:0 0 0 0 rgba(76,195,138,.55); } 70% { box-shadow:0 0 0 7px rgba(76,195,138,0); } 100% { box-shadow:0 0 0 0 rgba(76,195,138,0); } }
+@media (prefers-reduced-motion:reduce){ .live.new { animation:none; } }
+.pname { font-size:12px; color:var(--accent); font-weight:600; max-width:22ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.menu.small { width:360px; left:calc(50% - 180px); top:18vh; }
+.newform { display:flex; gap:8px; padding:10px 12px; } .newform input { flex:1; min-width:0; font:inherit; font-size:13px; color:var(--ink);
+  background:var(--panel); border:1px solid var(--line); border-radius:5px; padding:5px 8px; } .newform input:focus { outline:none; border-color:var(--ok); }
+.newform .live.new { animation:none; font-size:12.5px; padding:4px 12px; }
 .stepnow { padding:7px 10px; border-radius:6px; background:#2a1a1a; border:1px solid #6b2f2a; font-size:13px; margin-top:6px; }
 .stepnow b { color:#ff6b57; font-family:var(--mono); }
 .serial { font:12px/1.35 var(--mono); color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; max-height:7em; overflow:auto; }
@@ -228,6 +239,8 @@ body:not(.details) .detail { display:none; }
   <div class="group" id="models"></div>
 </div>
 <div class="menu" id="projectsMenu" hidden><div class="bar" id="projectsBar"><span data-t="projects"></span><button type="button" id="projectsClose" aria-label="Cerrar">✕</button></div><div class="list" id="projectsList"></div></div>
+<div class="menu small" id="newMenu" hidden><div class="bar"><span data-t="newProject"></span><button type="button" id="newClose" aria-label="Cerrar">✕</button></div>
+  <form class="newform" id="newForm"><input id="newName" maxlength="80" autocomplete="off"><button class="live new" type="submit" data-t="create"></button></form><div class="hint" id="newNote"></div></div>
 <main>
   <section class="panel" id="view">
     <div class="tabs" role="tablist" id="tabs"></div>
@@ -257,7 +270,7 @@ body:not(.details) .detail { display:none; }
   </section>
 
   <section class="panel" id="bench">
-    <div class="head"><h2 data-t="benchTitle"></h2><span class="zoomctl" id="boardZoom" hidden><button type="button" id="boardOut">−</button><span class="num" id="boardPct">100 %</span><button type="button" id="boardIn">+</button><button type="button" id="boardReset">⟲</button></span><button class="live" id="projects" type="button" data-t="projects"></button><button class="live" id="editBoard" type="button" hidden></button><button class="live" id="errors" type="button" data-t="errors" hidden></button><span class="side" id="benchInfo"></span></div>
+    <div class="head"><h2 data-t="benchTitle"></h2><span class="pname" id="projectName"></span><span class="zoomctl" id="boardZoom" hidden><button type="button" id="boardOut">−</button><span class="num" id="boardPct">100 %</span><button type="button" id="boardIn">+</button><button type="button" id="boardReset">⟲</button></span><button class="live" id="projects" type="button" data-t="projects"></button><button class="live new" id="projectNew" type="button">+</button><button class="live" id="editBoard" type="button" hidden></button><button class="live" id="errors" type="button" data-t="errors" hidden></button><span class="side" id="benchInfo"></span></div>
     <div class="edittools" id="editTools" hidden><span data-t="wireColor"></span><span id="editColors"></span><button class="live" id="editDelete" type="button" data-t="del"></button><button class="live" id="editUndo" type="button" data-t="undo"></button><button class="live" id="editSave" type="button" data-t="save"></button><button class="live" id="editCancel" type="button" data-t="cancel"></button><span class="side" id="editNote"></span></div>
     <div class="editresult" id="editResult" hidden></div>
     <div class="body" id="benchBody"></div>
@@ -293,7 +306,9 @@ const TEXT = {
       askLunes:"Escríbele a Lunes…", askNone:"No hay conversación: Lunes no está corriendo con voz", askFail:"No se pudo mandar",
       micOn:"Micrófono encendido: clic para silenciarlo", micOff:"Micrófono silenciado: clic para encenderlo", micNone:"Sin sesión de voz: el micrófono no se controla desde aquí",
       zoomIn:"Acercar", zoomOut:"Alejar", zoomReset:"Volver al 100 %", boardZoomHint:"Ctrl + rueda para acercar o alejar; arrastra para moverte; doble clic vuelve al 100 %",
-      projects:"Proyectos", projectsNone:"No hay circuitos guardados", projectsFail:"No pude leer la lista", loadAsk:"¿Poner este circuito en el banco?",
+      projects:"Proyectos", projectsNone:"No hay proyectos guardados", projectsFail:"No pude leer la lista", loadAsk:"¿Abrir este proyecto? Trae su circuito, su conversación y su historial.",
+      newProject:"Proyecto nuevo", newTitle:"Proyecto nuevo: su propia conversación, memoria e historial", newPlaceholder:"Nombre del proyecto",
+      create:"Crear", newFail:"No se pudo crear", emptyProject:"sin circuito todavía", projectNow:"Proyecto",
       loadFail:"No se pudo cargar", loadNone:"No hay banco donde cargarlo: Lunes no está corriendo", onBench:"en el banco", noPlan:"sin plan", loading:"Leyendo…",
       editBoard:"Editar", editClose:"Cerrar edición", wireColor:"Cable", del:"Eliminar", undo:"Deshacer", save:"Guardar", cancel:"Cancelar",
       editHint:"Arrastra la pata de una pieza a otro agujero (un chip entero, por cualquier pata); clic en dos agujeros pone un cable; clic en un cable y Eliminar lo quita",
@@ -321,7 +336,9 @@ const TEXT = {
       askLunes:"Type to Lunes…", askNone:"No conversation: Lunes is not running with voice", askFail:"Could not send",
       micOn:"Microphone on: click to mute it", micOff:"Microphone muted: click to turn it on", micNone:"No voice session: the microphone is not controlled from here",
       zoomIn:"Zoom in", zoomOut:"Zoom out", zoomReset:"Back to 100 %", boardZoomHint:"Ctrl + wheel to zoom; drag to pan; double-click goes back to 100 %",
-      projects:"Projects", projectsNone:"No saved circuits", projectsFail:"Could not read the list", loadAsk:"Put this circuit on the bench?",
+      projects:"Projects", projectsNone:"No saved projects", projectsFail:"Could not read the list", loadAsk:"Open this project? It brings its circuit, its conversation and its history.",
+      newProject:"New project", newTitle:"New project: its own conversation, memory and history", newPlaceholder:"Project name",
+      create:"Create", newFail:"Could not create it", emptyProject:"no circuit yet", projectNow:"Project",
       loadFail:"Could not load it", loadNone:"No bench to load it on: Lunes is not running", onBench:"on the bench", noPlan:"no plan", loading:"Reading…",
       editBoard:"Edit", editClose:"Close editing", wireColor:"Wire", del:"Delete", undo:"Undo", save:"Save", cancel:"Cancel",
       editHint:"Drag a part's lead to another hole (a whole chip by any pin); click two holes to add a wire; click a wire and Delete to remove it",
@@ -357,7 +374,7 @@ const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return
                 set(k,v){ try { localStorage.setItem(k,v); } catch(e){} },
                 remove(k){ try { localStorage.removeItem(k); } catch(e){} } };
 let lang = TEXT[store.get("lunes.lang")] ? store.get("lunes.lang") : "es", T = TEXT[lang];
-let lab = null, next = 0, seenVersion = -1, chosenAt = 0, view = "microscope", live = { speaking:false, busy:false, status:"" };
+let projectId, lab = null, next = 0, seenVersion = -1, chosenAt = 0, view = "microscope", live = { speaking:false, busy:false, status:"" };
 
 const VIEWS = [["microscope","/img/microscope.jpg",250], ["bench","/img/bench.jpg",500], ["kinect","/img/kinect.jpg",1200], ["analysis","/img/seen.jpg",0]];
 const MODELS = [["Muse Spark","api","spark"], ["SAM 3.1","api","sam"], ["Omnilingual ASR","pc","ear"], ["MMS-TTS","pc","voice"], ["Muse Glimmer","pc","glimmer"]];
@@ -376,6 +393,7 @@ function translate(){
   document.documentElement.lang = lang;
   document.querySelectorAll("[data-t]").forEach(e => e.textContent = T[e.dataset.t]);
   $("lang").textContent = lang === "es" ? "EN" : "ES";
+  $("projectNew").title = T.newTitle; $("projectNew").setAttribute("aria-label", T.newTitle); $("newName").placeholder = T.newPlaceholder;
   $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details;
   buildTabs(); showState(); layoutButtons(); $("askText").placeholder = T.askLunes; showMic(micState);
   $("boardIn").title = T.zoomIn; $("boardOut").title = T.zoomOut; $("boardReset").title = T.zoomReset; if (boardBox) boardBox.title = T.boardZoomHint;
@@ -776,6 +794,7 @@ $("big").addEventListener("click", e => {
 });
 
 function addEvent(e){
+  if (e.project !== undefined && e.project !== projectId) return;  // another project's conversation stays with it
   const log = $("log"), box = $("logBox"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
   let n;
   if (e.kind === "tu" || e.kind === "lunes"){ n = el("div","msg" + (e.kind === "tu" ? " you" : "")); n.append(el("time","num",`${e.kind === "tu" ? T.you : T.lunes} · ${e.at}`), el("div","",e.text)); }
@@ -789,7 +808,12 @@ async function poll(){
   let wait = 700;
   try {
     const r = await (await fetch("/events?since=" + next)).json();
+    const pid = r.project ? r.project.id : null;
     if (r.next < next){ next = 0; wait = 0; }  // Lunes was restarted and counts from zero again: read it from its start
+    else if (pid !== projectId){  // another project is open: its own conversation, read again from the start
+      projectId = pid; $("log").replaceChildren(); next = 0; wait = 0;
+      $("projectName").textContent = r.project && r.project.name ? r.project.name : ""; $("projectName").title = $("projectName").textContent;
+    }
     else {
       r.events.forEach(addEvent); next = r.next;
       live = { speaking:r.speaking, busy:r.busy, status:r.status }; showState();
@@ -870,7 +894,7 @@ $("veil").onclick = () => float(floating);
 addEventListener("keydown", e => {
   if (editing && (e.key === "Delete" || e.key === "Backspace") && editing.picked !== null && document.activeElement.tagName !== "INPUT"){ editDelete(); return; }
   if (e.key !== "Escape") return;
-  if (!$("projectsMenu").hidden) showProjects(false); else if (editing && (editing.start || editing.picked !== null)){ editing.start = null; editing.picked = null; editNote(""); editDraw(); } else if (floating) float(floating);
+  if (!$("newMenu").hidden) showNew(false); else if (!$("projectsMenu").hidden) showProjects(false); else if (editing && (editing.start || editing.picked !== null)){ editing.start = null; editing.picked = null; editNote(""); editDraw(); } else if (floating) float(floating);
 });
 const zooms = {};
 function zoomable(box, targets, key, ctrl){
@@ -962,7 +986,8 @@ async function showProjects(open){
   for (const item of list){
     const b = el("button","project" + (item.current ? " now" : "")); b.type = "button";
     const name = el("div","name",item.name || item.file); if (item.current) name.append(el("small","",T.onBench)); b.append(name);
-    b.append(el("div","sub",[when(item.saved_at), (item.parts || []).join(" · "), item.plan ? "" : T.noPlan].filter(Boolean).join(" · ")));
+    b.append(el("div","sub",[when(item.saved_at), item.empty ? T.emptyProject : "", item.circuit && item.circuit !== item.name ? item.circuit : "",
+      (item.parts || []).join(" · "), item.plan || item.empty ? "" : T.noPlan].filter(Boolean).join(" · ")));
     if (item.plan){ const mini = el("div","mini breadboard"); b.append(mini);
       fetch("/runs/circuits/" + encodeURIComponent(item.file)).then(r => r.json()).then(saved => { const d = savedBoard(saved); if (d) mini.append(drawBreadboard(d, null, (saved.circuit || {}).supply_v)); }).catch(() => {}); }
     b.onclick = () => loadProject(item);
@@ -980,6 +1005,25 @@ async function loadProject(item){
   } catch (err) { note.className = "hint bad"; note.textContent = T.loadFail; }
 }
 $("projects").onclick = () => showProjects($("projectsMenu").hidden);
+// a new project: named here, then open, with a conversation, memory and history of its own (POST /project/new)
+function showNew(open){
+  $("newMenu").hidden = !open; $("newNote").textContent = ""; $("newNote").className = "hint";
+  if (open){ showProjects(false); $("newName").value = ""; setTimeout(() => $("newName").focus(), 0); }
+}
+$("projectNew").onclick = () => showNew($("newMenu").hidden);
+$("newClose").onclick = () => showNew(false);
+$("newName").addEventListener("keydown", e => { if (e.key === "Escape"){ e.stopPropagation(); showNew(false); } });
+$("newForm").onsubmit = async e => {
+  e.preventDefault();
+  const name = $("newName").value.trim(); if (!name){ $("newName").focus(); return; }
+  const note = $("newNote"); note.className = "hint"; note.textContent = T.loading;
+  try {
+    const r = await fetch("/project/new", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name})});
+    const out = await r.json().catch(() => ({}));
+    if (r.ok && out.ok){ boardView.cx = boardView.cy = null; showNew(false); }  // the next poll brings the new project
+    else { note.className = "hint bad"; note.textContent = r.status === 503 ? T.loadNone : `${T.newFail}: ${out.error || r.status}`; }
+  } catch (err) { note.className = "hint bad"; note.textContent = T.newFail; }
+};
 $("errors").onclick = () => { errorsOn = !errorsOn; if (lab) renderBench(lab); };
 $("projectsClose").onclick = () => showProjects(false);
 (() => { // the window goes where its bar is dragged, within the screen

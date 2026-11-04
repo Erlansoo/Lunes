@@ -87,8 +87,8 @@
     "x_note": "2026-11-02: Erlan said X can go about 7 cm further towards its motor, which is the X 0 side: the travel starts at X -70"
   },
   "como_lo_ve_erlan": {
-    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la m\u00e1quina (29/10, por la calibraci\u00f3n del Kinect)",
-    "Y": "+Y va hacia adelante y -Y hacia atr\u00e1s, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atr\u00e1s)",
+    "X": "+X va hacia la izquierda vista desde el Kinect, de frente a la máquina (29/10, por la calibración del Kinect)",
+    "Y": "+Y va hacia adelante y -Y hacia atrás, como lo dice Erlan (28/10: Erlan dijo que +Y va hacia adelante y -Y hacia atrás)",
     "Z": "+Z sube el microscopio, -Z lo baja hacia la placa"
   },
   "laser": {
@@ -126,32 +126,32 @@
   "kinect_head": {
     "P": [
       [
-        -242.01970095296522,
-        -143.11815254081446,
-        354.85885977168664,
-        75137.0336499663
+        -528.1064530478611,
+        -307.59073523490827,
+        -108.84010666909933,
+        195407.96112636782
       ],
       [
-        1.875303349982832,
-        -38.0957790258314,
-        -70.83462627400462,
-        63429.970872763006
+        13.442789096760036,
+        -77.80146249722759,
+        -609.7416483868147,
+        155073.14406630545
       ],
       [
-        -0.010489805903091636,
-        -0.4517925252726172,
-        0.8920613645259541,
-        199.99807815489444
+        0.00499343545542309,
+        -0.9569415675343784,
+        -0.29023766455647904,
+        518.6203187375547
       ]
     ],
     "model": "camera",
-    "typical_error_mm": 3.7,
+    "typical_error_mm": 0.5,
     "tolerance_mm": {
-      "X": 12.6,
-      "Y": 13.1,
+      "X": 5.0,
+      "Y": 5.0,
       "Z": 1000000000.0
     },
-    "points": 17,
+    "points": 18,
     "covers_mm": {
       "X": [
         -30.0,
@@ -162,12 +162,12 @@
         -32.5
       ],
       "Z": [
-        25.0,
-        47.3
+        14.5,
+        41.5
       ]
     },
-    "at": "2026-11-02T23:51",
-    "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column and row, at the height the machine knows, give X and Y (Z is not checked); made by calibrate_kinect. Nov 3: X tolerance widened to the worst error of this calibration (12.6 mm) after a false hold at a corner; the next calibrate_kinect sets it from its own held-out misses"
+    "at": "2026-11-03T21:12",
+    "note": "the Kinect colour camera's 3 x 4 projection over the whole work area: the ring light's column and row, at the height the machine knows, give X and Y (Z is not checked); made by calibrate_kinect"
   },
   "scope": {
     "zero": {

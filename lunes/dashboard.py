@@ -48,6 +48,9 @@ class Dashboard:
         self.on_text = self.on_mic = self.mic_is_on = None  # talk.py: a line typed for Lunes, the mic's switch, its state
         self.circuits = self.on_circuit_load = None  # talk.py: the saved circuits (runs/circuits/) and loading one on the bench
         self.on_layout_edit = None  # talk.py: the breadboard as Erlan edited it by hand; rebuilds and keeps the circuit
+        self.on_project_new = None  # talk.py: a new, empty project with the name Erlan typed
+        # the project open now: every event is marked with it, so the page shows each project's own conversation
+        self.project = {"id": None, "name": None}
         self.mosaic = None  # gives the last mosaic's picture, for the machine's map
         self.runs = RUNS  # the tests point it at a folder of their own
         self.events = deque(maxlen=500)
@@ -62,9 +65,10 @@ class Dashboard:
         self.url = f"http://127.0.0.1:{port}"
 
     # what Lunes reports ------------------------------------------------------------------------------------------
-    def add(self, kind, text):
+    def add(self, kind, text, at=None):
         with self._lock:
-            self.events.append({"n": self.count, "at": time.strftime("%H:%M:%S"), "kind": kind, "text": text})
+            self.events.append({"n": self.count, "at": at or time.strftime("%H:%M:%S"), "kind": kind, "text": text,
+                                "project": self.project.get("id")})
             self.count += 1
 
     def tapped(self, x, y):
@@ -149,6 +153,13 @@ class Dashboard:
                     if board.on_circuit_load is None:
                         return self._json({"ok": False, "error": "no bench to load it on"}, 503)
                     return self._json(board.on_circuit_load(file))
+                if path == "/project/new":
+                    name = str(data.get("name", "")).strip()
+                    if not name:
+                        return self._json({"ok": False, "error": "no name"}, 400)
+                    if board.on_project_new is None:
+                        return self._json({"ok": False, "error": "no bench to keep a project on"}, 503)
+                    return self._json(board.on_project_new(name))
                 self._nothing()
 
             def do_GET(self):
@@ -193,7 +204,7 @@ class Dashboard:
                         events = [e for e in board.events if e["n"] >= since]
                         body = {"events": events, "next": board.count, "status": board.status, "busy": board.busy,
                                 "speaking": bool(board.speaking()), "seen_version": board.seen_version,
-                                "seen_label": board.seen_label}
+                                "seen_label": board.seen_label, "project": dict(board.project)}
                     body["mic"] = bool(board.mic_is_on()) if board.mic_is_on else None  # None: no voice session
                     if board.lab is not None:
                         try:

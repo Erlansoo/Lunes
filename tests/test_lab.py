@@ -218,7 +218,7 @@ def trimmed():
     ok(min(heights) > 14, f"focusing on a board stops at the first sharp surface: lowest Z {min(heights):.2f}, not the table")
     source = (ROOT / "lunes" / "hume.py").read_text("utf-8")
     offered = re.findall(r'"name":\s*"([a-z_0-9]+)",\s*\n?\s*"description"', source)
-    body = inspect.getsource(Hume.run_tool)
+    body = inspect.getsource(Hume._run_tool)  # run_tool wraps it, to keep each outcome in the project's history
     ok(len(offered) > 50 and not [t for t in offered if f'"{t}"' not in body], "every tool offered to the model is connected to its code")
     print("What Lunes has in mind")
     chip_seen = {"center": (320.0, 240.0), "corners": [(120, 110), (520, 110), (520, 370), (120, 370)], "size_mm": (10.0, 7.0),

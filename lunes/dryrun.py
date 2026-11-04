@@ -556,8 +556,11 @@ def dry_run(circuit, ref, cases, ms=1000, simulate=None):
     settled = new == programs
     if rc not in (0,) and not segs[-1]["ended"]:
         stuck = next((k for k, s in enumerate(segs) if not s["ended"]), 0)
+        # killed for its CPU time: timeout's 124, or SIGKILL / SIGXCPU as the shell (128 + n), Python (-n) or WSL (n)
+        # report it
+        signal = -rc if rc < 0 else rc - 128 if rc > 128 else rc
         why = ("it ran out of CPU time: an endless loop that never reads a pin or the time (a while loop "
-               "waiting for something that cannot change)" if rc in (9, 24, 124, 137, 152) else
+               "waiting for something that cannot change)" if rc == 124 or signal in (9, 24) else
                f"it crashed (exit code {rc}): an array out of bounds, a null pointer, or dividing by zero")
         return {"ok": False, "stage": "run", "error": f"the code stopped answering in case {stuck + 1} "
                                                       f"({cases[stuck].get('label', '')}): {why}",

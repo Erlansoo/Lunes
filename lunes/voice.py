@@ -22,7 +22,14 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import sounddevice as sd
+
+try:
+    import sounddevice as sd
+except Exception as _no_sound:  # a machine with no sound system (the tests on GitHub): the text helpers still work
+    class _NoSound:
+        def __getattr__(self, name, why=str(_no_sound)):
+            raise RuntimeError(f"no sound system on this machine: {why}")
+    sd = _NoSound()
 
 ROOT = Path(__file__).resolve().parent.parent
 MMS_VOICE = ROOT / "models" / "mms" / "vits-mms-spa"  # Meta's open MMS-TTS Spanish voice

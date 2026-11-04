@@ -166,12 +166,13 @@ def real_pictures():
     given, must be the right one (it is on the right in both)."""
     print("The real 555 on the breadboard")
     here = Path(__file__).resolve().parent / "pictures"
-    for name in ("dip8_555_mosaic.jpg",):
+    # the second: two resistors' legs over it, taken with the Nov 4 calibration
+    for name, ppm in (("dip8_555_mosaic.jpg", PPM), ("dip8_555_legs_over.jpg", 37.9), ("dip8_555_arc_right.jpg", 34.0)):
         img = cv2.imread(str(here / name))
         if img is None:
             ok(False, f"{name} is missing")
             continue
-        found = chip.find_chip(img, PPM)
+        found = chip.find_chip(img, ppm)
         ok(found is not None and not found["cut_by_edge"] and 8.5 < found["size_mm"][0] < 11 and 6 < found["size_mm"][1] < 9.5,
            f"{name}: body " + (f"{found['size_mm']} mm, cut {found['cut_by_edge']}" if found else "not found"))
         if found:

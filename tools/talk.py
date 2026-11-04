@@ -925,14 +925,21 @@ def main():
         show_project()
         log("info", f"proyecto abierto: {name}" + ("" if conductor.turns else " (nuevo: conversación en blanco)"))
         save_talk(new)
-        if getattr(hume, "just_created", None):  # the web's "Iniciar proyecto": the one greeting, for this project
-            hume.just_created = None
-            narrator.say(f"Empezamos el proyecto {name}. ¿Qué armamos?")
+
+    def start_project():
+        """The web's Start button on a project just created: the one greeting, when Erlan presses it, so the recording
+        has it (Nov 4: created and greeted at once, the greeting came before the cameras were rolling)."""
+        if not getattr(hume, "just_created", None):
+            return {"ok": False, "error": "no project waiting to start"}
+        hume.just_created = None
+        narrator.say(f"Empezamos el proyecto {hume.project_name()}. ¿Qué armamos?")
+        return {"ok": True}
 
     global project_log
     project_log = hume.project_log
     hume.on_project_change = switch_project
     board.on_project_new = hume.project_new
+    board.on_project_start = start_project
     show_project()
     worker.on_done = save_talk
     if resumed:

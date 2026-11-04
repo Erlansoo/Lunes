@@ -182,6 +182,7 @@ svg .fault.p3 { stroke:#e3c21a; animation:blink 1.6s step-end infinite; } svg .f
 .live.new:hover { color:#000; background:#6ee0a8; }
 @keyframes newglow { 0% { box-shadow:0 0 0 0 rgba(76,195,138,.55); } 70% { box-shadow:0 0 0 7px rgba(76,195,138,0); } 100% { box-shadow:0 0 0 0 rgba(76,195,138,0); } }
 @media (prefers-reduced-motion:reduce){ .live.new { animation:none; } }
+.live.start { color:#06200f; background:var(--ok); border-color:var(--ok); font-weight:800; margin-left:6px; animation:newglow 2.4s ease-out infinite; }
 .pname { font-size:12px; color:var(--accent); font-weight:600; max-width:22ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .menu.small { width:360px; left:calc(50% - 180px); top:18vh; }
 .newform { display:flex; gap:8px; padding:10px 12px; } .newform input { flex:1; min-width:0; font:inherit; font-size:13px; color:var(--ink);
@@ -206,6 +207,8 @@ svg .fault.p3 { stroke:#e3c21a; animation:blink 1.6s step-end infinite; } svg .f
 body:not(.details) .detail { display:none; }
 .toggle { color:var(--muted); font-size:12.5px; }
 .toggle:hover { color:var(--ink); }
+.toggle.on { color:#f5dc28; }
+#zoneBtn { margin-left:12px; }
 
 @media (max-width:1180px) {
   html, body { height:auto; } body { display:block; }
@@ -264,13 +267,13 @@ body:not(.details) .detail { display:none; }
     <div class="head"><h2 data-t="machine"></h2><span class="side" id="mosaics"></span></div>
     <div class="dro"><div><b>X</b><span id="dx">—</span></div><div><b>Y</b><span id="dy">—</span></div><div><b>Z</b><span id="dz">—</span></div></div>
     <div class="map"><svg id="map" role="img"></svg></div>
-    <div class="line mind"><button class="toggle" id="mapView" hidden></button><span id="mind" hidden></span></div>
+    <div class="line mind"><button class="toggle" id="mapView" hidden></button><button class="toggle" id="zoneBtn" hidden></button><span id="mind" hidden></span></div>
     <div class="line" id="check"><i></i><span></span></div>
     <div class="power" id="power"></div>
   </section>
 
   <section class="panel" id="bench">
-    <div class="head"><h2 data-t="benchTitle"></h2><span class="pname" id="projectName"></span><span class="zoomctl" id="boardZoom" hidden><button type="button" id="boardOut">−</button><span class="num" id="boardPct">100 %</span><button type="button" id="boardIn">+</button><button type="button" id="boardReset">⟲</button></span><button class="live" id="projects" type="button" data-t="projects"></button><button class="live new" id="projectNew" type="button">+</button><button class="live" id="editBoard" type="button" hidden></button><button class="live" id="errors" type="button" data-t="errors" hidden></button><span class="side" id="benchInfo"></span></div>
+    <div class="head"><h2 data-t="benchTitle"></h2><span class="pname" id="projectName"></span><button class="live start" id="projectStart" type="button" hidden></button><span class="zoomctl" id="boardZoom" hidden><button type="button" id="boardOut">−</button><span class="num" id="boardPct">100 %</span><button type="button" id="boardIn">+</button><button type="button" id="boardReset">⟲</button></span><button class="live" id="projects" type="button" data-t="projects"></button><button class="live new" id="projectNew" type="button">+</button><button class="live" id="editBoard" type="button" hidden></button><button class="live" id="errors" type="button" data-t="errors" hidden></button><span class="side" id="benchInfo"></span></div>
     <div class="edittools" id="editTools" hidden><span data-t="wireColor"></span><span id="editColors"></span><button class="live" id="editDelete" type="button" data-t="del"></button><button class="live" id="editUndo" type="button" data-t="undo"></button><button class="live" id="editSave" type="button" data-t="save"></button><button class="live" id="editCancel" type="button" data-t="cancel"></button><span class="side" id="editNote"></span></div>
     <div class="editresult" id="editResult" hidden></div>
     <div class="body" id="benchBody"></div>
@@ -295,7 +298,8 @@ const TEXT = {
       asSimulated:"Lee como la simulación", notAsSimulated:"No lee como la simulación", serial:"Monitor serie",
       kinectOk:"Kinect confirma la posición", kinectOff:"Kinect ve el cabezal a", kinectNone:"Kinect todavía no confirmó la posición",
       hold:"Movimiento en pausa", holdWhy:h => `el Kinect ve el cabezal a ${h.off_mm} mm de donde la máquina cree estar` + (h.mosaic_mm !== null && h.mosaic_mm !== undefined ? ` · el mosaico lo ve a ${h.mosaic_mm} mm` : "") + " · di «sigue» para seguir", doubtful:"Posición dudosa: los motores se liberaron", front:"frente", back:"fondo",
-      board_:"placa", head_:"cabezal", mosaics:"mosaicos", mapAll:"Toda la mesa", mapClose:"De cerca", chipUnread:"chip sin leer", grow:"Agrandar", shrink:"Volver a su lugar", wire:"Cable", wired:"conecta", value:"Valor", bands:"Bandas", pins:"Patas", strip:"Fila unida a", free:"libre", laserTip:"Último punto del láser", confirmed:"confirmado", unconfirmed:"sin confirmar", head_tip:"Cabezal", notchTip:"muesca", kinds:{R:"Resistencia",C:"Capacitor",L:"Bobina",D:"Diodo",ZENER:"Zener",LED:"LED",SW:"Interruptor",LDR:"Fotorresistencia",NTC:"Termistor",POT:"Potenciómetro",NPN:"Transistor NPN",PNP:"Transistor PNP",NMOS:"MOSFET N",PMOS:"MOSFET P",REG:"Regulador",IC:"Integrado",NE555:"Integrado",OPAMP:"Amplificador"}, bandNames:["negro","café","rojo","naranja","amarillo","verde","azul","violeta","gris","blanco"], details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
+      board_:"placa", head_:"cabezal", mosaics:"mosaicos", mapAll:"Toda la mesa", mapClose:"De cerca", zone:"✂ Marcar zona", zoneOn:"✂ Arrastra sobre la zona", zoneCancel:"Arrastra un rectángulo sobre el mosaico; Esc cancela",
+      zoneAsk:(x0,x1,y0,y1) => `Lunes, saca fotos nítidas de esta zona del mosaico: X de ${x0} a ${x1} mm, Y de ${y0} a ${y1} mm.`, chipUnread:"Chip", grow:"Agrandar", shrink:"Volver a su lugar", wire:"Cable", wired:"conecta", value:"Valor", bands:"Bandas", pins:"Patas", strip:"Fila unida a", free:"libre", laserTip:"Último punto del láser", confirmed:"confirmado", unconfirmed:"sin confirmar", head_tip:"Cabezal", notchTip:"muesca", kinds:{R:"Resistencia",C:"Capacitor",L:"Bobina",D:"Diodo",ZENER:"Zener",LED:"LED",SW:"Interruptor",LDR:"Fotorresistencia",NTC:"Termistor",POT:"Potenciómetro",NPN:"Transistor NPN",PNP:"Transistor PNP",NMOS:"MOSFET N",PMOS:"MOSFET P",REG:"Regulador",IC:"Integrado",NE555:"Integrado",OPAMP:"Amplificador"}, bandNames:["negro","café","rojo","naranja","amarillo","verde","azul","violeta","gris","blanco"], details:"Ver detalles", hideDetails:"Ocultar detalles", you:"Erlan",
       lunes:"Lunes", noSignal:"Sin imagen", models:"Modelos Meta", api:"API", pc:"en la PC", new_:"Imagen nueva", clear:"Clara",
       noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
       remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
@@ -308,7 +312,7 @@ const TEXT = {
       zoomIn:"Acercar", zoomOut:"Alejar", zoomReset:"Volver al 100 %", boardZoomHint:"Ctrl + rueda para acercar o alejar; arrastra para moverte; doble clic vuelve al 100 %",
       projects:"Proyectos", projectsNone:"No hay proyectos guardados", projectsFail:"No pude leer la lista", loadAsk:"¿Abrir este proyecto? Trae su circuito, su conversación y su historial.",
       newProject:"Proyecto nuevo", newTitle:"Proyecto nuevo: su propia conversación, memoria e historial", newPlaceholder:"Nombre del proyecto",
-      create:"Iniciar proyecto", newFail:"No se pudo crear", emptyProject:"sin circuito todavía", projectNow:"Proyecto",
+      create:"Crear", start:"▶ Empezar", startTitle:"Lunes saluda y empieza el proyecto: apriétalo con la grabación corriendo", newFail:"No se pudo crear", emptyProject:"sin circuito todavía", projectNow:"Proyecto",
       loadFail:"No se pudo cargar", loadNone:"No hay banco donde cargarlo: Lunes no está corriendo", onBench:"en el banco", noPlan:"sin plan", loading:"Leyendo…",
       editBoard:"Editar", editClose:"Cerrar edición", wireColor:"Cable", del:"Eliminar", undo:"Deshacer", save:"Guardar", cancel:"Cancelar",
       editHint:"Arrastra la pata de una pieza a otro agujero (un chip entero, por cualquier pata); clic en dos agujeros pone un cable; clic en un cable y Eliminar lo quita",
@@ -325,7 +329,8 @@ const TEXT = {
       asSimulated:"Reads as simulated", notAsSimulated:"Does not read as simulated", serial:"Serial monitor",
       kinectOk:"Kinect confirms the position", kinectOff:"Kinect sees the head", kinectNone:"Kinect has not confirmed the position yet",
       hold:"Moves on hold", holdWhy:h => `the Kinect sees the head ${h.off_mm} mm from where the machine thinks it is` + (h.mosaic_mm !== null && h.mosaic_mm !== undefined ? ` · the mosaic puts it ${h.mosaic_mm} mm off` : "") + " · say “go on” to continue", doubtful:"Position doubtful: the motors were released", front:"front", back:"back",
-      board_:"board", head_:"head", mapAll:"Whole table", mapClose:"Close up", chipUnread:"unread chip", grow:"Enlarge", shrink:"Back in place", wire:"Wire", wired:"joins", value:"Value", bands:"Bands", pins:"Pins", strip:"Row joined to", free:"free", laserTip:"Laser's last point", confirmed:"confirmed", unconfirmed:"not confirmed", head_tip:"Head", notchTip:"notch", kinds:{R:"Resistor",C:"Capacitor",L:"Inductor",D:"Diode",ZENER:"Zener",LED:"LED",SW:"Switch",LDR:"Photoresistor",NTC:"Thermistor",POT:"Potentiometer",NPN:"NPN transistor",PNP:"PNP transistor",NMOS:"N MOSFET",PMOS:"P MOSFET",REG:"Regulator",IC:"Chip",NE555:"Chip",OPAMP:"Amplifier"}, bandNames:["black","brown","red","orange","yellow","green","blue","violet","grey","white"], mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
+      board_:"board", head_:"head", mapAll:"Whole table", mapClose:"Close up", zone:"✂ Mark area", zoneOn:"✂ Drag over the area", zoneCancel:"Drag a rectangle over the mosaic; Esc cancels",
+      zoneAsk:(x0,x1,y0,y1) => `Lunes, take sharp pictures of this area of the mosaic: X from ${x0} to ${x1} mm, Y from ${y0} to ${y1} mm.`, chipUnread:"Chip", grow:"Enlarge", shrink:"Back in place", wire:"Wire", wired:"joins", value:"Value", bands:"Bands", pins:"Pins", strip:"Row joined to", free:"free", laserTip:"Laser's last point", confirmed:"confirmed", unconfirmed:"not confirmed", head_tip:"Head", notchTip:"notch", kinds:{R:"Resistor",C:"Capacitor",L:"Inductor",D:"Diode",ZENER:"Zener",LED:"LED",SW:"Switch",LDR:"Photoresistor",NTC:"Thermistor",POT:"Potentiometer",NPN:"NPN transistor",PNP:"PNP transistor",NMOS:"N MOSFET",PMOS:"P MOSFET",REG:"Regulator",IC:"Chip",NE555:"Chip",OPAMP:"Amplifier"}, bandNames:["black","brown","red","orange","yellow","green","blue","violet","grey","white"], mosaics:"mosaics", details:"Show details", hideDetails:"Hide details", you:"Erlan",
       lunes:"Lunes", noSignal:"No picture", models:"Meta models", api:"API", pc:"on the PC", new_:"New picture", clear:"Clear",
       noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
       remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
@@ -338,7 +343,7 @@ const TEXT = {
       zoomIn:"Zoom in", zoomOut:"Zoom out", zoomReset:"Back to 100 %", boardZoomHint:"Ctrl + wheel to zoom; drag to pan; double-click goes back to 100 %",
       projects:"Projects", projectsNone:"No saved projects", projectsFail:"Could not read the list", loadAsk:"Open this project? It brings its circuit, its conversation and its history.",
       newProject:"New project", newTitle:"New project: its own conversation, memory and history", newPlaceholder:"Project name",
-      create:"Start project", newFail:"Could not create it", emptyProject:"no circuit yet", projectNow:"Project",
+      create:"Create", start:"▶ Start", startTitle:"Lunes greets and starts the project: press it with the recording rolling", newFail:"Could not create it", emptyProject:"no circuit yet", projectNow:"Project",
       loadFail:"Could not load it", loadNone:"No bench to load it on: Lunes is not running", onBench:"on the bench", noPlan:"no plan", loading:"Reading…",
       editBoard:"Edit", editClose:"Close editing", wireColor:"Wire", del:"Delete", undo:"Undo", save:"Save", cancel:"Cancel",
       editHint:"Drag a part's lead to another hole (a whole chip by any pin); click two holes to add a wire; click a wire and Delete to remove it",
@@ -393,7 +398,7 @@ function translate(){
   document.documentElement.lang = lang;
   document.querySelectorAll("[data-t]").forEach(e => e.textContent = T[e.dataset.t]);
   $("lang").textContent = lang === "es" ? "EN" : "ES";
-  $("projectNew").title = T.newTitle; $("projectNew").setAttribute("aria-label", T.newTitle); $("newName").placeholder = T.newPlaceholder;
+  $("projectStart").textContent = T.start; $("projectStart").title = T.startTitle; $("projectNew").title = T.newTitle; $("projectNew").setAttribute("aria-label", T.newTitle); $("newName").placeholder = T.newPlaceholder;
   $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details;
   buildTabs(); showState(); layoutButtons(); $("askText").placeholder = T.askLunes; showMic(micState);
   $("boardIn").title = T.zoomIn; $("boardOut").title = T.zoomOut; $("boardReset").title = T.zoomReset; $("boardZoom").title = T.boardZoomHint;
@@ -462,6 +467,7 @@ function renderStrip(d){
   }
 }
 let mapClose = true, mapImage = null;
+let zoneMode = false, zoneFrom = null, zoneMm = null;  // a zone of the mosaic Erlan marks on the map, [x0, y0, x1, y1] machine mm
 function renderMachine(m){
   const a = m.at_mm || {}; $("dx").textContent = fixed(a.X); $("dy").textContent = fixed(a.Y); $("dz").textContent = fixed(a.Z);
   $("mosaics").textContent = m.mosaics ? `${m.mosaics} ${T.mosaics}` : "";
@@ -493,11 +499,13 @@ function renderMachine(m){
     if (!mapImage || mapImage.getAttribute("href") !== href){ mapImage = document.createElementNS(NS,"image"); mapImage.setAttribute("href",href); mapImage.setAttribute("width",1); mapImage.setAttribute("height",1); mapImage.setAttribute("preserveAspectRatio","none"); }
     mapImage.setAttribute("transform",`matrix(${u[0]-o[0]} ${u[1]-o[1]} ${v[0]-o[0]} ${v[1]-o[1]} ${o[0]} ${o[1]})`); svg.append(mapImage);
   }
+  $("zoneBtn").hidden = !mind.mosaic; $("zoneBtn").textContent = zoneMode ? T.zoneOn : T.zone; $("zoneBtn").title = T.zoneCancel;
+  if (zoneMm){ const [a,b,c,d] = zoneMm, [x,y] = on([Math.max(a,c), Math.max(b,d)]);  // the corner nearest the page's top left
+    node("rect",{x,y,width:Math.abs(c-a),height:Math.abs(d-b),fill:"rgba(245,220,40,.12)",stroke:"#f5dc28","stroke-width":1.5,"stroke-dasharray":"4 3","vector-effect":"non-scaling-stroke"}); }
   if (m.board && m.board.center_mm){
     const [cx,cy] = m.board.center_mm, [w,h] = m.board.size_mm;
     const [x0, y0] = on([cx+w/2, cy+h/2]);  // the corner nearest the page's top left: largest X, largest Y
-    node("rect",{x:x0,y:y0,width:w,height:h,rx:1.5,fill:mind.mosaic ? "none" : "#1e4a35",stroke:"#4cc38a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
-    if (m.bed) label(toX(cx),y0-4*unit,m.bed,"middle","#7fd6ae");
+    node("rect",{x:x0,y:y0,width:w,height:h,rx:1.5,fill:"none",stroke:"#4cc38a","stroke-width":1,"vector-effect":"non-scaling-stroke"});
   }
   if (chip){
     const c = on(chip.center_mm), r = Math.max(...chip.size_mm)/2;
@@ -505,7 +513,7 @@ function renderMachine(m){
       "data-tip":`<b>${chip.name || T.chipUnread}</b>\nX ${fixed(chip.center_mm[0])}  Y ${fixed(chip.center_mm[1])}\n${age(chip.ago_s)}`});
     if (chip.notch_mm){ const [x,y] = on(chip.notch_mm); node("circle",{cx:x,cy:y,r:1.1,fill:"#101416",stroke:"#d7dbe0","stroke-width":1,"vector-effect":"non-scaling-stroke"}); }
     if (chip.pin1_mm){ const [x,y] = on(chip.pin1_mm); node("circle",{cx:x,cy:y,r:Math.max(.9,2.2*unit),fill:"#f5dc28"}); label(x+5*unit,y+4*unit,"1","start","#f5dc28"); }
-    label(c[0],c[1]-r-6*unit,chip.name || T.chipUnread,"middle","#e6e9ec");
+    if (chip.name) label(c[0],c[1]-r-6*unit,chip.name,"middle","#e6e9ec");  // an unread chip needs no word over it
   }
   for (const n of mind.notes || []){ const [x,y] = on(n.mm); node("circle",{cx:x,cy:y,r:2.5*unit,fill:"#6db3f2"}); label(x+5*unit,y+4*unit,n.label,"start","#a9d1f7"); }
   if (mind.laser){ const [x,y] = on(mind.laser.mm); node("circle",{cx:x,cy:y,r:3*unit,fill:"#e0261c",stroke:mind.laser.confirmed ? "#fff" : "none","stroke-width":1,"vector-effect":"non-scaling-stroke",
@@ -517,7 +525,7 @@ function renderMachine(m){
     node("line",{x1:x,y1:y-15*unit,x2:x,y2:y+15*unit,stroke:"#6db3f2","stroke-width":1,"vector-effect":"non-scaling-stroke"});
   }
   label(box[0]+box[2]/2,box[1]+box[3]-3*unit,T.front); label(box[0]+box[2]/2,box[1]+11*unit,T.back);
-  const said = [chip && `${chip.name || T.chipUnread} · X ${fixed(chip.center_mm[0])} Y ${fixed(chip.center_mm[1])} · ${age(chip.ago_s)}`, ...(mind.notes || []).slice(-3).map(n => n.label)].filter(Boolean);
+  const said = [chip && chip.name && `${chip.name} · X ${fixed(chip.center_mm[0])} Y ${fixed(chip.center_mm[1])} · ${age(chip.ago_s)}`, ...(mind.notes || []).slice(-3).map(n => n.label)].filter(Boolean);
   $("mind").hidden = !said.length; $("mind").textContent = said.join("  ·  ");
   const c = $("check"), span = c.querySelector("span");
   c.className = "line";
@@ -669,7 +677,7 @@ function renderPower(p){
 }
 const WIRE_COLORS = {rojo:"#d33", negro:"#1c1c1c", azul:"#2d7fd3", verde:"#1f9d6b", naranja:"#e8862a", morado:"#8a4fbf", amarillo:"#d8b400", gris:"#8d8d8d"};
 function drawBreadboard(b, probeNet, supplyV){
-  // the board as it lies on the bench with row 1 to the left: column a at the bottom, the rails below it. Every part is
+  // the board as Erlan sees it from the front of the bench: row 1 to the right, column a at the back. Every part is
   // drawn from its own data (package, pins, value, colour), so a chip Lunes learnt a minute ago needs no drawing of its own
   const P = 6, W = 63 * P + 12, H = 19 * P, svg = document.createElementNS(NS,"svg");
   // only the rows in use, so the parts read at their size; a real board is long and a circuit takes one end of it
@@ -689,6 +697,8 @@ function drawBreadboard(b, probeNet, supplyV){
     if (!m) return null; const scale = {k:1e3,K:1e3,M:1e6}[m[2]] || 1; return parseFloat(m[3] ? `${m[1]}.${m[3]}` : m[1]) * scale; };
   const bands = v => { const r = ohms(v); if (!r) return []; const e = Math.floor(Math.log10(r)) - 1, d = Math.round(r / 10 ** e);
     return d === 100 ? [1, 0, e + 1] : [Math.floor(d / 10), d % 10, e]; };
+  // drawn with row 1 to the left and turned half round at the end (BOARD_TURNED), so the viewBox is turned too
+  svg.setAttribute("viewBox",`${W - far * P - 12} 0 ${(far - near + 1) * P + 12} ${H}`); svg.dataset.home = svg.getAttribute("viewBox");
   add("line",{x1:0,x2:W,y1:H-10*P,y2:H-10*P,stroke:"#d9d4c5","stroke-width":P*1.6});
   add("line",{x1:0,x2:W,y1:H-.5*P+2,y2:H-.5*P+2,stroke:"#d33","stroke-width":.6}); add("line",{x1:0,x2:W,y1:H-1.5*P-2,y2:H-1.5*P-2,stroke:"#35a","stroke-width":.6});
   const strip = h => "+-".includes(h[0]) ? h[0] : `${h.slice(1)}${"abcde".includes(h[0]) ? "L" : "R"}`, netOf = {};
@@ -771,8 +781,15 @@ function drawBreadboard(b, probeNet, supplyV){
   if (errorsOn) (b.check_items || []).forEach((item, i) => { if (!item.priority) return;
     for (const hole of Object.keys(item.holes || {})){ let xy; try { xy = at(hole); } catch (e) { continue; }
       add("circle",{cx:xy[0],cy:xy[1],r:3.7,class:`fault p${item.priority}`,"data-item":i}); } });
+  // Erlan sees the board from the front of the bench: row 1 on his right, column a at the back. Drawn with row 1 to the
+  // left, the page showed it from behind (Nov 4, "¿me está mostrando el espejo del protoboard?"). Everything is turned
+  // half round, and each text back round its own anchor so it reads upright
+  const turn = document.createElementNS(NS,"g"); turn.setAttribute("transform",`rotate(180 ${W / 2} ${H / 2})`);
+  turn.append(...svg.childNodes); svg.append(turn);
+  for (const t of turn.querySelectorAll("text")) t.setAttribute("transform",`rotate(180 ${t.getAttribute("x")} ${t.getAttribute("y")})`);
   return svg;
 }
+const BOARD_TURNED = ([x, y]) => [63 * 6 + 12 - x, 19 * 6 - y];  // a point of the turned drawing in the drawing's own units
 function renderChip(c){
   const line = $("chipline"); line.hidden = !c; if (!c) return;
   line.className = "chipline" + (c.as_planned === true ? " good" : c.as_planned === false ? " bad" : "");
@@ -785,7 +802,7 @@ function renderChip(c){
   else if (c.as_planned === false) line.append(el("span","", ` · ${T.notAsPlanned} `), el("b","",c.planned_hole));
   if (c.how) line.append(el("span","", ` · ${c.how}`));
 }
-function render(d){ window.lastLab = d; renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); renderChip(d.chip); drawOverlay(); }
+function render(d){ window.lastLab = d; $("projectStart").hidden = !d.project_waiting; renderStrip(d); renderMachine(d.machine); renderPower(d.supply); renderScope(d.scope); renderBench(d); renderChip(d.chip); drawOverlay(); }
 $("big").addEventListener("click", e => {
   if (view !== "microscope") return;
   const img = $("big"), r = img.getBoundingClientRect(), nat = img.naturalWidth / img.naturalHeight || 4/3;
@@ -837,6 +854,22 @@ async function poll(){
 }
 $("lang").onclick = () => { lang = lang === "es" ? "en" : "es"; T = TEXT[lang]; store.set("lunes.lang",lang); translate(); };
 $("mapView").onclick = () => { mapClose = !mapClose; if (window.lastLab) renderMachine(window.lastLab.machine); };
+// a zone marked on the map: a drag draws it in machine mm, and the sentence for Lunes waits in the ask box, to be sent
+// (or changed) with Enter. The map is drawn mirrored (see renderMachine), so a point of it is turned back the same way
+const mapMm = e => { const svg = $("map"), p = svg.createSVGPoint(), area = window.lastLab.machine.area_mm; p.x = e.clientX; p.y = e.clientY;
+  const q = p.matrixTransform(svg.getScreenCTM().inverse()); return [area.X[1] - q.x, area.Y[1] - q.y]; };
+const zoneSet = on => { zoneMode = on; $("zoneBtn").classList.toggle("on", on); $("map").style.cursor = on ? "crosshair" : ""; if (window.lastLab) renderMachine(window.lastLab.machine); };
+$("zoneBtn").onclick = () => zoneSet(!zoneMode);
+$("map").addEventListener("pointerdown", e => { if (!zoneMode || e.button !== 0 || !window.lastLab) return;
+  e.preventDefault(); e.stopPropagation(); zoneFrom = mapMm(e); zoneMm = [...zoneFrom, ...zoneFrom]; $("map").setPointerCapture(e.pointerId); });
+$("map").addEventListener("pointermove", e => { if (!zoneFrom) return; e.stopPropagation(); zoneMm = [...zoneFrom, ...mapMm(e)]; renderMachine(window.lastLab.machine); });
+for (const end of ["pointerup", "pointercancel"]) $("map").addEventListener(end, () => {
+  if (!zoneFrom) return; zoneFrom = null;
+  const [a,b,c,d] = zoneMm, f = v => v.toFixed(1);
+  if (Math.abs(c - a) < 1 || Math.abs(d - b) < 1){ zoneMm = null; zoneSet(false); return; }  // a click, not a zone
+  zoneSet(false);
+  const box = $("askText"); box.value = T.zoneAsk(f(Math.min(a,c)), f(Math.max(a,c)), f(Math.min(b,d)), f(Math.max(b,d))); box.focus(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && zoneMode){ zoneFrom = null; zoneMm = null; zoneSet(false); } });
 $("scopeLive").onclick = async () => { const on = !$("scopeLive").classList.contains("on"); $("scopeLive").disabled = true;
   try { const r = await (await fetch("/scope_live?on=" + (on ? 1 : 0))).json(); if (r.ok && window.lastLab){ window.lastLab.scope.live = r.live; renderScope(window.lastLab.scope); } }
   catch (err) {}  // the server is away: the button comes back and the next poll says how the scope stands
@@ -1020,6 +1053,8 @@ function showNew(open){
   if (open){ showProjects(false); $("newName").value = ""; setTimeout(() => $("newName").focus(), 0); }
 }
 $("projectNew").onclick = () => showNew($("newMenu").hidden);
+$("projectStart").onclick = async () => { const b = $("projectStart"); b.disabled = true;  // the greeting, now that the cameras roll
+  try { await fetch("/project/start", {method:"POST", headers:{"Content-Type":"application/json"}, body:"{}"}); b.hidden = true; } catch (err) {} finally { b.disabled = false; } };
 $("newClose").onclick = () => showNew(false);
 $("newName").addEventListener("keydown", e => { if (e.key === "Escape"){ e.stopPropagation(); showNew(false); } });
 $("newForm").onsubmit = async e => {
@@ -1096,7 +1131,7 @@ function editWire(a, b){
 function editDelete(){ if (!editing || editing.picked === null) return; editSnap(); editing.wires.splice(editing.picked, 1); editing.picked = null; editNote(""); editDraw(); }
 function editUndo(){ if (!editing || !editing.undo.length) return; const s = JSON.parse(editing.undo.pop()); editing.parts = s.parts; editing.wires = s.wires; editing.start = null; editing.picked = null; editNote(""); editDraw(); }
 function holeAt(svg, clientX, clientY){  // the hole under the pointer, snapped to the grid: a lead's marker or a handle may cover it
-  const f = fit(svg), bx = f.x + (clientX - f.left) / f.s, by = f.y + (clientY - f.top) / f.s, P = 6, H = 19 * P;
+  const f = fit(svg), [bx, by] = BOARD_TURNED([f.x + (clientX - f.left) / f.s, f.y + (clientY - f.top) / f.s]), P = 6, H = 19 * P;
   const row = Math.round((bx - 6) / P + .5), yi = Math.round((H - by) / P - 4.5);
   const c = yi === -4 ? "+" : yi === -3 ? "-" : yi >= 0 && yi <= 4 ? "abcde"[yi] : yi >= 7 && yi <= 11 ? "fghij"[yi - 7] : null;
   if (!c || row < 1 || row > 63 || Math.hypot(bx - (6 + (row - .5) * P), by - (H - (yi + 4.5) * P)) > P * .55) return null;
@@ -1111,7 +1146,8 @@ function editDown(e, box){
 function editMoveEv(e, box){
   if (!hand || !hand.grab) return;
   hand.moved = hand.moved || Math.abs(e.clientX - hand.x0) + Math.abs(e.clientY - hand.y0) > 3;
-  const f = fit(box.firstChild); hand.ghost.setAttribute("cx", f.x + (e.clientX - f.left) / f.s); hand.ghost.setAttribute("cy", f.y + (e.clientY - f.top) / f.s);
+  const f = fit(box.firstChild), [gx, gy] = BOARD_TURNED([f.x + (e.clientX - f.left) / f.s, f.y + (e.clientY - f.top) / f.s]);
+  hand.ghost.setAttribute("cx", gx); hand.ghost.setAttribute("cy", gy);
   const name = holeAt(box.firstChild, e.clientX, e.clientY), hole = name ? box.firstChild.querySelector(`rect[data-hole="${name}"]`) : null;
   if (hand.over && hand.over !== hole) hand.over.classList.remove("drop");
   hand.over = hole; if (hole) hole.classList.add("drop");

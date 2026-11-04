@@ -29,7 +29,8 @@ def _machine(hume):
     microscope = hume.m.config.get("microscope", {})
     scale = microscope.get("px_per_mm") or {}
     check = hume.last_kinect_check or {}
-    board = hume.board or hume.world["board"] or {}
+    # the board is drawn round this project's mosaic only: a new project's map is empty but for the microscope (Nov 4)
+    board = (hume.board or hume.world["board"] or {}) if hume.world.get("mosaic") else {}
     return {"at_mm": {k: round(float(v), 2) for k, v in (getattr(hume.m, "at_mm", None) or {}).items()},
             "area_mm": WORKSPACE, "focus_z_mm": hume.focus_z,
             "board": {k: board[k] for k in ("center_mm", "size_mm") if k in board} or None,
@@ -143,6 +144,7 @@ def state(hume):
     return {"machine": machine, "scope": scope, "circuit": _circuit(hume), "diagnosis": _diagnosis(hume),
             "arduino": arduino, "brain": hume.brain, "supply": hume.supply_state(),
             "breadboard": _breadboard(hume), "chip": _chip(hume),
+            "project_waiting": bool(getattr(hume, "just_created", None)),  # created, its Start button not pressed yet
             "instruments": {"cnc": bool(machine["at_mm"]), "microscope": hume.cam is not None,
                             "bench": hume.bench is not None, "kinect": hume.kinect is not None,
                             "scope": scope["connected"], "arduino": arduino is not None}}

@@ -69,32 +69,63 @@ def shifted(grid, columns):
             "j1": [round(v, 2) for v in j1 + columns * step]}
 
 
-def orient(mosaic, summary, grid, layout):
-    """(grid, note): the grid as read, or the one the holes also fit that puts the plan's chip on a dark body.
+def chip_center_mm(grid, layout):
+    """Where the plan's first chip stands under this grid, in machine mm, or None."""
+    for ref in layout.get("chips") or {}:
+        pins = list((layout["holes"].get(ref) or {}).values())
+        if len(pins) >= 4:
+            g = BoardGrid(grid["a1"], grid["a63"], grid["j1"])
+            return np.mean([g.mm(h) for h in pins], axis=0)
+    return None
+
+
+def orient(mosaic, summary, grid, layout, seen_mm=None):
+    """(grid, note): the grid as read, or the one the holes also fit that puts the plan's chip where the chip is.
 
     A breadboard's holes fit a grid in more than one way: turned half round (row r is 64 - r, column a is j), and slid
     by a group of five columns, since the rails' holes come in fives (Nov 3, 23:13: both at once put the 555, standing
-    in e3-f6, at column 53 and sent the laser to the empty end). Of those, the one whose chip area is darkest wins, if
-    it is clearly darker than the grid as read."""
+    in e3-f6, at column 53 and sent the laser to the empty end). seen_mm, the chip's centre as the microscope saw it,
+    decides when it is given: the fit whose plan chip stands on it. Otherwise the one whose chip area is darkest wins,
+    if it is clearly darker than the grid as read; a chip with parts lying over it is not dark enough to tell (Nov 4:
+    143 as read, 127 turned round, and the laser went to the empty end)."""
     here = chip_darkness(mosaic, summary, grid, layout)
     if here is None:
         return grid, "no chip in the plan to check the board's orientation with"
+    candidates = [(turn, slide) for turn in (False, True) for slide in (-10, -5, 0, 5, 10)]
+    fits = {how: (shifted(turned(grid) if how[0] else grid, how[1]) if how[1] else (turned(grid) if how[0] else grid))
+            for how in candidates}
+    if seen_mm is not None:
+        away = {how: float(np.hypot(*(chip_center_mm(g, layout) - np.asarray(seen_mm, float)))) for how, g in fits.items()}
+        how = min(away, key=away.get)
+        if away[how] <= SEEN_FIT_MM:
+            if how == (False, 0):
+                return grid, (f"the plan's chip stands {away[how]:.1f} mm from where the microscope saw the chip: the "
+                              f"board is read the right way round")
+            return dict(grid, **fits[how]), (f"the grid was read {_words(how)}: the plan's chip stood "
+                                             f"{away[(False, 0)]:.0f} mm from the chip the microscope saw, and "
+                                             f"{away[how]:.1f} mm on the other fit: turned back")
     best, best_dark, how = grid, here, None
-    for turn in (False, True):
-        base = turned(grid) if turn else grid
-        for slide in (-10, -5, 0, 5, 10):
-            if not turn and slide == 0:
-                continue
-            candidate = shifted(base, slide) if slide else base
-            dark = chip_darkness(mosaic, summary, candidate, layout)
-            if dark is not None and dark < best_dark:
-                best, best_dark, how = candidate, dark, (turn, slide)
+    for h, candidate in fits.items():
+        if h == (False, 0):
+            continue
+        dark = chip_darkness(mosaic, summary, candidate, layout)
+        if dark is not None and dark < best_dark:
+            best, best_dark, how = candidate, dark, h
     if how is not None and best_dark < 0.6 * here and best_dark < 110:
-        words = " and ".join(w for w in ("turned half round" if how[0] else "",
-                                          f"slid {abs(how[1])} columns" if how[1] else "") if w)
-        return dict(grid, **best), (f"the grid was read {words} (the plan's chip area was bright, {here:.0f}, and dark, "
-                                    f"{best_dark:.0f}, on the other fit): turned back")
+        return dict(grid, **best), (f"the grid was read {_words(how)} (the plan's chip area was bright, {here:.0f}, and "
+                                    f"dark, {best_dark:.0f}, on the other fit): turned back")
+    if here > 110:  # neither way round is clearly a black body: say so rather than claim the board is right
+        return grid, (f"not sure which way round the board is read: the plan's chip area is {here:.0f} of 255, not a "
+                      f"dark body (parts over the chip?). Let the microscope see the chip (see_chip) and read again")
     return grid, f"the plan's chip falls on a dark body ({here:.0f} of 255): the board is read the right way round"
+
+
+SEEN_FIT_MM = 4.0  # a fit whose plan chip stands this close to the chip the microscope saw is the board as it is
+
+
+def _words(how):
+    return " and ".join(w for w in ("turned half round" if how[0] else "",
+                                     f"slid {abs(how[1])} columns" if how[1] else "") if w)
 
 
 def items(circuit, layout):

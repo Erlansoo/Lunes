@@ -49,6 +49,7 @@ class Dashboard:
         self.circuits = self.on_circuit_load = None  # talk.py: the saved circuits (runs/circuits/) and loading one on the bench
         self.on_layout_edit = None  # talk.py: the breadboard as Erlan edited it by hand; rebuilds and keeps the circuit
         self.on_project_new = None  # talk.py: a new, empty project with the name Erlan typed
+        self.on_project_start = None  # talk.py: the Start button of a project just created, the greeting
         # the project open now: every event is marked with it, so the page shows each project's own conversation
         self.project = {"id": None, "name": None}
         self.mosaic = None  # gives the last mosaic's picture, for the machine's map
@@ -165,6 +166,10 @@ class Dashboard:
                     if board.on_project_new is None:
                         return self._json({"ok": False, "error": "no bench to keep a project on"}, 503)
                     return self._json(board.on_project_new(name))
+                if path == "/project/start":
+                    if board.on_project_start is None:
+                        return self._json({"ok": False, "error": "no conversation to start"}, 503)
+                    return self._json(board.on_project_start())
                 self._nothing()
 
             def do_GET(self):

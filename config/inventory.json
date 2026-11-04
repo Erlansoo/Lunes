@@ -8,9 +8,12 @@
   ],
   "resistors_ohm": [1, 220, 330, 1000, 1500, 2200, 4850, 10000, 100000, 150000, 1000000],
   "resistors_note": "4850 is a measured value (it is probably sold as 4.7k)",
+  "capacitors_note": "Nov 4: the ceramic 104 discs were taken off: every one measured 40 nF, not 100 nF (a 555 built with one ran at 1.685 kHz instead of 650 Hz)",
   "capacitors": [
-    {"farad": 1e-07, "part": "ceramic, marked 104", "simulated": true},
-    {"farad": 2.2e-07, "part": "tantalum, marked 224", "note": "polarised: its + (the longer lead, or the marked one) to the higher voltage", "simulated": true}
+    {"farad": 2.28e-07, "part": "tantalum, marked 224", "note": "measured 228 nF by Erlan on Nov 4. Polarised: its + (the longer lead, or the marked one) to the higher voltage", "simulated": true},
+    {"farad": 1e-06, "part": "electrolytic, 1 uF", "note": "polarised: the stripe is the - lead", "simulated": true},
+    {"farad": 2.2e-04, "part": "electrolytic, 220 uF", "note": "polarised: the stripe is the - lead", "simulated": true},
+    {"farad": 1e-03, "part": "electrolytic, 1000 uF", "note": "polarised: the stripe is the - lead", "simulated": true}
   ],
   "potentiometers_ohm": [5000, 10000, 20000],
   "potentiometers_note": "normal single-turn pots; the 20k one is marked 203. One precision multi-turn pot, value not read yet.",

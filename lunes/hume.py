@@ -34,9 +34,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 from microscope import autofocus, calibrate, sharpness  # noqa: E402
-from survey import (Interrupted, board_corner_in_picture, closeup_for_reading, component_box,  # noqa: E402
-                    distance_in_picture, find_perimeter, geometry, grid_for, hole_in_picture, hop, locate_in_mosaic,
-                    mm_to_mosaic_px, mosaic_point_to_mm, pixels_to_mm, survey)
+from survey import (Interrupted, align_tiles, blend, board_corner_in_picture, closeup_for_reading,  # noqa: E402
+                    component_box, distance_in_picture, find_perimeter, focus_stack, geometry, grid_for,
+                    hole_in_picture, hop, locate_in_mosaic, mm_to_mosaic_px, mosaic_point_to_mm, pixels_to_mm, survey)
 
 OLLAMA = "http://127.0.0.1:11434/api/chat"
 MODEL = "muse-glimmer:30b"
@@ -88,7 +88,7 @@ LIFT_MM = 3.0
 # what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
 MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
                 "guide_step", "guide_net", "bench_test", "see_chip", "center_on_chip", "calibrate_bench", "reach_in_bench",
-                "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
+                "measure_board", "survey_board", "inspect_component", "photo_zone", "autofocus", "laser_calibrate"}
 MAX_ROUNDS = 16
 
 
@@ -115,6 +115,9 @@ NO_TOKENS = ("Se acabaron los tokens de hoy y sigo con el modelo local, que no m
 NO_MODEL = "El modelo principal no respondió y el local no mueve la máquina. Repítemelo en un momento."
 MAX_TILES = 130  # one survey: a whole breadboard, 55 x 165 mm, takes some 120 pictures and six minutes
 MAX_PART_TILES = 12
+MAX_ZONE_TILES = 16
+ZONE_UP_MM = 5.0  # a zone's pictures reach this far over the board: a DIP chip's top, a standing resistor
+ZONE_STEP_MM = 0.6  # between a zone's heights: about what the microscope sees sharp at once
 BOARD_MARGIN_MM = 2.0
 PART_MARGIN_MM = 1.5
 PART_RUNS_OFF_MM = 8.0  # how much further to look where a part runs off the edge of the mosaic
@@ -286,6 +289,8 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
+- Cuando Erlan marca una zona en el mapa de la página, su mensaje trae "X de .. a .. mm, Y de .. a .. mm": esa zona
+  va con photo_zone, con esos números tal cual. Saca cada foto a varias alturas y junta lo nítido de cada una.
 - Trabaja con Erlan como un colega, no como un ejecutor de órdenes. Cuando hay más de un camino razonable (cómo
   comprobar algo, qué medir primero, rediseñar o corregir lo que hay, una pieza que falta), proponle dos o tres
   opciones con lo que gana y lo que arriesga cada una, di cuál recomiendas y por qué, y pregúntale antes de hacer lo
@@ -1029,6 +1034,17 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {
             "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]}}},
     {"type": "function", "function": {
+        "name": "photo_zone",
+        "description": "Sharp pictures of a zone of the board, in machine mm: when Erlan marks a zone on the page's map "
+                       "(his message gives X from .. to .. and Y from .. to .. mm), or a part of the mosaic is blurry "
+                       "because it stands above the board. Each picture is taken at several heights and stacked, so "
+                       "the board, resistors and chips are all in focus; then they are stitched and shown. Up to 16 "
+                       "pictures (about 40 x 30 mm); needs the board measured.",
+        "parameters": {"type": "object", "properties": {
+            "x_min": {"type": "number"}, "x_max": {"type": "number"},
+            "y_min": {"type": "number"}, "y_max": {"type": "number"}},
+            "required": ["x_min", "x_max", "y_min", "y_max"]}}},
+    {"type": "function", "function": {
         "name": "ask_spark",
         "description": "Ask Muse Spark, Meta's larger model (over the internet; it spends credits), a hard question "
                        "about the last image you saw: a close-up, a mosaic or both faces. Only when your own look "
@@ -1360,18 +1376,18 @@ class Hume:
         self.circuit = self.expected = self.layout = self.layout_for = None
         self.diagnosis = self.fault_table = self.goals = None
         self.guide = {"step": 0, "holes": [], "says": ""}
-        # the machine's map starts clean too: the last project's notes, laser mark and mosaic were its own (Nov 3: "en
-        # la sección máquina se tiene un proyecto anterior ahí guardado"); where the board lies and its holes stay,
-        # since the bench did not move, and the next mosaic shows what is on it now
-        self.world["notes"], self.world["laser"], self.world["mosaic"] = [], None, None
-        if self.world.get("chip"):
-            self.world["chip"].pop("name", None)
+        # the machine's map starts clean too: the last project's notes, laser mark, mosaic and chip were its own (Nov 3:
+        # "en la sección máquina se tiene un proyecto anterior ahí guardado"; Nov 4: a chip and the board's outline still
+        # showed on a new project's map). Where the board lies and its holes stay, for the machine's own safety, but
+        # the page draws the board only with a mosaic of this project; the chip is seen again by the microscope (an old
+        # sighting also turned the board's grid the wrong way round once the board had been lifted and put back)
+        self.world["notes"], self.world["laser"], self.world["mosaic"], self.world["chip"] = [], None, None, None
         self.last_mosaic = None
         self._save_world()
         self.circuit_file = path
         CIRCUIT.write_text(json.dumps({**saved, "file": path.name}, ensure_ascii=False, indent=1), encoding="utf-8")
         self.project_log("note", f"Proyecto creado: {name}")
-        self.just_created = name  # talk.py greets once, for this project
+        self.just_created = name  # waits for the page's Start button, which has talk.py greet once
         self._project_changed(old)
         return {"ok": True, "project": name, "file": path.name,
                 "note": "a new project, with nothing in it yet: the circuit you design or set now is its circuit"}
@@ -1811,7 +1827,8 @@ class Hume:
         grid = self.world.get("grid")
         if mosaic is None or summary is None or not grid:
             return {"ok": False, "error": "no mosaic with its hole grid yet: survey_board first"}, None
-        grid, orientation = buildcheck.orient(mosaic, summary, grid, self.layout)
+        grid, orientation = buildcheck.orient(mosaic, summary, grid, self.layout,
+                                              (self.world.get("chip") or {}).get("center_mm"))
         if "turned back" in orientation:
             self.world["grid"] = dict(self.world["grid"], **{k: grid[k] for k in ("a1", "a63", "j1")})
             self.placement = BoardGrid(grid["a1"], grid["a63"], grid["j1"])
@@ -2643,14 +2660,20 @@ class Hume:
         # a board's holes read the same turned half round: the plan's chip must fall on the dark body in this mosaic,
         # every time, not only in check_build (Nov 3, 23:13: after a new mosaic the laser went to the empty end of the
         # board, the 555's pin 1 taken for f57 instead of e3)
-        if self.layout and self.layout.get("chips"):
-            from lunes import buildcheck
-            fixed, note = buildcheck.orient(mosaic, summary, self.world["grid"], self.layout)
-            if "turned back" in note:
-                self.world["grid"].update({k: fixed[k] for k in ("a1", "a63", "j1")})
-            self.world["grid"]["orientation"] = note
+        self._orient_grid(mosaic, summary, chip["center_mm"] if chip else None)
         self._place_board()
         return self.world["grid"]
+
+    def _orient_grid(self, mosaic, summary, seen_mm=None):
+        """Turns the grid round if it is read the wrong way: by where the microscope saw the chip when it has, else by
+        the plan's chip area being dark in the mosaic."""
+        if not (self.layout and self.layout.get("chips") and self.world.get("grid")):
+            return
+        from lunes import buildcheck
+        fixed, note = buildcheck.orient(mosaic, summary, self.world["grid"], self.layout, seen_mm)
+        if "turned back" in note:
+            self.world["grid"].update({k: fixed[k] for k in ("a1", "a63", "j1")})
+        self.world["grid"]["orientation"] = note
 
     def _place_board(self):
         """The board's place from the grid of its own holes, with no dot to measure. If the chip was seen somewhere else
@@ -2996,6 +3019,12 @@ class Hume:
         self.world["chip"] = {**(old if same else {}), "center_mm": [round(v, 2) for v in center],
                               "corners_mm": [[round(v, 2) for v in self._picture_mm(cx, cy, at)] for cx, cy in found["corners"]],
                               "size_mm": found["size_mm"], "at": time.time(), **more}
+        # the chip seen where it stands settles which way round the board's grid is read (Nov 4: with two resistors
+        # over the 555 the mosaic alone could not, and the laser went to the empty end)
+        summary = self.last_survey or (self.surveys[-1]["summary"] if self.surveys else None)
+        mosaic = self.last_mosaic if self.last_mosaic is not None else (cv2.imread(summary["mosaic"]) if summary else None)
+        if mosaic is not None:
+            self._orient_grid(mosaic, summary, center)
         self._place_board()
         self._save_world()
 
@@ -4113,6 +4142,72 @@ class Hume:
                 "note": "two copies of the part, the second turned upside down: read the marking in whichever is "
                         "upright, character by character, and say which characters are not clear"}, image
 
+    def _photo_zone(self, x0, x1, y0, y1):
+        """Sharp pictures of a zone of the board, given in machine mm (Erlan marks it on the page's map): every picture
+        of it is taken at several heights, from the board's surface up to the top of the tallest part at the zone's
+        centre, and stacked, so the board and the parts standing on it are in focus at once; then they are stitched."""
+        face_up = [v for v in self.surveys if v["face"] == self.side]
+        if self.focus_z is None and face_up:  # after a restart: the surface the last mosaic of this face was taken at
+            self.focus_z = face_up[-1]["summary"]["focus_z_mm"]
+        if self.focus_z is None:
+            return {"ok": False, "error": "the board's surface height is not known yet: measure_board first"}, None
+        (x0, x1), (y0, y1) = sorted((x0, x1)), sorted((y0, y1))
+        cal = self.m.config["microscope"]
+        cols, rows = grid_for(x1 - x0, y1 - y0, cal)
+        if cols * rows > MAX_ZONE_TILES:
+            return {"ok": False, "error": f"the zone ({x1 - x0:.0f} x {y1 - y0:.0f} mm) takes {cols * rows} pictures, "
+                                          f"more than {MAX_ZONE_TILES}: ask Erlan for a smaller one"}, None
+        vx, vy, _, (step_x, step_y) = geometry(cal)
+        center = ((x0 + x1) / 2, (y0 + y1) / 2)
+        half_x, half_y = (cols - 1) / 2, (rows - 1) / 2
+        places = [(i, j, (i - half_x) * step_x, (half_y - j) * step_y)
+                  for j in range(rows) for i in (range(cols) if j % 2 == 0 else reversed(range(cols)))]
+        for _, _, dx, dy in places:
+            problem = self._check({"X": center[0] + dx, "Y": center[1] + dy, "Z": self.focus_z})
+            if problem:
+                return {"ok": False, "error": problem}, None
+        moved = self._move(*center, z=self.focus_z)
+        if not moved["ok"]:
+            return moved, None
+        floor = self._z_floor()
+        found, _ = self._focus_up(ZONE_UP_MM)
+        # parts away from the centre may stand taller than the one found there: a resistor lies about 3 mm up
+        top = min(max(found, floor + 3.0), floor + ZONE_UP_MM, WORKSPACE["Z"][1] - LIFT_MM)
+        heights = np.linspace(top, floor, max(2, int(np.ceil((top - floor) / ZONE_STEP_MM)) + 1))  # down: one slack
+        out = ROOT / "captures" / f"zone_{datetime.now():%Y%m%d_%H%M%S}"
+        out.mkdir(parents=True)
+        tiles, cells, predicted = [], [], []
+        try:
+            for i, j, dx, dy in places:
+                if self.stop.is_set():
+                    raise Interrupted()
+                hop(self.m, top, same_side=True, X=center[0] + dx, Y=center[1] + dy)  # moves over the tallest part
+                self.m.move_to(Z=top + 0.3)
+                shots = []
+                for z in heights:
+                    self.m.move_to(Z=float(z))
+                    self.cam.fresh_gray(1)  # a picture taken after the move
+                    shots.append(self.cam.frame())
+                tiles.append(focus_stack(shots))
+                cells.append((i, j))
+                predicted.append(-(vx * dx + vy * dy))
+                cv2.imwrite(str(out / f"tile_r{j}_c{i}.png"), tiles[-1])
+                self.show(tiles[-1], f"zona: foto {len(tiles)} de {len(places)}, {len(heights)} alturas")
+        finally:
+            self.m.move_to(Z=top + LIFT_MM)  # clear of the parts afterwards
+        offsets, worst = predicted, 0.0
+        if len(tiles) > 1:
+            offsets, _, worst = align_tiles(tiles, cells, predicted)
+        image, _, _ = blend(tiles, offsets)
+        cv2.imwrite(str(out / "zone.png"), image)
+        self.show(image, "zona nítida")
+        return {"ok": True, "zone_mm": {"X": [round(x0, 1), round(x1, 1)], "Y": [round(y0, 1), round(y1, 1)]},
+                "pictures": len(tiles), "heights_mm": [round(float(z), 2) for z in heights],
+                "tallest_above_board_mm": round(top - floor, 1), "worst_seam_px": round(worst, 1),
+                "file": str(out / "zone.png"),
+                "note": "each picture is the sharpest of several heights, pixel by pixel: the board and the parts on it "
+                        "are in focus together. It is on the page now; say what it shows if Erlan asked"}, image
+
     def _faces_side_by_side(self, listing):
         """The last mosaic of each face of the board, next to each other at the same height."""
         last = {}
@@ -4417,6 +4512,9 @@ class Hume:
             return self._survey_board(args.get("width_mm"), args.get("height_mm"))
         if name == "inspect_component":
             return self._inspect(float(args["x"]), float(args["y"]))
+        if name == "photo_zone":
+            return self._photo_zone(float(args["x_min"]), float(args["x_max"]), float(args["y_min"]),
+                                    float(args["y_max"]))
         if name == "look_survey":
             listing = [{"number": v["number"], "face": v["face"], "board_size_mm": v["board_size_mm"], "at": v["at"]}
                        for v in self.surveys]

@@ -140,6 +140,29 @@ def align_tiles(frames, cells, predicted, prior=0.02, max_jump=60.0):
     return list(sol), len(pairs), (max(residual) if residual else 0.0)
 
 
+def focus_stack(frames):
+    """One picture sharp everywhere from pictures of the same place taken at several heights: each pixel comes from
+    the picture whose neighbourhood is sharpest there. The microscope sees a millimetre or so in focus, so the board,
+    a resistor's body and a chip's top are never sharp in one picture. The pictures are first lined up on the middle
+    one: a head not quite plumb moves the view a little with Z."""
+    ref = cv2.cvtColor(frames[len(frames) // 2], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    window = cv2.createHanningWindow(ref.shape[::-1], cv2.CV_32F)
+    h, w = ref.shape
+    lined = []
+    for f in frames:
+        (dx, dy), response = cv2.phaseCorrelate(ref, cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32), window)
+        if response < 0.05 or np.hypot(dx, dy) > 20:  # nothing clear to line up on: as taken
+            dx = dy = 0.0
+        lined.append(cv2.warpAffine(f, np.float32([[1, 0, -dx], [0, 1, -dy]]), (w, h), borderMode=cv2.BORDER_REFLECT))
+    sharp = [cv2.GaussianBlur(np.abs(cv2.Laplacian(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), cv2.CV_32F, ksize=3)), (0, 0), 4)
+             for f in lined]
+    best = np.argmax(np.stack(sharp), axis=0)
+    out = np.empty_like(lined[0])
+    for k, f in enumerate(lined):
+        out[best == k] = f[best == k]
+    return out
+
+
 def blend(frames, offsets):
     """Pastes the pictures at their offsets, feathering every overlap so no seam line shows (each picture weighs
     less towards its own edges)."""

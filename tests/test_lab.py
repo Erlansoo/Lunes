@@ -301,8 +301,28 @@ def trimmed():
     ok(latin("ok lunes, señala la pata número 1") and not latin("\u0c95\u0ccd\u0cb2\u0cbe\u0cb0\u0ccb"), "Spanish passes; Kannada does not")
 
 
+def stacked():
+    """A zone's pictures at several heights become one picture sharp everywhere, even when Z moved the view a little."""
+    import cv2
+    from survey import focus_stack
+    print("Focus stacking")
+    rng = np.random.default_rng(4)
+    scene = (rng.random((480, 640)) * 255).astype(np.uint8)
+    scene = cv2.cvtColor(cv2.GaussianBlur(scene, (0, 0), 1.2), cv2.COLOR_GRAY2BGR)
+    soft = cv2.GaussianBlur(scene, (0, 0), 6)
+    top, bottom = scene.copy(), soft.copy()  # the top half sharp at one height, the bottom half at the other
+    top[240:], bottom[240:] = soft[240:], scene[240:]
+    top = cv2.warpAffine(top, np.float32([[1, 0, 3], [0, 1, -2]]), (640, 480), borderMode=cv2.BORDER_REFLECT)
+    out = focus_stack([top, bottom, soft])  # lined up on the middle one
+    err = np.abs(out.astype(int) - scene.astype(int))[40:440, 40:600]
+    ok(np.median(err) < 6 and np.median(np.abs(soft.astype(int) - scene.astype(int))[40:440, 40:600]) > 3 * max(np.median(err), 1),
+       f"the stack is as sharp as the scene everywhere, the shifted picture lined up (median error {np.median(err):.1f})")
+
+
 if __name__ == "__main__":
+    sys.path.insert(0, str(ROOT / "tools"))
     page(stages())
     trimmed()
+    stacked()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'}")
     sys.exit(1 if FAILED else 0)

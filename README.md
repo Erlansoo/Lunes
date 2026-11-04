@@ -387,6 +387,12 @@ The design is in [docs/diseno-conversacion.md](docs/diseno-conversacion.md).
 
 Claude Code (Anthropic) is used as a coding assistant while building. The AI inside the product runs on Meta models.
 
+## Demo video credits
+
+The narrator's voice-over is AI-generated with ElevenLabs (paid plan). Lunes' own voice in the video is MMS-TTS, as on
+the bench. Background music: "Ambient Technology" by The_Mountain, from Pixabay, under the Pixabay Content License.
+All footage is real: the bench, the screen recordings and the camera were filmed during the hackathon.
+
 ## License
 
 [MIT](LICENSE). The Hantek 6022BE's firmware in `firmware/hantek6022be` is the OpenHantek6022 project's and stays under

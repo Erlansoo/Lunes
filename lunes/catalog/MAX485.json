@@ -1,0 +1,135 @@
+{
+ "name": "MAX485",
+ "package": "DIP8",
+ "pins": {
+  "1": "RO",
+  "2": "RE",
+  "3": "DE",
+  "4": "DI",
+  "5": "GND",
+  "6": "A",
+  "7": "B",
+  "8": "VCC"
+ },
+ "power": [
+  "VCC",
+  "GND"
+ ],
+ "inputs": [
+  "RE",
+  "DE",
+  "DI"
+ ],
+ "outputs": [
+  "RO"
+ ],
+ "dc_links": [
+  [
+   "VCC",
+   "GND"
+  ],
+  [
+   "A",
+   "B"
+  ]
+ ],
+ "supply_v": [
+  4.75,
+  5.25
+ ],
+ "notes": "RS485 transceiver, single 5V supply (4.75 to 5.25 V). DIP8: 1 RO receiver output, 2 RE receiver enable ACTIVE LOW, 3 DE driver enable ACTIVE HIGH, 4 DI driver input, 5 GND, 6 A non-inverting bus, 7 B inverting bus, 8 VCC. DE high: A follows DI and B is opposite; DE low: A and B high impedance. RE low: RO high when A-B >= +0.2 V, low when A-B <= -0.2 V; RE high: RO high impedance. A and B are bidirectional bus pins. Typical use needs a 120 ohm termination between A and B at the bus ends and a 100 nF decoupling capacitor at VCC.",
+ "source": "https://hadibanelectronic.com/wp-content/uploads/2023/06/MAX485EN-HTC.pdf",
+ "spice": ".subckt CHIP_MAX485 ro re de di gnd a b vcc\nRs vcc gnd 2k\nRin a b 12k\nBro ro gnd I = (v(ro,gnd)-v(vcc,gnd)*lunes_step(v(a,b),40))/20*(1-lunes_step(v(re,gnd)-1.5,20))\nBda a gnd I = (v(a,gnd)-v(vcc,gnd)*lunes_step(v(di,gnd)-1.5,20))/30*lunes_step(v(de,gnd)-1.5,20)\nBdb b gnd I = (v(b,gnd)-v(vcc,gnd)*(1-lunes_step(v(di,gnd)-1.5,20)))/30*lunes_step(v(de,gnd)-1.5,20)\n.ends CHIP_MAX485",
+ "test": {
+  "circuit": {
+   "name": "MAX485 loopback test",
+   "supply_v": 5,
+   "parts": [
+    {
+     "ref": "U1",
+     "kind": "IC",
+     "model": "MAX485",
+     "pins": {
+      "RO": "RO",
+      "RE": "GND",
+      "DE": "VCC",
+      "DI": "DI",
+      "GND": "GND",
+      "A": "A",
+      "B": "B",
+      "VCC": "VCC"
+     }
+    },
+    {
+     "ref": "R1",
+     "kind": "R",
+     "value": "120",
+     "pins": [
+      "A",
+      "B"
+     ]
+    },
+    {
+     "ref": "R2",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "RO",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R3",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "A",
+      "GND"
+     ]
+    },
+    {
+     "ref": "R4",
+     "kind": "R",
+     "value": "10k",
+     "pins": [
+      "B",
+      "GND"
+     ]
+    },
+    {
+     "ref": "V1",
+     "kind": "V",
+     "value": {
+      "square": [
+       0,
+       5,
+       1000
+      ]
+     },
+     "pins": {
+      "+": "DI",
+      "-": "GND"
+     }
+    }
+   ]
+  },
+  "goals": [
+   {
+    "net": "A",
+    "frequency_hz": 1000,
+    "tolerance": 0.1
+   },
+   {
+    "net": "B",
+    "frequency_hz": 1000,
+    "tolerance": 0.1
+   },
+   {
+    "net": "RO",
+    "frequency_hz": 1000,
+    "tolerance": 0.1
+   }
+  ]
+ },
+ "origin": "learnt"
+}

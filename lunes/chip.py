@@ -22,6 +22,7 @@ import numpy as np
 MIN_BODY_MM = (5.0, 4.0)  # a DIP-8's body is about 9.3 x 6.3 mm; smaller things are not chips
 MAX_BODY_MM = 60.0  # longer than this is not a chip in one picture
 MAX_SHARE = 0.75  # a body filling more of the picture than this is the whole board or the bench, not a chip
+LEGS_MM = 2.0  # thinner than this is a leg, a lead or a shadow line, never a chip's body
 
 
 BESIDE_PIN_MM = 1.4  # from the long axis: well inside the top of a body 6.35 mm wide, since the slanted beam misses a
@@ -50,6 +51,21 @@ def find_chip(frame, px_per_mm):
     """{"center", "size_mm", "angle_deg", "corners", "fill", "share"} of the biggest chip body in the picture, or None.
     The angle is of the body's long axis, from the picture's x axis, in [-90, 90)."""
     mask = body_mask(frame)
+    found = _biggest_body(mask, px_per_mm)
+    if found is None:
+        # parts over the chip (a resistor's legs crossing it, Nov 4) join the body to their dark shadows, and the glare
+        # on the marking leaves holes in it, so it is no solid rectangle. Its holes filled and everything thinner than
+        # about 2 mm opened away, the legs go and the body stays: a DIP's body is 6 mm wide and more
+        solid = np.zeros_like(mask)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(solid, contours, -1, 1, cv2.FILLED)
+        k = int(round(LEGS_MM * px_per_mm)) | 1
+        found = _biggest_body(cv2.morphologyEx(solid, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))),
+                              px_per_mm)
+    return found
+
+
+def _biggest_body(mask, px_per_mm):
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     best = None
     for i in range(1, n):
@@ -153,7 +169,10 @@ def notch_end(frame, chip):
                 arcs[side] = float(rr)
                 break
     if len(arcs) == 1:
-        votes.append((next(iter(arcs)), 0.7, "the notch's arc"))
+        # the half circle itself, seen at one end: it outweighs the body's mask missing at an end, which a light,
+        # speckled top or a lead lying over it fakes (Nov 4: the mask said left on a 555 whose arc stood plainly on
+        # the right, and every pin was counted from the wrong end, pin 1 taken for pin 5)
+        votes.append((next(iter(arcs)), 1.5, "the notch's arc"))
     dent = dent_contrast > 18
     if dent:
         votes.append((dent_side, min(1.0, dent_contrast / 45), "the pin-1 dent"))

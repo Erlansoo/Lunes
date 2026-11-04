@@ -10,7 +10,7 @@ reasoning and the eyes are Lunes's.
 
 Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Push the Frontier*).
 
-> Status: work in progress. The hackathon runs Oct 26 – Nov 4, 2026.
+> Status: submitted on Nov 4, 2026, the hackathon's last day. Demo video: https://www.youtube.com/watch?v=K_N2lbv65S8
 > [![tests](https://github.com/Erlansoo/Lunes/actions/workflows/tests.yml/badge.svg)](https://github.com/Erlansoo/Lunes/actions/workflows/tests.yml)
 
 ## Try it
@@ -86,7 +86,7 @@ set up as this README describes.
   - A self-test on the scope's own calibration output catches a probe set to x1 while Lunes counts x10, or the
     other way round.
   - A simulated scope with the same interface (`--osciloscopio simulado`) tries all of this without the real one.
-- **Working on the simulated bench, first test on a real breadboard on Oct 30:** diagnosis by measurement.
+- **Working on the real bench and on the simulated one:** design, build check and measurement against the simulation.
   - **The circuit as data:** Lunes keeps the circuit on the bench as parts, values and nets (`lunes/circuit.py`),
     one Erlan describes or one Lunes designs.
   - **Simulation:** ngspice simulates it, and each net is read with the same measurements the scope uses
@@ -362,13 +362,13 @@ The design is in [docs/diseno-conversacion.md](docs/diseno-conversacion.md).
 
 | Model | Role in Lunes | State |
 |---|---|---|
-| Muse Spark | The conductor, at minimal reasoning: Lunes' side of the conversation, deciding by judgment what Erlan wants and whether to answer, look or start a job. And the worker: the bench agent that plans, uses the machine, reads chips and boards, and searches the web for datasheets | in use |
+| Muse Spark | The conductor, at minimal reasoning: Lunes' side of the conversation, deciding by judgment what Erlan wants and whether to answer, look or start a job. It also reads pictures of the bench and checks the build from microscope cuts | in use |
 | Muse Glimmer (open weights) | The same conductor and worker on the bench PC (RTX 3090), when there is no internet and in private mode | in use |
 | Omnilingual ASR 300M and 1B (open weights, Apache-2.0) | Lunes' ears, on the bench PC: the 300M on the GPU hears everything at once, the 1B on the CPU gets a job's exact words (part numbers) | in use |
 | MMS-TTS Spanish (open weights, [`facebook/mms-tts-spa`](https://huggingface.co/facebook/mms-tts-spa), CC-BY-NC-4.0) | Lunes' spoken voice, on the bench PC | in use |
 | Muse Voice Transcribe | A second ear through the API, for noisy rooms and bench names | available, not used by default |
 | SAM 3.1 | Finds components by name on the board mosaic and in the bench camera's and the Kinect's views, and tracks them in recorded video | in use |
-| Muse Wonder | Short video clips from the bench | planned |
+| Muse Wonder | The worker, at high reasoning: the bench agent that plans, uses the machine (about 70 tools), reads chips and boards, searches the web for datasheets and learns new chips. Muse Spark can take its place (`--brain`) | in use |
 
 ## Principles
 

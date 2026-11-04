@@ -6,8 +6,11 @@ the PC. A real server on a free port answers as the browser would ask.
 import inspect
 import json
 import re
+import shutil
 import sys
+import tempfile
 import types
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -78,8 +81,11 @@ def stages():
 
 def page(hume):
     print("The page")
-    outside = [w for w in PAGE.decode().replace("http://www.w3.org/2000/svg", "").split() if "http" in w or "//cdn" in w]
+    report_page = (ROOT / "lunes" / "web" / "report.html").read_bytes()
+    outside = [w for source in (PAGE, report_page) for w in source.decode().replace("http://www.w3.org/2000/svg", "").split()
+               if "http" in w or "//cdn" in w]
     ok(not outside, f"it loads nothing from outside the PC {outside[:3]}")
+    ok(b'id="errors"' in PAGE and b'data-t="errors"' in PAGE and b"check_items" in PAGE, "the page has the Errores button for check_build's findings")
     board = Dashboard(port=0, lab=lambda: state(hume))
     base = f"http://127.0.0.1:{board.server.server_address[1]}"
     with urllib.request.urlopen(base + "/") as r:
@@ -88,7 +94,77 @@ def page(hume):
     with urllib.request.urlopen(base + "/events?since=0") as r:
         data = json.loads(r.read())
     ok(data["events"][0]["text"] == "hola" and "lab" in data, "the events carry the conversation and the bench")
+    print("Typing to Lunes and the microphone, from the page")
+
+    def post(url, body):
+        request = urllib.request.Request(base + url, data=json.dumps(body).encode(), method="POST",
+                                         headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+    ok(data["mic"] is None and post("/say", {"text": "hola"})[0] == 503 and post("/mic", {"on": False})[0] == 503,
+       "with no voice session the mic is null and typing or switching is refused")
+    typed, mic = [], {"on": True}
+
+    def switch(on):
+        mic["on"] = on
+        return mic["on"]
+    board.on_text, board.on_mic, board.mic_is_on = typed.append, switch, lambda: mic["on"]
+    ok(post("/say", {"text": "  mide OUT  "}) == (200, {"ok": True}) and typed == ["mide OUT"], "a typed line reaches Lunes, trimmed")
+    ok(post("/say", {"text": "   "})[0] == 400 and post("/say", "no")[0] == 400 and typed == ["mide OUT"], "an empty line or a bad body is refused")
+    ok(post("/mic", {"on": False}) == (200, {"on": False}) and mic["on"] is False, "the page mutes the microphone")
+    with urllib.request.urlopen(base + "/events?since=0") as r:
+        ok(json.loads(r.read())["mic"] is False, "the events say the microphone is muted")
+    ok(post("/mic", {"on": True}) == (200, {"on": True}) and mic["on"] is True, "and turns it on again")
+    print("The report page and the files under runs/")
+    runs = Path(tempfile.mkdtemp())
+    (runs / "reports").mkdir()
+    (runs / "pictures").mkdir()
+    (runs / "reports" / "latest.md").write_text("# Hola\n\n![foto](runs/pictures/p.png)\n", "utf-8")
+    (runs / "reports" / "blinker-20261103-1000.md").write_text("# Hola\n", "utf-8")
+    (runs / "pictures" / "p.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (runs / "api_calls.jsonl").write_text("not for the page", "utf-8")
+    board.runs = runs
+
+    def got(url):
+        try:
+            with urllib.request.urlopen(base + url) as r:
+                return r.status, r.headers["Content-Type"], r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, "", b""
+    ok(b"<title>Lunes" in got("/report?file=blinker-20261103-1000.md")[2], "the report page comes")
+    ok(json.loads(got("/reports")[2]) == {"latest": True, "reports": ["blinker-20261103-1000.md"]},
+       "the other reports are listed, without latest.md")
+    kind, text = got("/runs/reports/latest.md")[1:]
+    ok(kind.startswith("text/markdown") and b"Hola" in text, "a report comes as Markdown")
+    ok(got("/runs/pictures/p.png")[1] == "image/png", "a picture comes")
+    refused = [u for u in ("/runs/../lunes/hume.py", "/runs/..%2Flunes%2Fhume.py", "/runs/reports/../../lunes/hume.py",
+                           "/runs/api_calls.jsonl", "/runs/reports/", "/runs/reports/nothing.md") if got(u)[0] != 404]
+    ok(not refused, f"a path that leaves runs/, another kind of file or a missing one is refused {refused}")
+    print("The saved circuits")
+    ok(json.loads(got("/circuits")[2]) == [] and post("/circuit/load", {"file": "a.json"})[0] == 503,
+       "with no bench the list is empty and loading is refused")
+    (runs / "circuits").mkdir()
+    (runs / "circuits" / "a.json").write_text('{"circuit": {"name": "A"}, "layout": null}', "utf-8")
+    listed = [{"file": "a.json", "name": "A", "saved_at": "2026-11-03T10:00", "parts": ["R1 1k"], "plan": False, "current": True}]
+    loaded = []
+    board.circuits, board.on_circuit_load = lambda: listed, lambda f: (loaded.append(f), {"ok": True, "name": "A"})[1]
+    ok(json.loads(got("/circuits")[2]) == listed and json.loads(got("/runs/circuits/a.json")[2])["circuit"]["name"] == "A",
+       "the saved circuits are listed and each one's file is readable")
+    ok(post("/circuit/load", {"file": "a.json"}) == (200, {"ok": True, "name": "A"}) and loaded == ["a.json"], "one of them goes on the bench")
+    ok(post("/circuit/load", {})[0] == 400 and loaded == ["a.json"], "with no file nothing is loaded")
+    print("The breadboard edited by hand")
+    plan = {"holes": {"R1": {"1": "a1", "2": "a5"}}, "wires": [{"from": "a5", "to": "+3", "color": "rojo"}], "external": []}
+    ok(post("/layout/edit", {"layout": plan})[0] == 503, "with no bench the edit is refused")
+    edited = []
+    board.on_layout_edit = lambda layout: (edited.append(layout), {"ok": True, "changes": [f"{len(layout['holes'])} part moved"], "warnings": [], "nets": {"OUT": 2.5}})[1]
+    ok(post("/layout/edit", {"layout": plan}) == (200, {"ok": True, "changes": ["1 part moved"], "warnings": [], "nets": {"OUT": 2.5}}) and edited == [plan],
+       "the edited plan reaches Lunes and its review comes back")
+    ok(post("/layout/edit", {"layout": "no"})[0] == 400 and post("/layout/edit", {})[0] == 400 and len(edited) == 1, "without a plan nothing is rebuilt")
     board.server.shutdown()
+    shutil.rmtree(runs, ignore_errors=True)
 
 
 def trimmed():

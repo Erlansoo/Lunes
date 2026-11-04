@@ -62,9 +62,27 @@ GUIDE = Path(__file__).resolve().parent / "knowledge" / "circuits.md"  # Lunes' 
 LIFT_MM = 3.0
 # what refuses while moving is on hold (calibrate_kinect is the cure, and only runs when Erlan asks)
 MOVING_TOOLS = {"move_to", "move_by", "center_on_point", "center_on_corner", "go_to_mosaic_point", "laser_point",
-                "guide_step", "guide_net", "see_chip", "center_on_chip", "calibrate_bench", "reach_in_bench",
+                "guide_step", "guide_net", "bench_test", "see_chip", "center_on_chip", "calibrate_bench", "reach_in_bench",
                 "measure_board", "survey_board", "inspect_component", "autofocus", "laser_calibrate"}
 MAX_ROUNDS = 16
+
+
+def surprise(result):
+    """What in a tool's result says the world is not as the agent assumed, in a few words, or None: a failure, a
+    point not seen where it was put, a part not where the plan has it, a reading the simulation does not explain.
+    The agent loop does not let such a result pass in silence (Erlan, 3 Nov: it walked 18 laser steps over an empty
+    end of the board, each one 'not confirmed', with see_chip's as_planned false before them)."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("ok") is False:
+        return f"failed: {str(result.get('error') or result.get('refused') or '')[:160]}"
+    for key, words in (("as_planned", "a part is not where the plan has it"), ("confirmed", "not seen where it was put"),
+                       ("agrees", "two instruments disagree"), ("all_as_simulated", "the readings differ from the simulation")):
+        if result.get(key) is False:
+            return words
+    if result.get("laser_failed"):
+        return f"the laser did not point: {str(result['laser_failed'])[:120]}"
+    return None
 NEAR_CHIP_MM = 40.0  # around the chip on the map the head stays above the breadboard, whoever asks
 RING_ABOVE_MM = 103.0  # about how high the ring hangs over what is in focus: a first guess for the bench camera
 NO_TOKENS = ("Se acabaron los tokens de hoy y sigo con el modelo local, que no mueve la máquina. Puedo conversar y mirar; "
@@ -102,6 +120,13 @@ ver qué hay en el banco, dónde está la placa, los cables y las herramientas (
 El Kinect te da la profundidad: la distancia en milímetros desde el Kinect hasta cada punto, con unos milímetros de
 error a un metro (kinect_distance), y comprueba dónde está el cabezal (check_position).
 Las dos cámaras están calibradas a las coordenadas del banco cuando Erlan lo pidió (calibrate_bench, calibrate_kinect).
+Al revisar lo que Erlan armó, compara nodos y no nombres de agujero: una pata en otro agujero de la misma tira de cinco
+o del mismo riel es la misma conexión (holes_connected lo decide): das el visto bueno con la observación. El plan del
+que él armó es el que vale; no rediseñes ni replanifiques con el armado empezado, y si no está claro qué circuito hay
+en la protoboard, circuit_list y que él elija.
+Lo que hay en el taller está en el inventario (herramienta inventory): valores de resistencias, capacitores y
+potenciómetros, chips, placas y módulos. circuit_design ya redondea a esos valores y dice qué pieza no está en el
+estante; cuando Erlan pregunta qué tiene, o hay que elegir un chip o una placa que esté a mano, inventory.
 A la cámara del banco le falta un dato después de calibrarla, una sola vez: a qué altura cuelga el anillo sobre lo
 que enfoca el microscopio. Se lo enseñas con una cosa que vean las dos: centras el microscopio en algo que la cámara
 del banco también distinga (el chip negro de la protoboard), enfocado, find_in_bench lo encuentra en la foto del
@@ -200,6 +225,12 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
   dice la simulación. Sus entradas analógicas miden sus redes sin la punta: en un diagnóstico, mcu_read antes de
   pedirle a Erlan que mida. Para ver lo que imprime cualquier programa de una placa (mensajes, valores de un
   sensor), serial_monitor, como el monitor serie del Arduino IDE; si el texto sale basura, baud 'auto'.
+- Si la placa tiene que hacer algo (decidir, recordar, temporizar, contar, avisar), el programa de pines no basta:
+  escribe tú el programa entero con mcu_code, como un ingeniero de firmware (circuit_guide firmware). Antes de
+  cargarlo, pruébalo en seco con mcu_dry_run: todas las situaciones, los bordes entre ellas y la vuelta al inicio,
+  cada una con lo que esperas. Si algo no da, piensa si falla el código o tu expectativa, corrígelo y prueba de
+  nuevo. mcu_program no carga un código que no pasó su prueba en seco. Di que el programa hace algo solo si la
+  prueba en seco lo mostró.
 - Si el Kinect no ve el cabezal donde crees estar, la máquina queda en pausa: ninguna herramienta que la mueva
   funciona. Dile a Erlan las dos medidas (lo que ve el Kinect y lo que dice el microscopio contra el mosaico) y
   espera; solo cuando él diga que sigas, allow_moves con sus palabras, y después sigue con lo que estabas haciendo.
@@ -223,17 +254,38 @@ Cómo trabajas: eres un agente, haces el trabajo completo con tus herramientas, 
 - Para identificar o leer un integrado u otro componente: inspect_component con un punto sobre él en el mosaico. Lo
   fotografía entero, de cerca y enfocado en su parte de arriba, y te devuelve la imagen para leer su marca. No
   intentes leerlo moviéndote de a poco.
-- Antes de actuar, planifica en una línea: qué vas a hacer, cómo y con qué herramientas, y sigue ese plan; no
-  pruebes la primera herramienta que se te ocurra. Un componente del circuito está donde su protoboard lo dibuja:
+- Trabaja con Erlan como un colega, no como un ejecutor de órdenes. Cuando hay más de un camino razonable (cómo
+  comprobar algo, qué medir primero, rediseñar o corregir lo que hay, una pieza que falta), proponle dos o tres
+  opciones con lo que gana y lo que arriesga cada una, di cuál recomiendas y por qué, y pregúntale antes de hacer lo
+  que no se deshace fácil. Lo que es claro y seguro, hazlo sin preguntar.
+- Razona como un ingeniero que depura: ante algo que no sabes o no cuadra, plantea las explicaciones posibles, piensa
+  qué mostraría cada una, y elige la observación o la medida que mejor las separa; después de verla, descarta lo
+  que no encaja y di cuál queda y con qué confianza. Distingue siempre lo que viste o mediste de lo que deduces.
+  Cuando te falte un dato que no está en el banco (la hoja de datos de un chip, su patillaje, un valor típico, cómo se
+  hace algo, qué significa una marca), búscalo en internet con search_web antes de suponer, y di de dónde sale.
+- Piensa antes de actuar, como un ingeniero en el banco y no como quien sigue una receta. Antes de una serie de
+  acciones, di en una línea tu plan y las suposiciones de las que depende, y piensa tú cómo comprobar la más
+  importante con lo que tienes a mano (tus cámaras, el láser, los instrumentos, lo que ya sabes del banco, una
+  pregunta a Erlan) antes de apostar el resto a ella. Después de cada resultado compara lo que esperabas con lo que
+  salió: lo que no cuadra es información que cambia el plan, no ruido. Si una suposición cae, no sigas: busca por
+  qué con tu propio criterio, corrige, o dile a Erlan qué no cuadra.
+- Planifica qué vas a hacer, cómo y con qué herramientas, y sigue ese plan; no pruebes la primera herramienta que
+  se te ocurra. Un componente del circuito está donde su protoboard lo dibuja:
   con la protoboard ubicada, laser_point o move_to a su agujero; si no, cerca del chip, por posición desde el chip
   (move_by de unos mm y look_microscope), no saltando por el mosaico punto por punto. Con tres intentos fallidos,
   para y pregúntale a Erlan dónde está (Erlan, 3 nov: "planifica bien qué vas a hacer, cómo y con qué herramientas").
 - Si te falta algo que Erlan sabe (dónde está la placa, qué es, qué quiere), pregúntale en una frase.
 
 Reglas:
-- Responde en español, corto y natural, para decirlo en voz alta: una a tres frases, sin listas, sin markdown.
+- Responde en español, natural, para decirlo en voz alta (sin listas ni markdown), con lo que haga falta para que se
+  entienda tu razonamiento: qué viste, qué concluyes y por qué, y qué no sabes todavía. Coherente antes que corto;
+  sin relleno.
+- Piensa en voz alta mientras trabajas: cuando llamas una herramienta, escribe en el mismo mensaje una o dos frases
+  de lo que piensas y por qué eliges eso ("el láser no se ve en dos agujeros seguidos; sospecho que leí la placa al
+  revés, la miro con el microscopio antes de seguir"). Eso se le dice a Erlan: es tu criterio, no un anuncio.
 - Antes de afirmar algo sobre la placa o el banco, míralo con una herramienta.
-- Nunca anuncies una acción ("voy a mirar", "en un momento"): hazla llamando la herramienta en ese mismo turno.
+- Nunca anuncies una acción sin hacerla ("voy a mirar", "en un momento" y nada más): si dices lo que harás, llama
+  la herramienta en ese mismo mensaje.
 - Lo que puedes hacer es lo que hacen tus herramientas: mirar por el microscopio, la cámara del banco y el Kinect, mover la CNC y recordar. No puedes recibir videos, archivos ni fotos del teléfono, ni entrar a internet: si te ofrecen algo así, dilo.
 - Solo crees lo que observaste. Distingue "vi" de "supongo", y di cuando la imagen no alcanza para saberlo. Al leer
   una marca, di qué caracteres no se ven claros en vez de inventarlos.
@@ -478,8 +530,62 @@ TOOLS = [
                        "wires, the rails, and a hole to probe each net. The code rebuilds the connections from the holes "
                        "and refuses a plan that is not the circuit. Then guide_step shows each step with the laser. When "
                        "the chip already stands on the board, first_row is the row of its pin 1, read in the mosaic: "
-                       "the plan is laid out around it.",
+                       "the plan is laid out around it. The plan is kept with the circuit (also across a restart): "
+                       "once Erlan started building, never lay it out again nor change the circuit; check his build "
+                       "against the plan he was given.",
         "parameters": {"type": "object", "properties": {"first_row": {"type": "integer"}}}}},
+    {"type": "function", "function": {
+        "name": "check_build",
+        "description": "Check Erlan's build against the plan hole by hole, from the latest mosaic: every lead and wire "
+                       "end of the plan is cut out, Muse Spark says per hole whether something goes into it, and each "
+                       "part and wire comes back as there, missing or unclear, drawn on the web lab's breadboard as a "
+                       "check or a cross. It first makes sure the plan falls on the real board (the grid read the wrong "
+                       "way round is turned back). For what is missing it says what the simulator expects without it, "
+                       "to compare with what was measured. Needs a mosaic taken after the board last moved. measured: "
+                       "volts already read at nets this session ({\"REF\": 4.96, \"OUT\": 4.97}), so the instruments "
+                       "decide between the eye's suspects.",
+        "parameters": {"type": "object", "properties": {"measured": {"type": "object"}}}}},
+    {"type": "function", "function": {
+        "name": "mark_board",
+        "description": "Mark on the web lab's drawing of the breadboard (the virtual one) where something goes: a net "
+                       "(REF, OUT, VCC...) on its probe hole, or any hole (c5, +12), with the ground clip on GND when it "
+                       "is a probe point. Instant, no laser, the machine does not move. Use it whenever Erlan asks to be "
+                       "shown or marked a point on the virtual breadboard (\"márcame dónde va la punta\", \"ponme un "
+                       "punto en REF\", \"muéstrame en la web\").",
+        "parameters": {"type": "object", "properties": {
+            "net": {"type": "string"}, "hole": {"type": "string"}, "label": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "bench_test",
+        "description": "The whole oscilloscope test of the circuit on the bench, as one skill. step start: starts the "
+                       "diagnosis, checks the supply, and shows with the laser where the ground clip and the probe go "
+                       "first, with the words to tell Erlan. step next, when Erlan says the probe is there (\"listo\", "
+                       "\"ya está\"): measures it, compares with the simulation, and shows the next point, until the "
+                       "verdict (the report then writes itself). net only if Erlan put the probe somewhere else; "
+                       "source multimeter with mean_v if he measured with his multimeter. Use it for \"haz la prueba\", "
+                       "\"comprueba el circuito\", \"mídelo\" instead of chaining the diagnosis tools by hand.",
+        "parameters": {"type": "object", "properties": {
+            "step": {"type": "string", "enum": ["start", "next"]}, "net": {"type": "string"},
+            "source": {"type": "string", "enum": ["scope", "multimeter"]}, "mean_v": {"type": "number"},
+            "sure": {"type": "boolean"}}, "required": ["step"]}}},
+    {"type": "function", "function": {
+        "name": "holes_connected",
+        "description": "Whether two breadboard holes are the same electrical node (the same strip of five, or the "
+                       "same rail): a lead or wire in another hole of the plan's strip is NOT a mistake. Use it before "
+                       "calling any hole of Erlan's build wrong; if connected, give the OK with the note of which hole "
+                       "it is in.",
+        "parameters": {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "string"}},
+                       "required": ["a", "b"]}}},
+    {"type": "function", "function": {
+        "name": "circuit_list",
+        "description": "The circuits saved on this bench (runs/circuits/), newest first, each with its parts and whether "
+                       "it has a breadboard plan. When it is not clear which circuit is on the breadboard, ask Erlan to "
+                       "pick one here (the web lab lists them with their drawing), then circuit_load.",
+        "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {
+        "name": "circuit_load",
+        "description": "Put a saved circuit back on the bench, with its simulation and the plan Erlan built from: file "
+                       "from circuit_list. The diagnosis starts afresh.",
+        "parameters": {"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}}},
     {"type": "function", "function": {
         "name": "breadboard_place",
         "description": "Say where the breadboard lies on the machine, from two holes at least 20 mm apart and their "
@@ -625,8 +731,26 @@ TOOLS = [
         "name": "circuit_guide",
         "description": "Read a section of Lunes' circuit guide, what a senior bench engineer keeps in mind: method, "
                        "555, led, transistor, opamp, rc, divider, diodes, supply, breadboard, simulation, diagnosis, "
-                       "measurement, arduino. For judgement (pinouts, typical faults, limits), not for arithmetic.",
+                       "measurement, arduino, firmware. For judgement (pinouts, typical faults, limits), not for arithmetic.",
         "parameters": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]}}},
+    {"type": "function", "function": {
+        "name": "inventory",
+        "description": "What Erlan has on the workshop's shelves (config/inventory.json): resistor, capacitor and pot "
+                       "values, chips, boards and modules, each saying whether Lunes can simulate it. circuit_design "
+                       "already rounds to these values when one is within 20 % of the ideal and says which parts are "
+                       "not on the shelf. Use it when Erlan asks what he has, or to pick a chip or board at hand. "
+                       "search keeps only what mentions a word or a value.",
+        "parameters": {"type": "object", "properties": {"search": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "report",
+        "description": "Write the report of the circuit on the bench as Markdown in runs/reports/ (and latest.md, "
+                       "which the web lab shows on its report page): the parts and what is on the shelf, what the "
+                       "simulation says net by net, what was measured (scope, multimeter, the board's inputs, the "
+                       "supply), the two side by side with the criterion behind each agreement or difference, the "
+                       "diagnosis step by step and its verdict, the pictures. Written by itself when a diagnosis "
+                       "reaches a verdict; call it when Erlan asks for the report or when a check ends. Then tell "
+                       "Erlan it is written.",
+        "parameters": {"type": "object", "properties": {"title": {"type": "string"}}}}},
     {"type": "function", "function": {
         "name": "calculate",
         "description": "Arithmetic and physics with units, done by the code, never in your head: every number you "
@@ -679,15 +803,47 @@ TOOLS = [
     {"type": "function", "function": {
         "name": "mcu_program",
         "description": "Put the program of the circuit's microcontroller board (set with circuit_set or "
-                       "circuit_design) on the real board: the code writes the sketch from the same pin program "
-                       "the simulation ran, compiles it with arduino-cli and uploads it over USB, so the board and "
-                       "the simulation cannot disagree. Only when Erlan asks or agrees, with the board plugged in. "
+                       "circuit_design) on the real board: the code written with mcu_code once it passed "
+                       "mcu_dry_run, or else a sketch made from the same pin program the simulation ran; it "
+                       "compiles it with arduino-cli and uploads it over USB. Only when Erlan asks or agrees, with the board plugged in. "
                        "Without port it uses the only Arduino plugged in, or lists the serial ports so you ask Erlan "
                        "which one; it never touches the CNC's port. A Blue Pill is only compiled (it needs an "
                        "ST-Link).",
         "parameters": {"type": "object", "properties": {
             "port": {"type": "string", "description": "e.g. COM5; leave out to find it"},
             "ref": {"type": "string", "description": "the board's ref, if the circuit has more than one"}}}}},
+    {"type": "function", "function": {
+        "name": "mcu_code",
+        "description": "Write the program of the circuit's board yourself, when it must DO something (decide, "
+                       "remember, time, count, print): the whole Arduino sketch, setup() and loop() and your own "
+                       "functions. The code compiles it with the board's real compiler (errors come back with their "
+                       "line: fix them and send the whole sketch again) and keeps it with the circuit; mcu_program "
+                       "then flashes it instead of the plain pin program. The circuit's pin program stays: it says "
+                       "what each pin is electrically, and the code must agree with it. Then mcu_dry_run before "
+                       "flashing. clear=true goes back to the plain pin program.",
+        "parameters": {"type": "object", "properties": {
+            "code": {"type": "string", "description": "the whole sketch"},
+            "clear": {"type": "boolean"}, "ref": {"type": "string"}}}}},
+    {"type": "function", "function": {
+        "name": "mcu_dry_run",
+        "description": "Try the board's code on the simulated circuit, with no board and nothing flashed: the "
+                       "situations you give run one after another from one reset (what the code remembers carries "
+                       "over). For each, ngspice simulates the circuit with the case's changes and the pins as the "
+                       "code drives them, the code reads those volts, and what it does goes back into the circuit. "
+                       "Returns per case what each input read, each output's level (or how it blinks), the LEDs' "
+                       "currents, what it printed, and the expectations it missed. Cover every situation and the "
+                       "edges between them, and come back to the start to see what it remembers. Say only what the "
+                       "dry run showed; a missed expectation is a bug in the code or in the expectation: think which.",
+        "parameters": {"type": "object", "properties": {
+            "cases": {"type": "array", "items": {"type": "object", "properties": {
+                "label": {"type": "string"},
+                "set": {"type": "object", "description": "changes to parts: {ref: {field: value}}, e.g. "
+                                                         "{\"P1\": {\"position\": 0.2}} or {\"R4\": {\"value\": \"4.7k\"}}"},
+                "serial": {"type": "string", "description": "text sent to the board at the start of the case"},
+                "expect": {"type": "object", "description": "{pin: HIGH|LOW|blinks|PWM, LED ref: on|off, "
+                                                            "serial_contains: text}"},
+                "ms": {"type": "number", "description": "how long the case lasts, 1000 by default"}}}},
+            "ref": {"type": "string"}}, "required": ["cases"]}}},
     {"type": "function", "function": {
         "name": "mcu_read",
         "description": "Read what the board's inputs measure now, for a few seconds over USB, beside what the "
@@ -1294,10 +1450,8 @@ class Hume:
         goals = verify(sim, as_spec(spec)) if spec else []
         self.circuit, self.expected, self.diagnosis, self.fault_table = circuit, sim, None, None
         self.goals = goals
-        if self.world_file:  # a test's circuit is not the one on the bench
-            CIRCUIT.parent.mkdir(exist_ok=True)
-            CIRCUIT.write_text(json.dumps({"circuit": circuit, "expected": sim}, ensure_ascii=False, indent=1),
-                               encoding="utf-8")
+        self.circuit_file = None  # a new circuit: a new file in the list
+        self._save_circuit()
 
         def table():  # ready by the time Erlan has built it or picked up the probe
             try:
@@ -1328,6 +1482,13 @@ class Hume:
         result["design_notes"] = notes
         result["parts"] = [{k: v for k, v in part.items() if k in ("ref", "kind", "value", "model", "color", "pins")}
                            for part in circuit["parts"]]
+        from lunes import inventory
+        stock = inventory.stock_of(circuit["parts"])  # what Erlan has of it, and what he would have to buy
+        if stock:
+            result["stock"] = stock
+            if any(not v.startswith("on the shelf") for v in stock.values()):
+                result["stock_note"] = ("a part not on the shelf: tell Erlan which, with the nearest value he has; "
+                                        "he decides whether to use it or buy the right one (the inventory may be short)")
         pot = next((p for p in circuit["parts"] if p["kind"] == "POT"), None)
         if pot is not None and self.expected is not None:
             result["pot_sweep"] = self._pot_sweep(circuit, pot)
@@ -1451,6 +1612,14 @@ class Hume:
         if self._table_thread is not None:
             self._table_thread.join()
         if self.fault_table is None:
+            # a circuit that came back after a restart, or was loaded from the list, has no table yet: work it out
+            # now (it is cached on disk by the circuit's content, so a circuit seen before costs nothing)
+            from lunes.simulator import fault_dictionary
+            try:
+                self.fault_table = fault_dictionary(self.circuit)
+            except RuntimeError as e:
+                return {"ok": False, "error": f"the simulator could not work out the faults of this circuit: {e}"}, None
+        if self.fault_table is None:
             return {"ok": False, "error": "the simulator could not work out the faults of this circuit"}, None
         self.diagnosis = Diagnosis(self.circuit, self.fault_table)
         self.supply_look()
@@ -1469,9 +1638,247 @@ class Hume:
                                  "mcu_program), before asking Erlan for the probe")
         return out, None
 
-    def _diagnose_measure(self, net, source="scope", mean_v=None, sure=False):
+    def _check_build(self, args=None):
+        """Erlan's build against the plan, hole by hole, from the latest mosaic (lunes.buildcheck)."""
+        args = args or {}
+        from lunes import buildcheck
+        from lunes.breadboard import BoardGrid, rebuild
+        if self.circuit is None or self.layout is None:
+            return {"ok": False, "error": "no circuit with a breadboard plan on the bench"}, None
+        mosaic = self.last_mosaic if self.last_mosaic is not None else self.bench_mosaic()
+        summary = self.last_survey or (self.surveys[-1]["summary"] if self.surveys else None)
+        grid = self.world.get("grid")
+        if mosaic is None or summary is None or not grid:
+            return {"ok": False, "error": "no mosaic with its hole grid yet: survey_board first"}, None
+        grid, orientation = buildcheck.orient(mosaic, summary, grid, self.layout)
+        if "turned back" in orientation:
+            self.world["grid"] = dict(self.world["grid"], **{k: grid[k] for k in ("a1", "a63", "j1")})
+            self.placement = BoardGrid(grid["a1"], grid["a63"], grid["j1"])
+            self._save_world()
+        things = buildcheck.items(self.circuit, self.layout)
+        holes = list(dict.fromkeys(h for _, _, hs in things for h in hs))
+        page = buildcheck.sheet(mosaic, summary, grid, holes)
+        if self.spark is None:
+            return {"ok": False, "error": "Muse Spark is off (no key or network): it reads the tiles"}, page
+        # its own instructions: the usual vision prompt asks for three short Spanish sentences, and a list of
+        # forty holes came back as three sentences
+        k = min(1.0, 1400 / max(page.shape[:2]))
+        try:
+            answer = self.spark.ask(buildcheck.QUESTION, [cv2.resize(page, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)],
+                                    system=buildcheck.SYSTEM, purpose="check_build", effort="medium", max_tokens=8000)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"Muse Spark could not read the tiles: {e}"}, page
+        seen = buildcheck.parse(answer, holes)
+        if all(v == "unclear" for v in seen.values()):
+            return {"ok": False, "error": "Muse Spark's answer could not be read as one verdict per hole",
+                    "answer": str(answer)[:400]}, page
+        report, missing, unclear = [], [], []
+        for what, kind, hs in things:
+            states = {h: seen[h] for h in hs}
+            state = "missing" if "no" in states.values() else "unclear" if "unclear" in states.values() else "there"
+            report.append({"what": what, "holes": states, "state": state})
+            (missing if state == "missing" else unclear if state == "unclear" else []).append(what)
+        # Second inspection (Erlan, 3 Nov: "el algoritmo detectó una cosa, pero yo como IA doy más seguridad"): the
+        # suspects again, bigger, both ends side by side; what the second look sees present is not called missing
+        second, page2 = {}, None
+        suspects = [(what, hs) for what, kind, hs in things if what in missing]
+        if suspects:
+            page2 = buildcheck.second_sheet(mosaic, summary, grid, suspects)
+            k2 = min(1.0, 1400 / max(page2.shape[:2]))
+            try:
+                answer2 = self.spark.ask(buildcheck.SECOND, [cv2.resize(page2, None, fx=k2, fy=k2, interpolation=cv2.INTER_AREA)],
+                                         system=buildcheck.SYSTEM, purpose="check_build second look", effort="high",
+                                         max_tokens=8000)
+                second = buildcheck.parse_second(answer2, [s for s, _ in suspects])
+            except Exception as e:  # noqa: BLE001 - the first pass stands, said as unconfirmed
+                second = {s: {"verdict": "unsure", "sure": 0.0, "error": str(e)[:80]} for s, _ in suspects}
+            for item in report:
+                look = second.get(item["what"])
+                if look:
+                    item["second_look"] = look
+                    if look["verdict"] == "present":  # seen there on a careful look: at most a doubt
+                        item["state"] = "unclear"
+                        missing.remove(item["what"])
+                        unclear.append(item["what"])
+        # what each missing wire does to the circuit, simulated, to compare with the instruments
+        effects, at_hole = [], {}  # at_hole: suspect -> {hole: volts}, to find the point that tells suspects apart
+        from lunes.breadboard import pin_key
+        from lunes.simulator import expected
+        was = (self.expected or {}).get("nets", {})
+        for what, kind, hs in things:
+            if kind != "wire" or what not in missing:
+                continue
+            try:
+                cut = {"holes": self.layout["holes"], "external": self.layout.get("external", []),
+                       "wires": [w for w in self.layout["wires"] if [w["from"], w["to"]] != hs]}
+                without, _, _ = rebuild(self.circuit, cut, self.expected)
+                nets = expected(without)["nets"]
+                # the circuit's own net names survive the rebuild, split ones as NAME_2: read each by its old name
+                by_name = {n: m["mean_v"] for n, m in nets.items()}
+                changed = {n: [round(was[n]["mean_v"], 2), round(by_name[n], 2)] for n in was
+                           if n in by_name and abs(by_name[n] - was[n]["mean_v"]) > 0.3}
+                volts = {}
+                for part in without["parts"]:
+                    pins = part["pins"]
+                    named = dict(zip(("1", "2"), pins)) if isinstance(pins, list) else pins
+                    for pin, net in named.items():
+                        hole = (self.layout["holes"].get(part["ref"]) or {}).get(str(pin_key(part, pin)))
+                        if hole and net in by_name:
+                            volts[hole] = round(by_name[net], 2)
+                at_hole[what] = volts
+                effects.append({"without": what, "nets_change_v": changed,
+                                "predicted_v": {n: round(by_name.get(n, was.get(n, {}).get("mean_v", 0)), 2) for n in was}})
+            except Exception as e:  # noqa: BLE001 - the finding stands without its simulation
+                effects.append({"without": what, "error": str(e)[:120]})
+        self.build_check = {"holes": seen, "items": report, "at": time.time()}
+        # what the instruments read, from the diagnosis of this session and any Erlan or the agent passes
+        measured = {n: r.get("mean_v") for n, r in (self.diagnosis.readings if self.diagnosis else [])}
+        measured.update({k: float(v) for k, v in (args.get("measured") or {}).items() if v is not None})
+        # the eye is noisy; the instruments decide between its suspects: a missing wire whose simulation gives what
+        # was measured is the finding, one that would read otherwise is the eye's mistake
+        for e in effects:
+            e["explains_measurements"] = buildcheck.explains(e.get("predicted_v") or {}, measured)
+        likely = [e["without"] for e in effects if e.get("explains_measurements")]
+        ruled_out = [e["without"] for e in effects if e.get("explains_measurements") is False]
+        separate = None  # the hole whose voltage differs most between the suspects still standing
+        if len(likely) > 1:
+            common = set.intersection(*(set(at_hole.get(s, {})) for s in likely)) if all(at_hole.get(s) for s in likely) else set()
+            spread = {h: max(at_hole[s][h] for s in likely) - min(at_hole[s][h] for s in likely) for h in common}
+            if spread and max(spread.values()) > 0.5:
+                hole = max(spread, key=spread.get)
+                separate = {"hole": hole, "would_read_v": {s: at_hole[s][hole] for s in likely}}
+        cv2.imwrite(str(CIRCUIT.parent / "build_check.jpg"), page)
+        # A third, independent count (Erlan, 3 Nov): the jumpers on the board against the plan's. If k fewer are seen,
+        # k are missing: of the wire suspects the k best supported stay first, the rest are doubts to look at.
+        planned_wires = len(self.layout.get("wires", []))
+        count = None
+        try:
+            k3 = min(1.0, 1600 / max(mosaic.shape[:2]))
+            counted, sure = buildcheck.parse_count(self.spark.ask(
+                buildcheck.COUNT, [cv2.resize(mosaic, None, fx=k3, fy=k3, interpolation=cv2.INTER_AREA)],
+                system=buildcheck.SYSTEM, purpose="check_build wire count", effort="high", max_tokens=6000))
+        except Exception:  # noqa: BLE001 - the count is a help, not a need
+            counted, sure = None, 0.0
+        wire_suspects = [i for i in report if i["state"] == "missing" and i["what"].startswith("cable")]
+        if counted is not None:
+            short = max(0, planned_wires - counted)
+            count = {"planned": planned_wires, "seen": counted, "sure": sure, "missing_by_count": short}
+            if 0 < short < len(wire_suspects):
+                def support(i):  # explains the measurements, then the second look's sureness
+                    return (i["what"] in likely, (i.get("second_look") or {}).get("sure", 0))
+                keep = {i["what"] for i in sorted(wire_suspects, key=support, reverse=True)[:short]}
+                for i in wire_suspects:
+                    if i["what"] not in keep:
+                        i["state"], i["count_note"] = "unclear", f"the count says only {short} wire(s) missing"
+                        missing.remove(i["what"])
+                        unclear.append(i["what"])
+                likely = [w for w in likely if w in keep] or likely
+            elif short == 0 and wire_suspects:
+                count["note"] = "as many jumpers seen as planned: a 'missing' wire may be in another place, not absent"
+        # every finding with its priority and what to do about it, for Erlan and for the web lab's "Errores" view
+        from lunes.breadboard import hole_words
+        volts = (self.circuit or {}).get("supply_v", 5)
+        for item in report:
+            ends = [h for h in item["holes"]]
+            empty = [h for h, s in item["holes"].items() if s == "no"]
+            if item["state"] == "missing":
+                item["priority"] = 1 if item["what"] in likely else 2
+                fix = (f"Pon un cable {hole_words(ends[0], volts, 'de')} {hole_words(ends[1], volts, 'a')}"
+                       if item["what"].startswith("cable") and len(ends) == 2 else
+                       f"Revisa que {item['what'].split()[0]} entre " + " y ".join(hole_words(h, volts, 'en') for h in ends))
+                if separate and item["what"] in likely:
+                    v = separate["would_read_v"].get(item["what"])
+                    fix += f"; antes, mide {hole_words(separate['hole'], volts, 'en')}: si da {v} V, es este"
+                item["advice"] = fix + "."
+            elif item["state"] == "unclear":
+                item["priority"] = 3
+                item["advice"] = ("No se ve bien " + " ni ".join(hole_words(h, volts, 'en') for h in (empty or ends))
+                                  + ": tócalo o míralo de cerca; si la pata está en otro agujero de la misma tira, está bien.")
+            else:
+                item["priority"] = None
+        self.build_check = {"holes": seen, "items": report, "at": time.time()}
+        # priorities: missing on both looks and explaining what was measured, then missing on both looks, then doubts
+        priority = ([{"what": w, "why": "missing on two looks, and its simulation gives what was measured"} for w in likely]
+                    + [{"what": w, "why": "missing on two looks; no measurement says yet"} for w in missing
+                       if w not in likely and w not in ruled_out]
+                    + [{"what": w, "why": "a doubt (covered, or the second look saw it): look, do not call it wrong"}
+                       for w in unclear])
+        return {"ok": True, "orientation": orientation, "checked": len(things), "priority": priority, "wire_count": count,
+                "missing_by_eye": missing, "unclear": unclear, "likely_cause": likely,
+                "eye_contradicted_by_measurements": ruled_out, "measure_next_to_separate": separate,
+                "items": report, "simulated_without": effects, "measured_v": measured,
+                "note": "the attached picture is the second look at the suspects: check them yourself before you tell "
+                        "Erlan, and say how sure you are of each. Drawn on the web lab's breadboard (a check or a "
+                        "cross per hole). Tell him in the order of priority; doubts are to look at, never errors"}, \
+            (page2 if page2 is not None else page)
+
+    # The bench test as one skill: the procedure in code, the judgement in the model ---------------------------------
+    def _bench_test_point(self, out):
+        """Adds to a test's answer where the probe goes next: the net, its hole, the parts it touches, the laser on it,
+        and the words for Erlan."""
+        nxt = (out.get("next") or {}).get("net")
+        if not nxt:
+            return out
+        touches = (((self.expected or {}).get("nets") or {}).get(nxt) or {}).get("touches") or []
+        point, _ = self._guide_net(nxt) if self.layout is not None else ({}, None)
+        ground = (self.layout or {}).get("probe", {}).get("GND")
+        hole = point.get("hole")
+        from lunes.breadboard import hole_words
+        volts = (self.circuit or {}).get("supply_v", 5)
+        out["probe_next"] = {"net": nxt, "hole": hole, "touches": touches, "laser": point.get("pointed"),
+                             "laser_confirmed": point.get("confirmed")}
+        out["say"] = (f"Pon la punta {hole_words(hole, volts, 'en') if hole else 'en ' + nxt} ({nxt}: "
+                      f"{', '.join(touches[:3]) or 'ese punto'})" + (f" y la pinza de masa {hole_words(ground, volts, 'en')}"
+                                                                     if ground and self.diagnosis and not self.diagnosis.readings else "")
+                      + "; cuando esté, dime listo.")
+        return out
+
+    def _bench_test(self, args):
+        """start: diagnosis, supply, and the first point shown with the laser. next (after Erlan says it is there):
+        measure that point, then the next one shown, until the verdict (and its report)."""
+        step = str(args.get("step") or "start")
+        if step == "start":
+            out, view = self._diagnose_start()
+            if not out.get("ok", True):
+                return out, view
+            supply = out.get("supply") or {}
+            if supply and supply.get("out") is False:
+                out["supply_note"] = "the supply's output is OFF: Erlan turns it on before the first reading"
+            out = self._bench_test_point(out)
+            out["note"] = ("tell Erlan out['say'] in your own words, with what each point should read (expected); when he "
+                           "says it is there, bench_test step next")
+            out["expected"] = {n: m.get("mean_v") for n, m in ((self.expected or {}).get("nets") or {}).items()}
+            return out, view
         if self.diagnosis is None:
-            return {"ok": False, "error": "no diagnosis running: diagnose_start first"}, None
+            return {"ok": False, "error": "no test running: bench_test step start first"}, None
+        net = args.get("net") or (self.guide or {}).get("net") or (self.diagnosis.next_net() or [None])[0]
+        out, view = self._diagnose_measure(net, args.get("source", "scope"), args.get("mean_v"), bool(args.get("sure")))
+        if not out.get("ok"):
+            return out, view
+        if not out.get("clear") and out.get("next"):
+            out = self._bench_test_point(out)
+            out["note"] = "say what it read against what it should, what that means, and where the probe goes next"
+        elif not out.get("clear"):
+            # no point left that tells the explanations apart: the likeliest ones are the answer, and a look decides
+            likely = out.get("likely") or []
+            out["say"] = ("Ya no hay otro punto que las distinga; lo más probable: " +
+                          "; ".join(f"{h['says']} ({h['p']:.0%})" for h in likely[:3]) +
+                          ". Eso se confirma mirando esas piezas.")
+            try:
+                from lunes import report
+                out["report"] = report.write(self)["path"]
+            except Exception as e:  # noqa: BLE001
+                out["report_error"] = str(e)
+            out["note"] = "tell Erlan the likeliest explanations and why, and that a look at those parts settles it"
+        else:
+            out["note"] = "the verdict, its report written: tell Erlan what was found and why, in plain words"
+        return out, view
+
+    def _diagnose_measure(self, net, source="scope", mean_v=None, sure=False):
+        if self.diagnosis is None:  # a measurement asked for before the start: start it rather than fail
+            started, _ = self._diagnose_start()
+            if not started.get("ok", True) or self.diagnosis is None:
+                return {"ok": False, "error": f"could not start the diagnosis: {started.get('error', '')}"}, None
         view = None
         if source == "multimeter":
             if mean_v is None:
@@ -1503,6 +1910,12 @@ class Hume:
         out = {"ok": True, "net": net, "reading": reading, **self.diagnosis.state()}
         if notes:
             out["scope_notes"] = notes
+        if out.get("clear"):  # a verdict: the report writes itself, so Erlan has it without asking
+            try:
+                from lunes import report
+                out["report"] = report.write(self)["path"]
+            except Exception as e:  # noqa: BLE001 - the verdict matters more than the file
+                out["report_error"] = str(e)
         if getattr(self.scope, "signals", None) is not None and source == "scope":
             out["simulated"] = "the reading came from the simulated scope, not the bench"
         return out, view
@@ -1549,11 +1962,63 @@ class Hume:
         self.last_serial = out.get("lines")
         return out, None
 
+    def _mcu_code(self, code=None, clear=False, ref=None):
+        """Keeps the sketch written for the board once it compiles for the board and for the dry run."""
+        from lunes import dryrun, mcu
+        part, error = self._mcu_part(ref)
+        if error:
+            return {"ok": False, "error": error}, None
+        name = self.circuit.get("name", "circuit")
+        if clear:
+            part.pop("code", None)
+            self._save_circuit()
+            return {"ok": True, "note": "back to the plain pin program: mcu_program flashes that"}, None
+        code = str(code or "").strip()
+        if not code:
+            return {"ok": False, "error": "code: the whole sketch, setup() and loop()"}, None
+        built = mcu.compile_sketch(dict(part, code=code), name)
+        if not built["ok"]:
+            return {"ok": False, "stage": "compile for the board", "errors": built["errors"],
+                    "note": "not kept: fix it and send the whole sketch again"}, None
+        part["code"] = code
+        self._save_circuit()
+        out = {"ok": True, "kept": True, "board_compile": built.get("size"), "path": built["path"]}
+        host = dryrun.build(code, part["kind"])
+        if host["ok"]:
+            out["next"] = "mcu_dry_run with the situations that matter before mcu_program"
+        else:
+            out["dry_run"] = {"ready": False, "errors": host["errors"]}
+        return out, None
+
+    def _mcu_dry_run(self, cases, ref=None):
+        from lunes import dryrun
+        part, error = self._mcu_part(ref)
+        if error:
+            return {"ok": False, "error": error}, None
+        if not isinstance(cases, list) or not all(isinstance(c, dict) for c in cases):
+            return {"ok": False, "error": "cases: a list of {label, set, serial, expect, ms}"}, None
+        if len(cases) > 12:
+            return {"ok": False, "error": "at most 12 cases in one dry run"}, None
+        try:
+            out = dryrun.dry_run(self.circuit, part["ref"], cases)
+        except Exception as e:  # the simulator or the compiler failed: say it, do not guess
+            return {"ok": False, "error": f"the dry run failed: {e}"}, None
+        self.last_dry_run = {"at": time.time(), "code": part.get("code"), "ok": out.get("ok", False),
+                             "met": out.get("all_expectations_met", False) and any(c.get("expect") for c in cases),
+                             "settled": out.get("settled", False),
+                             "cases": [c.get("label") for c in cases]}
+        return out, None
+
     def _mcu_program(self, port=None, ref=None):
         from lunes import mcu
         part, error = self._mcu_part(ref)
         if error:
             return {"ok": False, "error": error}, None
+        tried = getattr(self, "last_dry_run", None)
+        if part.get("code") and not (tried and tried["code"] == part["code"] and tried["ok"] and tried["met"]
+                                     and tried["settled"]):
+            return {"ok": False, "error": "this board's own code has not passed a dry run since it last changed: "
+                                          "mcu_dry_run first, with expectations, and flash only when they are met"}, None
         name, cnc = self.circuit.get("name", "circuit"), self.m.s.port
         if isinstance(self.mcu, mcu.SimulatedBoard):
             built = mcu.compile_sketch(part, name)
@@ -1579,6 +2044,9 @@ class Hume:
         part, error = self._mcu_part(ref)
         if error:
             return {"ok": False, "error": error}, None
+        if part.get("code"):
+            return {"ok": False, "error": "the board runs its own code (mcu_code), which does not print Lunes' "
+                                          "readings: serial_monitor shows what it prints"}, None
         simulated = isinstance(self.mcu, mcu.SimulatedBoard)
         if simulated:
             got = self.mcu.read(seconds)
@@ -1940,6 +2408,7 @@ class Hume:
             if self.circuit is not None:
                 try:
                     self.layout = breadboard.plan(self.circuit, self.expected, self.world.get("first_row"))
+                    self._save_circuit()  # the plan goes with the circuit: a restart comes back to this one
                 except ValueError:  # it does not fit: breadboard_plan says why when asked
                     pass
         return self.layout
@@ -1955,6 +2424,7 @@ class Hume:
             self.layout = breadboard.plan(self.circuit, self.expected, self.world.get("first_row"))
             self.layout_for = self.circuit
             self._place_board()
+            self._save_circuit()
         except ValueError as e:
             return {"ok": False, "error": str(e)}, None
         self.guide = {"step": 0, "holes": [], "says": ""}
@@ -2143,8 +2613,113 @@ class Hume:
         if CIRCUIT.exists():
             saved = json.loads(CIRCUIT.read_text(encoding="utf-8"))
             self.circuit, self.expected = saved["circuit"], saved["expected"]
+            if saved.get("layout"):  # the plan Erlan built from: kept, never laid out again after a restart
+                self.layout, self.layout_for = saved["layout"], self.circuit
+            # which file of the list this is: without it, after a restart no saved circuit was "current" and Lunes
+            # asked Erlan which of two same-named circuits was open (3 Nov, 15:22)
+            folder = CIRCUIT.parent / "circuits"
+            for f in sorted(folder.glob("*.json"), reverse=True) if folder.exists() else []:
+                try:
+                    other = json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if other.get("circuit") == self.circuit:
+                    self.circuit_file = f
+                    break
         self._place_board()
         self.m.no_go = self._no_go
+
+    def _save_circuit(self):
+        """The circuit on the bench, its simulation and its breadboard plan, on disk: runs/circuit.json (what a restart
+        comes back to) and a copy in runs/circuits/ (the list Erlan picks from with circuit_list / circuit_load)."""
+        if not self.world_file or self.circuit is None:  # a test's circuit is not the one on the bench
+            return
+        saved = {"circuit": self.circuit, "expected": self.expected,
+                 "layout": self.layout if self.layout_for is self.circuit else None,
+                 "saved_at": datetime.now().isoformat(timespec="minutes")}
+        text = json.dumps(saved, ensure_ascii=False, indent=1)
+        CIRCUIT.parent.mkdir(exist_ok=True)
+        CIRCUIT.write_text(text, encoding="utf-8")
+        folder = CIRCUIT.parent / "circuits"
+        folder.mkdir(exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", (self.circuit.get("name") or "circuit").lower()).strip("-")[:40] or "circuit"
+        # the same project keeps its file (a new circuit set circuit_file to None first)
+        self.circuit_file = self.circuit_file if getattr(self, "circuit_file", None) and self.circuit_file.exists() \
+            else folder / f"{datetime.now():%Y%m%d-%H%M}-{slug}.json"
+        self.circuit_file.write_text(text, encoding="utf-8")
+
+    def _circuit_list(self):
+        folder = CIRCUIT.parent / "circuits"
+        out = []
+        for f in sorted(folder.glob("*.json"), reverse=True) if folder.exists() else []:
+            try:
+                saved = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            c = saved.get("circuit") or {}
+            out.append({"file": f.name, "name": c.get("name"), "saved_at": saved.get("saved_at"),
+                        "parts": [f"{p.get('ref')} {p.get('value') or p.get('model') or p.get('kind')}" for p in c.get("parts", [])],
+                        "plan": bool(saved.get("layout")),
+                        "current": getattr(self, "circuit_file", None) is not None and f == self.circuit_file})
+        on_bench = None if self.circuit is None else {
+            "name": self.circuit.get("name"), "file": getattr(self, "circuit_file", None) and self.circuit_file.name,
+            "parts": [f"{p.get('ref')} {p.get('value') or p.get('model') or p.get('kind')}" for p in self.circuit.get("parts", [])]}
+        return {"ok": True, "on_the_bench": on_bench, "circuits": out,
+                "note": "on_the_bench is the circuit open now, the one Erlan has: use it, do not ask which unless he says "
+                        "it is another; circuit_load only when he picks another"}, None
+
+    def layout_edit(self, edited):
+        """Erlan's own breadboard, edited by hand in the web lab (leads moved, wires added or removed): the circuit is
+        rebuilt from the holes, simulated and reviewed, and that board becomes the plan of this project (same file in
+        the list). Returns what changed, and the review's warnings, or why not."""
+        from lunes import breadboard
+        if self.circuit is None:
+            return {"ok": False, "error": "no circuit on the bench to edit"}
+        try:
+            circuit, layout, changes = breadboard.rebuild(self.circuit, edited, self.expected)
+        except (ValueError, KeyError, IndexError) as e:
+            return {"ok": False, "error": f"that board does not make a circuit: {e}"}
+        keep_file, keep_goals = getattr(self, "circuit_file", None), self.goals
+        result, _ = self._circuit_set(circuit)
+        if not result.get("ok", True) or self.circuit is not circuit:
+            return {**result, "ok": False, "changes": changes,
+                    "error": result.get("error") or "the board as edited is not a working circuit: see the problems"}
+        stray = getattr(self, "circuit_file", None)
+        if keep_file is not None and stray is not None and stray != keep_file and stray.exists():
+            stray.unlink()  # circuit_set wrote it as a new project; this is the same one, edited
+        self.circuit_file, self.goals = keep_file, keep_goals
+        self.layout, self.layout_for = layout, self.circuit
+        self.guide = {"step": 0, "holes": [], "says": ""}
+        self._save_circuit()
+        nets = self.expected.get("nets", {})
+        return {"ok": True, "changes": changes or ["the same circuit: only holes moved within their strips"],
+                "warnings": result.get("warnings", []), "nets": {n: m.get("mean_v") for n, m in nets.items()},
+                "note": "Erlan edited the board by hand: this is the plan now; check his build against it"}
+
+    def _circuit_load(self, file):
+        folder = CIRCUIT.parent / "circuits"
+        path = folder / str(file or "")
+        if not file or path.parent != folder or not path.exists():
+            return {"ok": False, "error": "file must be one of circuit_list's"}, None
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        self.circuit, self.expected = saved["circuit"], saved.get("expected")
+        self.layout = saved.get("layout")
+        self.layout_for = self.circuit if self.layout else None
+        self.guide = {"step": 0, "holes": [], "says": ""}
+        self.diagnosis = self.fault_table = None
+        self.circuit_file = path
+        if self.expected is None:
+            try:
+                from lunes.simulator import expected
+                self.expected = expected(self.circuit)
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": f"loaded, but it does not simulate now: {e}"}, None
+        self._save_circuit()
+        self._place_board()
+        return {"ok": True, "name": self.circuit.get("name"), "parts": len(self.circuit["parts"]),
+                "plan": bool(self.layout), "saved_at": saved.get("saved_at"),
+                "note": "this is the circuit on the bench now, with the plan Erlan built from; check his build against "
+                        "THIS plan, hole by hole as nodes (holes_connected)"}, None
 
     def _no_go(self, target):
         """The last guard on a move, whatever asked for it: near the chip on the map the head never goes below the
@@ -2864,7 +3439,9 @@ class Hume:
                 if not moved["ok"]:
                     skipped.append(moved["error"])
                     continue
-                time.sleep(0.4)  # the carriage settles and the camera sends a picture taken after the move
+                # the carriage settles and the webcam sends a picture taken after the move: with 0.4 s, on Nov 3 the
+                # ring was missed at 11 of 16 places that it was seen at a second later
+                time.sleep(1.0)
                 seen = self.bench_head()
                 if seen is None:
                     skipped.append(f"no ring at X {x:.0f} Y {y:.0f} Z {z:.0f}")
@@ -3390,12 +3967,60 @@ class Hume:
             return self._circuit_design(str(args.get("template", "")), args.get("params") or {})
         if name == "circuit_guide":
             return self._circuit_guide(args.get("topic", ""))
+        if name == "inventory":
+            from lunes import inventory
+            return inventory.listing(args.get("search")), None
+        if name == "bench_test":
+            return self._bench_test(args)
+        if name == "check_build":
+            return self._check_build(args)
+        if name == "mark_board":
+            if self.layout is None:
+                return {"ok": False, "error": "no breadboard plan for the circuit on the bench yet"}, None
+            net, hole = (args.get("net") or "").strip(), (args.get("hole") or "").strip()
+            probe = self.layout.get("probe", {})
+            if net and not hole:
+                if net not in probe:
+                    return {"ok": False, "error": f"no net {net}; nets: {sorted(probe)}"}, None
+                hole = probe[net]
+            if not hole:
+                return {"ok": False, "error": "give a net or a hole"}, None
+            from lunes.breadboard import hole_words
+            words = hole_words(hole, (self.circuit or {}).get("supply_v", 5), "en")
+            says = args.get("label") or (f"La punta {words} ({net})" if net else f"Ahí, {words}")
+            self.guide = {"step": self.guide.get("step", 0), "net": net or None, "holes": [hole], "at": hole, "says": says}
+            return {"ok": True, "marked": hole, "net": net or None, "says": says,
+                    "note": "it is drawn on the web lab's breadboard now (with the ground clip on GND for a net): tell "
+                            "Erlan to look there"}, None
+        if name == "holes_connected":
+            from lunes.breadboard import strip_of
+            a, b = str(args.get("a", "")).strip(), str(args.get("b", "")).strip()
+            try:
+                same = strip_of(a) == strip_of(b)
+            except (IndexError, ValueError):
+                return {"ok": False, "error": "holes are like c12, or a rail hole like +12 / -12"}, None
+            return {"ok": True, "a": a, "b": b, "connected": same,
+                    "note": ("the same node: a lead there is right, say so with the hole it is in"
+                             if same else "different nodes: a lead there changes the circuit")}, None
+        if name == "circuit_list":
+            return self._circuit_list()
+        if name == "circuit_load":
+            return self._circuit_load(args.get("file"))
+        if name == "report":
+            from lunes import report
+            if self.circuit is None:
+                return {"ok": False, "error": "no circuit on the bench yet: circuit_set or circuit_design first"}, None
+            return report.write(self, args.get("title")), None
         if name == "system_check":
             return self._system_check()
         if name == "system_restart":
             return self._system_restart(str(args.get("part", "")))
         if name == "mcu_program":
             return self._mcu_program(args.get("port"), args.get("ref"))
+        if name == "mcu_code":
+            return self._mcu_code(args.get("code"), bool(args.get("clear", False)), args.get("ref"))
+        if name == "mcu_dry_run":
+            return self._mcu_dry_run(args.get("cases") or [], args.get("ref"))
         if name == "serial_monitor":
             return self._serial_monitor(args.get("port"), str(args.get("baud") or 115200),
                                         min(max(float(args.get("seconds") or 3.0), 1.0), 30.0), args.get("send"),
@@ -3740,9 +4365,10 @@ class Hume:
             self.on_think(f"verificador: {'; '.join(report.get('fixed', [])) or 'corrigió la respuesta'}")
         return said
 
-    def handle(self, text, on_tool=None, on_text=None):
+    def handle(self, text, on_tool=None, on_text=None, on_thought=None):
         """One request from Erlan; runs tools until there is an answer, and returns the whole answer text.
-        Setting self.stop (Erlan said "para") ends it at the next step."""
+        Setting self.stop (Erlan said "para") ends it at the next step. on_thought(text) gets what the agent says it
+        thinks alongside a tool call, so Erlan hears its reasoning while it works."""
         self.stop.clear()
         self.request, self.status = text, "pensando"
         self.brain_seconds, self.brain_steps = 0.0, 0
@@ -3751,6 +4377,19 @@ class Hume:
         self.messages.append({"role": "user", "content": text + (f"\n(Hacia dónde va cada eje, visto desde Erlan: "
                                                                   f"{sides}.)" if sides else "")})
         used_tools, nudged, tiny_moves, said = False, set(), 0, []
+        streak, streak_why = {}, {}  # tool: how many of its results in a row contradicted the plan, and why
+        reflecting = False  # the last round's results surprised it: its next words are a new plan, to be acted on
+        # Think first: a job begins with a plan written before any tool, so the first step is not a grab at whichever
+        # of ~70 tools sounds closest (Erlan, 3 Nov: "que piense primero viendo qué herramientas hay"). A quick look
+        # and a test without a voice skip it.
+        planning = bool(on_thought) and not on_text and not text.startswith("Mirada rápida")
+        if planning:
+            self.messages.append({"role": "user", "content": (
+                "(Sistema: antes de llamar ninguna herramienta, piensa y escribe tu plan, sin herramientas en este "
+                "mensaje: qué te pide Erlan de verdad, qué sabes ya del banco y de la conversación, qué te falta saber, "
+                "qué herramientas de las que tienes sirven para eso y cuáles parecen servir pero no, en qué orden, qué "
+                "suposición vas a comprobar primero y qué harás si sale distinto. Unas pocas frases, como un ingeniero "
+                "que piensa en voz alta.)")})
         turn_start = len(self.messages)  # this turn's tool results start here, for the verifier
         speak = (lambda t: (said.append(t), on_text(t))) if on_text else None
         for _ in range(MAX_ROUNDS):
@@ -3762,10 +4401,26 @@ class Hume:
             if self.stop.is_set():
                 break
             calls = msg.get("tool_calls") or []
+            if planning:
+                planning = False
+                plan = (msg.get("content") or "").strip()
+                if not calls:  # the plan, as asked: said aloud, kept in the conversation, then followed
+                    if plan and on_thought:
+                        on_thought(plan)
+                    self.messages.append({"role": "user", "content": "(Sistema: ahora sigue tu plan; si algo sale "
+                                          "distinto de lo que suponías, para y replanifica.)"})
+                    continue
             if not calls:
                 answer = (msg.get("content") or "").strip()
                 # Models like to announce an action ("voy a tomar una foto") and stop there. That is a promise,
                 # not an observation: make it act now, once.
+                if reflecting and "act" not in nudged and PROMISE.search(answer):
+                    # after a surprise it thought it through and said what it will do next ("leo el valor directo con
+                    # scope_measure") and stopped there (3 Nov, 15:57): the new plan is to be carried out, not announced
+                    nudged.add("act")
+                    self.messages.append({"role": "user", "content": "(Sistema: bien pensado. Ahora hazlo: llama la "
+                                          "herramienta de tu nuevo plan en este mismo paso.)"})
+                    continue
                 if not used_tools and "promise" not in nudged and PROMISE.search(answer):
                     nudged.add("promise")
                     self.messages.append({"role": "user", "content": "(Sistema: no anuncies lo que vas a hacer. "
@@ -3775,7 +4430,11 @@ class Hume:
                     return " ".join(said)
                 return self._verified(answer, text, used_tools, turn_start)
             used_tools = True
+            thought = (msg.get("content") or "").strip()
+            if thought and on_thought and not on_text:  # its reasoning beside the call: said, not kept to itself
+                on_thought(thought)
             refused = None
+            surprised = []  # what in this round's results contradicts what the agent assumed
             for n, call in enumerate(calls):
                 call.setdefault("id", f"call_{len(self.messages)}_{n}")
                 name = call["function"]["name"]
@@ -3787,13 +4446,27 @@ class Hume:
                 if on_tool:
                     on_tool(name, args)
                 self.status = name
-                try:
-                    result, image = self.run_tool(name, args)
-                except Interrupted:
-                    self.stop.set()
-                    result, image = {"ok": False, "error": "Erlan stopped it"}, None
-                except Exception as e:  # a failed tool is information for the model, not a crash
-                    result, image = {"ok": False, "error": str(e)}, None
+                if streak.get(name, 0) >= 2 and name in MOVING_TOOLS:
+                    # twice in a row this tool's result contradicted the plan: a third go on the same plan is a recipe
+                    # followed blind. It runs again only after something else was checked, or Erlan was told.
+                    result, image = {"ok": False, "held": True, "error": (
+                        f"held: the last two {name} results did not come out as expected ({streak_why.get(name)}). "
+                        f"Stop and think: which assumption of the plan is false? Check it with another tool (see_chip, "
+                        f"look_survey, look_microscope, a measurement) or tell Erlan what does not add up and ask")}, None
+                else:
+                    try:
+                        result, image = self.run_tool(name, args)
+                    except Interrupted:
+                        self.stop.set()
+                        result, image = {"ok": False, "error": "Erlan stopped it"}, None
+                    except Exception as e:  # a failed tool is information for the model, not a crash
+                        result, image = {"ok": False, "error": str(e)}, None
+                why = None if (isinstance(result, dict) and result.get("held")) else surprise(result)
+                if why:
+                    surprised.append(f"{name}: {why}")
+                    streak[name], streak_why[name] = streak.get(name, 0) + 1, why
+                elif not (isinstance(result, dict) and result.get("held")):
+                    streak, streak_why = {}, {}  # a result that went as expected (a check made) clears the streaks
                 if self.on_result:
                     self.on_result(name, result)
                 refused = refused or (isinstance(result, dict) and result.get("refused"))
@@ -3807,6 +4480,14 @@ class Hume:
                                           "images": [jpeg_b64(image)]})
                 if self.stop.is_set():
                     break
+            reflecting = bool(surprised)
+            if surprised and not refused and not self.stop.is_set():
+                # not another step of the recipe: the agent first says what it expected, what it got, and what it means
+                self.messages.append({"role": "user", "content": (
+                    "(Sistema: esto no salió como suponías: " + "; ".join(surprised) + ". Antes de la siguiente acción, "
+                    "piensa en una frase: qué esperabas, qué salió y qué significa para tu plan. Si la suposición de la "
+                    "que depende era falsa, no sigas el plan: compruébala o corrígela con otra herramienta, o dile a "
+                    "Erlan qué no cuadra y pregúntale.)")})
             if refused:  # the job ends here, in plain words: Glimmer would keep trying, or explain it its own way
                 self.messages.append({"role": "assistant", "content": refused})
                 if speak:

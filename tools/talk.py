@@ -8,7 +8,8 @@ in the background while the conversation goes on. Lunes tells how the work goes 
 a Meta model: the ears are Omnilingual ASR and the voice is MMS-TTS, on this PC; the conductor and the worker think
 with Muse Spark through the Meta Model API (Muse Glimmer on this PC without --spark or without internet). Its memory,
 Hume, keeps what it observed between sessions.
---text reads typed lines instead of the microphone, to test without talking.
+Erlan can also type to Lunes in the console while the microphone listens (a typed line is always for Lunes, no
+wake word); "/mic off" and "/mic on" typed there switch the microphone. --text is keyboard only, to test without talking.
 
     python tools/talk.py COM8 --spark --mic fifine
     python tools/talk.py COM8 --text
@@ -25,6 +26,7 @@ import re
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 import cv2
@@ -77,6 +79,7 @@ QUIET = re.compile(r"\b(no (hace falta que )?me (cuentes|avises|vayas contando)|
                    r"termines)|solo (al final|el resultado))\b", re.IGNORECASE)
 TALKATIVE = re.compile(r"\b(cu[eé]ntame c[oó]mo vas|ve(te)? cont[aá]ndome|av[ií]same c[oó]mo va)\b", re.IGNORECASE)
 REACTION_AFTER_S = 0.9  # said only if the conductor has not answered by then
+THINKING_AFTER_S = 7.0  # "Déjame pensarlo", if it is still thinking by then
 # The cameras by name, since their numbers change when one is plugged in: the MS5 microscope's USB id (its name,
 # "USB CAMERA", is too common) and the 4K webcam that sees the whole work area.
 MICROSCOPE, BENCH_CAMERA = "vid_1224&pid_2825", "EMEET"
@@ -145,8 +148,35 @@ def milestone(name, result):
 
 
 stop_requested = threading.Event()
+mic_toggle = threading.Event()  # the m key in the window: switch the microphone (a fridge or dogs next to the bench)
 board = None  # the dashboard page, once it is up
 OPEN = []  # how to close what is open on the bench, in the order it was opened; closed on any exit
+OLLAMA_API = "http://127.0.0.1:11434/api/"
+gpu_released = False
+
+
+def release_gpu(model=None):
+    """Asks Ollama to unload Muse Glimmer. Lunes loads it with keep_alive -1 so the bench never waits for it twice,
+    and Ollama then keeps it in the GPU for ever: after Lunes exits, ~16 GB of VRAM stayed taken all night. A
+    request with keep_alive 0 and no prompt unloads a model. Without Ollama running there is nothing to free."""
+    global gpu_released
+    if gpu_released:
+        return
+    gpu_released = True
+    try:
+        with urllib.request.urlopen(OLLAMA_API + "ps", timeout=3) as r:
+            loaded = [m.get("name") or m.get("model") for m in json.load(r).get("models", [])]
+    except Exception:  # noqa: BLE001 - Ollama is not running, or not on this PC
+        return
+    for name in loaded:
+        if name and (name == model or name.startswith("muse-glimmer")):
+            try:
+                req = urllib.request.Request(OLLAMA_API + "generate", json.dumps({"model": name, "keep_alive": 0}).encode(),
+                                             {"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=10).read()
+                print(f"(GPU libre: {name} descargado de Ollama)", flush=True)
+            except Exception as e:  # noqa: BLE001 - say so; it can still be done by hand with `ollama stop`
+                print(f"(no pude descargar {name} de Ollama: {e})", flush=True)
 
 
 def shut_down():
@@ -161,6 +191,7 @@ def shut_down():
             close()
         except Exception:  # noqa: BLE001 - already closed, or unplugged: the next one still gets closed
             pass
+    release_gpu()
     try:
         cv2.destroyAllWindows()
         sys.stdout.flush()
@@ -183,8 +214,11 @@ def show(frame, text):
     for color, width in (((0, 0, 0), 3), ((255, 255, 255), 1)):
         cv2.putText(f, text, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, width)
     cv2.imshow(WIN, f)
-    if cv2.waitKey(1) in (27, 32):  # Esc or Space in the window: stop
+    key = cv2.waitKey(1)
+    if key in (27, 32):  # Esc or Space in the window: stop
         stop_requested.set()
+    elif key in (ord("m"), ord("M")):  # m in the window: microphone on/off (as "/mic off" typed in the console)
+        mic_toggle.set()
 
 
 class Narrator(threading.Thread):
@@ -321,6 +355,16 @@ class Worker:
             step = STEPS[name].replace("la placa", f"la {bed}" if bed else "lo que hay en la mesa")
             self.narrator_ref().update(f"Ahora {step}.", lambda: self.hume.status == name)
 
+    def _thought(self, text):
+        """What the agent thinks as it works ("no se ve el punto en dos agujeros; la miro con el microscopio"): in the
+        log, and said at the narrator's pace, a newer thought replacing one not yet said."""
+        text = " ".join(text.split())
+        if not text or text == getattr(self, "_last_thought", ""):
+            return
+        self._last_thought = text
+        log("think", f"   (piensa) {text[:400]}")
+        self.narrator_ref().update(text)
+
     def _result(self, name, result):
         if isinstance(result, dict) and result.get("ok") is False and result.get("error"):
             # a tool that failed shows here, with why: the worker may try again without a word. A long step that
@@ -352,14 +396,22 @@ class Worker:
                 log("ear", f"   (oído preciso: {exact})")
             if exact and latin(exact):
                 request += f"\n(Lo que dijo Erlan, palabra por palabra: «{exact}»)"
+        # the conversation this job comes from, not only the conductor's one-line errand: without it the worker acted as
+        # if it walked in from another room (Erlan, 3 Nov: "que trabaje con contexto")
+        talk = [m["content"] for m in self.conductor.turns[-8:] if m.get("content")]
+        if talk:
+            request += "\n(La conversación reciente con Erlan, para el contexto:\n" + "\n".join(
+                t if t.startswith("Erlan:") else f"Lunes: {t}" for t in talk) + ")"
         try:
-            answer = self.hume.handle(request, self._tool)
+            answer = self.hume.handle(request, self._tool, on_thought=self._thought)
         except Exception as e:
             log("info", f"   (el trabajo falló: {type(e).__name__}: {e})")
             answer = "Se me cayó el trabajo por un error; está en el registro."
         log("timing", f"   (trabajo terminado en {time.time() - t0:.1f} s: cerebro {self.hume.brain_seconds:.1f} s en "
             f"{self.hume.brain_steps} pasos)")
         self.last = answer
+        if getattr(self, "on_done", None):  # the result on disk too, for a restart's continuity
+            self.on_done()
         if board is not None:
             board.busy = False
         narrator.clear()  # what was pending is old news now
@@ -370,11 +422,14 @@ class Worker:
             return
         log("result", f"   (resultado completo) {answer}")
         sentences = [s for s in re.split(r"(?<=[.!?])\s+", answer.strip()) if s]
-        if len(sentences) > 3 or len(answer) > 320:
+        # Erlan, 3 Nov: "no importa que responda harto, que sea coherente e inteligente": only a very long answer is
+        # told again, keeping the reasoning (what was seen, what it means, why), not cut to three sentences
+        if len(sentences) > 8 or len(answer) > 900:
             try:
                 short = self.conductor.tell(
                     f"El equipo terminó el trabajo «{self.job}» y respondió esto: «{answer}». Cuéntaselo a Erlan en "
-                    f"una a tres frases, con los datos importantes, sin agregar nada, sin preguntas ni ofrecimientos.",
+                    f"pocas frases habladas, con los datos importantes y el razonamiento (qué se vio, qué significa y "
+                    f"por qué), sin agregar nada que no esté ahí, sin preguntas ni ofrecimientos.",
                     history=False)
                 answer = short or answer
             except Exception:
@@ -443,7 +498,9 @@ def main():
                          "board that reads the simulated circuit, to try Lunes without one)")
     ap.add_argument("--falla", default=None,
                     help="with --arduino simulado: a fault planted on the made-up bench, e.g. R1:open or U1:not_running")
-    ap.add_argument("--text", action="store_true", help="type instead of talking")
+    ap.add_argument("--text", action="store_true",
+                    help="keyboard only, no microphone (without it both work at once: talk, or type in the console; "
+                         "/mic off and /mic on switch the microphone)")
     ap.add_argument("--no-wake", action="store_true", help="answer everything, not only sentences with 'Lunes'")
     ap.add_argument("--model", default=MODEL, help="Ollama model for the conductor and the local worker")
     ap.add_argument("--think", default=THINK, help="how much the local worker reasons: false, low, medium, high")
@@ -453,7 +510,7 @@ def main():
     ap.add_argument("--brain", default="muse-wonder-1.0",
                     help="with --spark, the Meta model at the wheel of the work: muse-wonder-1.0 (the big one) or "
                          "muse-spark-1.3 (faster); the conductor of the conversation stays on Muse Spark")
-    ap.add_argument("--effort", default="medium",
+    ap.add_argument("--effort", default="high",  # Erlan, 3 Nov: more thinking, even if each step takes longer
                     help="with --spark, how much the worker reasons per step: low, medium or high (medium takes a "
                          "few seconds more a step and thinks things through)")
     ap.add_argument("--mic", default=None, help="part of the microphone's name, e.g. fifine (Windows' default if left out)")
@@ -508,10 +565,11 @@ def main():
     worker_name = "Muse Wonder" if "wonder" in args.brain else "Muse Spark"
     brain = ("Muse Spark por la API de Meta (Muse Glimmer en esta PC si no hay internet)" if args.spark
              else "Muse Glimmer en esta PC")
+    from lunes import inventory
     about = (f"Con qué funcionas: tu oído es Omnilingual ASR de Meta y tu voz es MMS-TTS de Meta, los dos en esta PC; "
              f"tú piensas con {brain}, y el equipo que trabaja con "
              f"{worker_name + ' por la API de Meta' if args.spark else brain}. Tu memoria, Hume, guarda en esta PC lo que "
-             f"observaste.")
+             f"observaste. {inventory.summary()}".rstrip())
     hume = Hume(machine, cam, kinect, show=show, model=args.model, think=think,
                 on_think=lambda t: log("think", "   (pensó) " + " ".join(t.split())[:300]), spark=args.spark,
                 about=about, bench=bench, scope=scope, mcu=mcu_board, brain_model=args.brain, effort=args.effort)
@@ -535,13 +593,17 @@ def main():
     warming = threading.Thread(target=conductor.warm, daemon=True)  # the first load takes most of a minute
     warming.start()
     voice = Voice()
-    voice.prepare(*REACTIONS, "Listo, me detengo.")
+    voice.prepare(*REACTIONS, "Listo, me detengo.", "Déjame pensarlo.")
     hume.keep_world(ROOT / "runs" / "bench_world.json")
     board = Dashboard(camera=cam, kinect=kinect, speaking=lambda: voice.speaking,
                       bench=bench, lab=lambda: lab_state(hume))
     hume.on_image = lambda image, what: board.set_seen(image, what)
     board.mosaic = hume.bench_mosaic
     board.on_tap = lambda x, y: hume.taps.append((x, y))
+    # the web lab's list of saved circuits (each with its plan) and the one Erlan picks as the circuit on the bench
+    board.circuits = lambda: hume._circuit_list()[0]["circuits"]
+    board.on_circuit_load = lambda file: hume._circuit_load(file)[0]
+    board.on_layout_edit = hume.layout_edit  # Erlan's breadboard edited by hand in the web lab
     board.on_scope_live = hume.scope_live_on
 
     def scope_live_loop():  # Erlan's continuous view: a few pictures a second, paused while Lunes measures
@@ -720,6 +782,7 @@ def main():
             kinect.close()
         if hume.scope:
             hume.scope.close()
+        release_gpu(args.model)
 
     def watch_close_file():
         while not CLOSE_FILE.exists():
@@ -733,28 +796,90 @@ def main():
     threading.Thread(target=watch_close_file, daemon=True).start()
 
     heard_q = queue.Queue()
+    mic_on = threading.Event()  # cleared by "/mic off" typed in the console: Lunes then listens to the keyboard only
+    mic_on.set()
+
+    def set_mic(on, how="desde la web"):
+        """Microphone on or off, said in the log: off while Erlan steps out, talks to someone else, or the fridge and
+        the dogs are loud; he then types. Returns the state."""
+        if on:
+            mic_on.set()
+            log("info", f"(micrófono encendido {how}: te oigo y te leo)")
+        else:
+            mic_on.clear()
+            log("info", f"(micrófono apagado {how}: te leo solo por escrito)")
+        return mic_on.is_set()
+
+    # the web lab's text box and microphone button reach here (lunes.dashboard calls these)
+    board.on_text = lambda line: heard_q.put(("text", line.strip())) if line and line.strip() else None
+    board.on_mic = set_mic
+    board.mic_is_on = mic_on.is_set
 
     def listen():
         while True:
+            if mic_toggle.is_set():  # the m key in the window
+                mic_toggle.clear()
+                set_mic(not mic_on.is_set(), "con la tecla m")
+            if not mic_on.is_set():
+                time.sleep(0.2)
+                continue
             try:
                 got = ear.record_utterance(wait_s=5, max_s=20, silence_s=0.6)
             except sd.PortAudioError as e:
                 wait_for_microphone(voice, e, ear)
                 continue
-            if got:
+            if got and mic_on.is_set():
                 heard_q.put(("audio", got))
 
     def read_typed():
+        """Typed lines go in beside the microphone's: a word Lunes mishears can be typed, and a noisy bench can
+        be worked from the keyboard. Without a console (no stdin) this thread just ends."""
         while True:
-            heard_q.put(("text", input("\nTú: ").strip()))
+            try:
+                line = input("\nTú: ").strip()
+            except (EOFError, OSError):
+                return
+            if line:
+                heard_q.put(("text", line))
 
-    threading.Thread(target=read_typed if args.text else listen, daemon=True).start()
-    narrator.must(greeting(conductor, kinect))
+    # both channels at once: the microphone (unless --text) and the keyboard, always
+    if not args.text:
+        threading.Thread(target=listen, daemon=True).start()
+    threading.Thread(target=read_typed, daemon=True).start()
+    print("(también puedes escribirle aquí; /mic off apaga el micrófono, /mic on lo enciende)", flush=True)
+    # Continuity: a restart within a few hours picks the conversation up where it was, with no greeting (Erlan, 3 Nov:
+    # "ya estoy harto de que me diga buenas tardes... directamente continuidad del trabajo")
+    talk_file = ROOT / "runs" / "conversation.json"
+    resumed = False
+    try:
+        saved_talk = json.loads(talk_file.read_text(encoding="utf-8"))
+        if time.time() - float(saved_talk.get("at", 0)) < 3 * 3600 and saved_talk.get("turns"):
+            conductor.turns = saved_talk["turns"][-2 * conductor.keep_turns:]
+            worker.last = saved_talk.get("last_result") or ""
+            resumed = True
+    except (OSError, ValueError):
+        pass
+
+    def save_talk():
+        try:
+            talk_file.write_text(json.dumps({"at": time.time(), "turns": conductor.turns, "last_job": worker.job,
+                                             "last_result": worker.last}, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    worker.on_done = save_talk
+    if resumed:
+        name = (hume.circuit or {}).get("name")
+        line = f"Sigo con {name}." if name else "Sigo donde quedamos."
+        log("lunes", f"Lunes: {line}")
+        voice.say_soon(line)
+    else:
+        narrator.must(greeting(conductor, kinect))
 
     last_exchange, turn = 0.0, 0
     # Two things in a row that were not for Lunes (Erlan talking with his father) close the conversation until he
     # calls "Lunes" again; with it open, Lunes kept asking to repeat bits of their talk.
-    not_for_me, closed = 0, False
+    not_for_me, closed, closed_at = 0, False, 0.0
     # a sentence Erlan left half-way, waiting for the rest: {"text", "at", "called", "audio"}
     half = {"now": None}
 
@@ -784,6 +909,17 @@ def main():
                     continue
             else:
                 heard = got
+                if heard.startswith("/"):  # an order for the program, typed: not for Lunes
+                    order = heard[1:].strip().lower()
+                    if order in ("mic off", "mic apagar", "mic apagado"):
+                        set_mic(False, "desde la consola")
+                    elif order in ("mic on", "mic encender", "mic encendido"):
+                        set_mic(True, "desde la consola")
+                    elif order == "mic":
+                        log("info", f"(micrófono {'encendido' if mic_on.is_set() else 'apagado'})")
+                    else:
+                        log("info", "(órdenes escritas: /mic off, /mic on, /mic; lo demás se lo digo a Lunes)")
+                    continue
             if not heard:
                 continue
             if is_stop(heard):
@@ -802,8 +938,10 @@ def main():
             if over_lunes and not called and not sounds_like_speech(heard):
                 log("info", f"(oí «{heard}» encima de mi voz: no respondo)")
                 continue
-            in_conversation = (args.no_wake or args.text or worker.running or
-                               (not closed and time.time() - max(last_exchange, narrator.last_spoken) < CONVERSATION_S))
+            in_conversation = (args.no_wake or args.text or kind == "text" or worker.running or  # typed: always for Lunes
+                               # closed by noise, but Lunes spoke since (it asked him something): his answer counts
+                               ((not closed or narrator.last_spoken > closed_at)
+                                and time.time() - max(last_exchange, narrator.last_spoken) < CONVERSATION_S))
             if not (called or in_conversation) and kind == "audio" and len(audio) < 5 * 16000:
                 # The fast ear sometimes garbles the name itself ("olaonaa", "onaola" for "hola Lunes"): before
                 # dropping a short phrase, the precise ear hears it again (half a second, and only for these).
@@ -836,6 +974,8 @@ def main():
             reaction, turn = REACTIONS[turn % len(REACTIONS)], turn + 1
             answered = threading.Event()
             threading.Timer(REACTION_AFTER_S, lambda: answered.is_set() or voice.say_soon(reaction)).start()
+            # the conductor now reasons before it answers (several seconds): a second word so the wait is not dead air
+            threading.Timer(THINKING_AFTER_S, lambda: answered.is_set() or voice.say_soon("Déjame pensarlo.")).start()
             t0 = time.time()
             try:
                 say, action, todo = conductor.reply(request, called=called)
@@ -845,6 +985,7 @@ def main():
                 voice.say_soon("Perdón, se me trabó la cabeza. ¿Me lo repites?")
                 continue
             answered.set()
+            save_talk()  # every exchange on disk: a restart picks up from here
             narrator.answered()
             last_exchange = time.time()
             notice = conductor.tokens_notice()
@@ -854,7 +995,7 @@ def main():
                 closed = False
             not_for_me = not_for_me + 1 if (not say and action == "ninguna") else 0
             if not_for_me >= 2 and not closed:
-                closed = True
+                closed, closed_at = True, time.time()
                 log("info", "   (dos veces seguidas no era para mí: cierro la conversación hasta que me llamen)")
             if action == "esperar":
                 half["now"] = {"text": request, "at": time.time(), "called": called,

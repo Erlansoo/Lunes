@@ -1,0 +1,41 @@
+{
+  "_": [
+    "What is on the shelves of Erlan's workshop, as he listed it on Nov 3, 2026. Quantities are unknown unless qty says.",
+    "Lunes reads this file (lunes/inventory.py): circuit_design rounds a resistor or capacitor to a value here when",
+    "one lies within 20 % of the ideal and says which parts are not on the shelf; the inventory tool lists it.",
+    "Add a line for every new part. Values: resistors and pots in ohms, capacitors in farads.",
+    "simulated: true means Lunes has a SPICE model of it (lunes/spice/models.lib or lunes/catalog), so it can design and diagnose with it."
+  ],
+  "resistors_ohm": [1, 220, 330, 1000, 1500, 2200, 4850, 10000, 100000, 150000, 1000000],
+  "resistors_note": "4850 is a measured value (it is probably sold as 4.7k)",
+  "capacitors": [
+    {"farad": 1e-07, "part": "ceramic, marked 104", "simulated": true},
+    {"farad": 2.2e-07, "part": "tantalum, marked 224", "note": "polarised: its + (the longer lead, or the marked one) to the higher voltage", "simulated": true}
+  ],
+  "potentiometers_ohm": [5000, 10000, 20000],
+  "potentiometers_note": "normal single-turn pots; the 20k one is marked 203. One precision multi-turn pot, value not read yet.",
+  "parts": [
+    {"part": "NE555", "what": "timer", "qty": "1 or 2", "simulated": true},
+    {"part": "LM393", "what": "dual comparator, open collector", "simulated": true},
+    {"part": "MCP6002", "what": "dual op-amp, rail to rail, single supply 1.8 to 6 V", "simulated": false},
+    {"part": "SN74LS74AN", "what": "dual D flip-flop, TTL, 5 V", "simulated": false},
+    {"part": "2N2222", "what": "NPN transistor, TO-92", "simulated": true},
+    {"part": "1N5400", "what": "3 A rectifier diode", "simulated": false},
+    {"part": "small signal diodes", "what": "the usual 1N4148 type", "simulated": true},
+    {"part": "zener diodes", "what": "ordinary zeners, voltages not read yet", "simulated": false},
+    {"part": "LED red", "simulated": true},
+    {"part": "LED green", "simulated": true},
+    {"part": "Arduino Nano", "what": "ATmega328P board, 5 V, 10-bit ADC; Lunes programs it (mcu_program)", "simulated": true},
+    {"part": "Arduino Mega", "what": "ATmega2560 board, 5 V", "simulated": false},
+    {"part": "ESP8266 (ESP-12 module, ESP8266MOD)", "what": "Wi-Fi microcontroller, 3.3 V", "simulated": false},
+    {"part": "STM32F103C8T6 Blue Pill", "what": "ARM Cortex-M3 board, 3.3 V, 12-bit ADC; Lunes compiles for it, flashing needs an ST-Link", "simulated": true},
+    {"part": "ADS1115", "what": "16-bit I2C ADC module", "simulated": false},
+    {"part": "MPU6050", "what": "accelerometer and gyroscope module, I2C", "simulated": false},
+    {"part": "servo motor", "simulated": false},
+    {"part": "stepper motor", "simulated": false},
+    {"part": "stepper motor drivers", "simulated": false},
+    {"part": "step-down regulator module (buck)", "simulated": false},
+    {"part": "step-up regulator module (boost)", "simulated": false},
+    {"part": "industrial joysticks", "what": "for testing", "simulated": false}
+  ]
+}

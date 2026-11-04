@@ -21,6 +21,7 @@ ngspice (BSD licence) lives in ngspice/ next to the code; see the README for whe
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -58,17 +59,28 @@ class SimulationError(RuntimeError):
         super().__init__("; ".join(problems) or "ngspice could not simulate this circuit")
 
 
+def ngspice_exe():
+    """The ngspice unpacked next to the code (Windows, see the README), or else the system's own (on Linux,
+    `apt install ngspice`, which is how the tests run on GitHub); None when there is neither."""
+    if NGSPICE.exists():
+        return NGSPICE
+    found = shutil.which("ngspice")
+    return Path(found) if found else None
+
+
 def _run(lines, control, timeout=120, options=SETTINGS[0][1]):
     """Runs ngspice in batch mode; returns (written data file text or None, ngspice's own output)."""
-    if not NGSPICE.exists():
+    exe = ngspice_exe()
+    if exe is None:
         raise SimulationError([f"ngspice is not installed at {NGSPICE} (see the README)"])
     with tempfile.TemporaryDirectory() as folder:
         cir, data = Path(folder) / "circuit.cir", Path(folder) / "data.txt"
         cir.write_text("\n".join(["* Lunes", f'.include "{MODELS.as_posix()}"', f'.include "{catalog.lib_path().as_posix()}"',
                                   options, *lines, ".control",
                                   *control(data.as_posix()), "quit", ".endc", ".end"]) + "\n", encoding="ascii")
-        r = subprocess.run([str(NGSPICE), "-b", str(cir)], capture_output=True, text=True, timeout=timeout,
-                           cwd=NGSPICE.parent)
+        # the unpacked one finds its code models from its own folder; the system's knows where its own are
+        r = subprocess.run([str(exe), "-b", str(cir)], capture_output=True, text=True, timeout=timeout,
+                           cwd=exe.parent if exe == NGSPICE else folder)
         return (data.read_text() if data.exists() else None), r.stdout + r.stderr
 
 

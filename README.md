@@ -11,6 +11,7 @@ reasoning and the eyes are Lunes's.
 Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Push the Frontier*).
 
 > Status: work in progress. The hackathon runs Oct 26 – Nov 4, 2026.
+> [![tests](https://github.com/Erlansoo/Lunes/actions/workflows/tests.yml/badge.svg)](https://github.com/Erlansoo/Lunes/actions/workflows/tests.yml)
 
 ## Try it
 
@@ -36,6 +37,7 @@ set up as this README describes.
 
 ## Where it stands
 
+- **On the real bench, the morning of Nov 3, 2026:** [docs/case-study-2026-11-03.md](docs/case-study-2026-11-03.md), the bench camera recalibrated to 0.5 mm, a comparator designed from the shelf by voice, and what failed and how it was fixed, every number from the session's files.
 - **Works today:**
   - **Hands:** own firmware drives the bench CNC, with the microscope as its head.
   - **Eyes:** Lunes measures the board, builds a mosaic of it, finds components by name (SAM 3.1), goes to one and
@@ -105,7 +107,10 @@ set up as this README describes.
     measurements, not from pictures.
 - **Design and review, like a senior engineer:**
   - The model decides what is wanted; the code designs it by formula with standard values (E12 resistors, E6
-    capacitors) and the simulation must meet its goals (`lunes/designs.py`). Templates: an LED, a 555 astable
+    capacitors) and the simulation must meet its goals (`lunes/designs.py`). With an inventory of the workshop
+    (`config/inventory.json`, what Erlan has on the shelf) a design lands on those values when one is within 20 %
+    of the ideal, and says part by part what is on the shelf and what is not; the `inventory` tool answers "what do
+    I have" and whether Lunes can simulate a chip. Templates: an LED, a 555 astable
     fixed or tuned over a range with a pot, a transistor or MOSFET switch, a fixed or adjustable divider, an RC
     filter, an op-amp amplifier, a zener or three-pin linear regulator, a light sensor, a button lighting an LED.
     Every test design meets its goals.
@@ -228,7 +233,8 @@ set up as this README describes.
   - It looks every few seconds, remembers the last reading with its age, and says when it changes.
   - Designing a circuit or starting a diagnosis compares the supply with what the circuit needs, in the tool itself: the
     real panel at 24 V stopped a 5 V circuit. Out of view, Lunes says it does not know what the supply is set to.
-- **Tests with no hardware:** `python tests/run_all.py`, about five minutes. It runs twelve files:
+- **Tests with no hardware:** `python tests/run_all.py`, about five minutes. GitHub Actions runs them on every push
+  (`.github/workflows/tests.yml`, Ubuntu with its `apt` ngspice, `requirements-ci.txt`). It runs twelve files:
   - `test_geometry.py`:
     - the laser dot, found to a tenth of a pixel, and a glow refused as too bright;
     - laser triangulation;
@@ -322,6 +328,8 @@ Lunes runs ngspice's console build from `ngspice/bin/ngspice_con.exe`. Either un
 [ngspice.sourceforge.io](https://ngspice.sourceforge.io/download.html) there, or take conda-forge's build of the
 same program: from [ngspice-exe](https://anaconda.org/conda-forge/ngspice-exe), unpack the `Library` folder of the
 win-64 package into `ngspice/`. Its XSPICE code models (`ngspice/lib/ngspice/*.cm`) are needed for the 555 model.
+Without that folder Lunes uses an `ngspice` found on the PATH: on Linux, `apt install ngspice` (version 42 with its
+code models) is enough, which is how the tests run on GitHub.
 
 ### Setting up the Hantek 6022BE (once per PC)
 

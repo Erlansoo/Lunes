@@ -12,6 +12,7 @@ a plan that would not be the circuit is never shown. Boards and sources stay off
 
 Placement says where the board lies on the machine, from two holes whose position in mm is known: the laser's dot on them.
 """
+import json
 import math
 
 from lunes import catalog, mcu
@@ -256,6 +257,24 @@ def _along(layout, strip_a, strip_b):
     return None
 
 
+def hole_words(hole, volts=5, prep=None):
+    """A hole said so Erlan understands it: "+18" is not 18 volts but the hole of the + rail beside row 18, so it is
+    said as "el riel + (5 V), fila 18"; a strip hole such as "c12" stays "c12". prep "de", "a" or "en" puts the
+    preposition in front, contracted as Spanish wants ("del riel", "al riel", "de c12")."""
+    hole = str(hole)
+    if hole[:1] == "+":
+        words, article = f"riel + ({volts:g} V), fila {hole[1:]}", True
+    elif hole[:1] == "-":
+        words, article = f"riel - (GND), fila {hole[1:]}", True
+    else:
+        words, article = hole, False
+    if prep is None:
+        return f"el {words}" if article else words
+    if article:
+        return {"de": "del ", "a": "al ", "en": "en el "}[prep] + words
+    return f"{prep} {words}"
+
+
 def _to_rail(layout, strip, net, span):
     """A part's holes straight from a strip on the rails' side down to its rail, or None: from the strip's hole that
     stands closest to the part's own length from the rail, since a long body does not fit between it and column a."""
@@ -330,7 +349,10 @@ def plan(circuit, sim=None, first_row=None):
         if is_chip(part):
             _chips(layout, part)
     if first_row:  # the rest beside the chip, on whichever side of it the board has rows left
-        layout.row = max(1, first_row - 14)
+        # before the chip only when a whole block fits there; else after it. Starting at row 1 with the chip at row 3
+        # laid parts across the chip's own strips (3 Nov: "OUT_LOW split, VCC and OUT_LOW shorted")
+        last = max((r for r, _ in layout.net_of), default=first_row)
+        layout.row = first_row - 14 if first_row - 14 >= 1 else last + 2
     for part in parts:
         if is_three_legged(part):
             _transistor(layout, part)
@@ -384,7 +406,7 @@ def _capacitor_note(part, sim):
 
 
 def _steps(circuit, layout, external, sim):
-    steps = []
+    steps, volts = [], circuit.get("supply_v", 5)
     for part in circuit["parts"]:
         ref = part["ref"]
         if is_chip(part):
@@ -405,19 +427,21 @@ def _steps(circuit, layout, external, sim):
         if part["kind"] in TWO_LEADS:
             a, b = layout.holes[ref]["1"], layout.holes[ref]["2"]
             extra = _capacitor_note(part, sim) if part["kind"] == "C" else ""
-            steps.append({"kind": "part", "ref": ref, "holes": [a, b], "says": f"Pon {_named(part)} de {a} a {b}{extra}."})
+            steps.append({"kind": "part", "ref": ref, "holes": [a, b],
+                          "says": f"Pon {_named(part)} {hole_words(a, volts, 'de')} {hole_words(b, volts, 'a')}{extra}."})
         elif part["kind"] in DIODES:
             a, k = layout.holes[ref]["A"], layout.holes[ref]["K"]
             leg = "la pata larga" if part["kind"] == "LED" else "el lado sin banda"
             steps.append({"kind": "part", "ref": ref, "holes": [a, k],
-                          "says": f"Pon {_named(part)}: {leg} (ánodo) en {a} y el otro lado{' (el de la banda)' if part['kind'] != 'LED' else ''} en {k}."})
+                          "says": f"Pon {_named(part)}: {leg} (ánodo) {hole_words(a, volts, 'en')} y el otro lado"
+                                  f"{' (el de la banda)' if part['kind'] != 'LED' else ''} {hole_words(k, volts, 'en')}."})
     for wire in layout.wires:
         steps.append({"kind": "wire", "holes": [wire["from"], wire["to"]],
-                      "says": f"Pon un cable {wire['color']} de {wire['from']} a {wire['to']} ({wire['net']})."})
+                      "says": f"Pon un cable {wire['color']} {hole_words(wire['from'], volts, 'de')} "
+                              f"{hole_words(wire['to'], volts, 'a')} ({wire['net']})."})
     for item in external:
         steps.append({"kind": "external", "ref": item["ref"], "holes": [item["hole"]],
-                      "says": f"Conecta {item['pin']} de {item['ref']} en {item['hole']} ({item['net']})."})
-    volts = circuit.get("supply_v", 5)
+                      "says": f"Conecta {item['pin']} de {item['ref']} {hole_words(item['hole'], volts, 'en')} ({item['net']})."})
     if any("V" != p["kind"] and p["kind"] not in mcu.BOARDS for p in circuit["parts"]):
         steps.append({"kind": "power", "holes": ["+3", "-3"], "says": f"Con la fuente apagada y en {volts:g} V: positivo "
                                                                       f"al riel +, negativo al riel -."})
@@ -452,7 +476,8 @@ def verify(circuit, result):
         items = list(zip(("1", "2"), pins)) if isinstance(pins, list) else list(pins.items())
         holes = result["holes"].get(ref, {})
         for pin, net in items:
-            hole = holes.get(pin_key(part, pin))
+            key = pin_key(part, pin)
+            hole = holes.get(key, holes.get(str(key)))  # a plan read back from JSON has its chip pins as text
             if hole is None:
                 problems.append(f"{ref} {pin} has no hole")
                 continue
@@ -467,6 +492,85 @@ def verify(circuit, result):
                 problems.append(f"nets {net} and {seen[node]} are shorted on the board")
             seen[node] = net
     return problems
+
+
+def rebuild(circuit, edited, sim=None):
+    """The circuit as the breadboard now has it, after Erlan moved leads or added and removed wires by hand in the web
+    lab: (new circuit, its plan, what changed). edited is a plan ({"holes": {ref: {pin: hole}}, "wires": [{"from",
+    "to", "color"?}]}); every lead's net comes from the strips and wires it touches, so the board is the truth. A node
+    keeps the name of the net most of its leads had (VCC on the + rail, GND on the - rail); a net split in two keeps
+    its name on the larger part and the other becomes NAME_2; nets joined by a new wire take one name."""
+    holes = {ref: {str(k): v for k, v in pins.items()} for ref, pins in (edited.get("holes") or {}).items()}
+    wires = [dict(w) for w in (edited.get("wires") or []) if w.get("from") and w.get("to")]
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for w in wires:
+        parent[find(strip_of(w["from"]))] = find(strip_of(w["to"]))
+    leads, problems = [], []
+    for part in circuit["parts"]:
+        pins = part["pins"]
+        items = list(zip(("1", "2"), pins)) if isinstance(pins, list) else list(pins.items())
+        for pin, net in items:
+            hole = holes.get(part["ref"], {}).get(str(pin_key(part, pin)))
+            if hole is None:
+                problems.append(f"{part['ref']} {pin} has no hole")
+                continue
+            leads.append((part, pin, net, find(strip_of(hole))))
+    if problems:
+        raise ValueError("; ".join(problems))
+    # name each node: the rails are VCC and GND; otherwise the net most of its leads had
+    names, taken = {}, set()
+    rail_net = {find("rail" + r): net for net, r in RAIL_OF.items() if ("rail" + r) in parent}
+    for node, net in rail_net.items():
+        names[node] = net
+        taken.add(net)
+    by_node = {}
+    for part, pin, net, node in leads:
+        by_node.setdefault(node, []).append(net)
+    for node, nets in sorted(by_node.items(), key=lambda kv: -len(kv[1])):
+        if node in names:
+            continue
+        best = max(set(nets), key=nets.count)
+        name, k = best, 2
+        while name in taken:
+            name, k = f"{best}_{k}", k + 1
+        names[node] = name
+        taken.add(name)
+    new = json.loads(json.dumps(circuit))
+    changes = []
+    by_ref = {p["ref"]: p for p in new["parts"]}
+    for part, pin, net, node in leads:
+        target = by_ref[part["ref"]]
+        if isinstance(target["pins"], list):
+            target["pins"][int(pin) - 1] = names[node]
+        else:
+            target["pins"][pin] = names[node]
+        if names[node] != net:
+            changes.append(f"{part['ref']} {pin}: {net} -> {names[node]}")
+    for w in wires:
+        w["net"] = names.get(find(strip_of(w["from"])), "?")
+        w.setdefault("color", "amarillo")
+    first_pin = {ref: h.get("1") for ref, h in holes.items() if is_chip(by_ref.get(ref, {"kind": ""}))}
+    external = [dict(e, net=names.get(find(strip_of(e["hole"])), e.get("net"))) for e in (edited.get("external") or [])]
+    probe = {}
+    for part, pin, net, node in leads:
+        probe.setdefault(names[node], holes[part["ref"]][str(pin_key(part, pin))])
+    view = type("Edited", (), {})()
+    view.holes, view.wires, view.first_pin = holes, wires, first_pin
+    result = {"holes": holes, "wires": wires, "external": external, "probe": probe,
+              "chips": {ref: {"first": hole, "pins": len(holes[ref])} for ref, hole in first_pin.items()},
+              "steps": _steps(new, view, external, sim), "edited_by_hand": True}
+    problems = verify(new, result)
+    if problems:  # cannot happen when the names come from the board itself; said anyway rather than hidden
+        raise ValueError("; ".join(problems))
+    return new, result, changes
 
 
 def nearest_hole(placement, x_mm, y_mm, max_mm=1.5):

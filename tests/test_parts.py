@@ -155,10 +155,48 @@ def designs():
     ok(next(p for p in c["parts"] if p["kind"] == "ZENER")["model"] == "BZX55C5V1", "20 mA from 9 V, the 500 mW one does")
 
 
+def stocked():
+    """Designs land on the shelf's values when one is close, and say what is missing; a made-up inventory, so the
+    real one may change."""
+    print("Designing with what is on the shelf")
+    from lunes import inventory
+    shelf = {"resistors_ohm": [220, 330, 1000, 2200, 4850, 10000, 100000],
+             "capacitors": [{"farad": 1e-7, "part": "ceramic 104"}, {"farad": 2.2e-7, "part": "tantalum 224"}],
+             "potentiometers_ohm": [10000],
+             "parts": [{"part": "NE555", "what": "timer", "simulated": True}]}
+    real_load = inventory.load
+    inventory.load = lambda: shelf
+    try:
+        ok(inventory.stocked(4700, "R") == 4850, "4.7k wanted: the 4.85k on the shelf (3 % off) is used")
+        ok(inventory.stocked(47e3, "R") is None, "47k wanted: nothing within 20 %, the series decides")
+        ok(inventory.stocked(315, "R", mode="up") == 330, "315 rounded up: the 330 on the shelf")
+        ok(inventory.stocked(315, "R", mode="down") == 220 or inventory.stocked(315, "R", mode="down") is None,
+           "rounded down, only a value at or under it")
+        c, _, notes = TEMPLATES["astable_555"](650, led_color="red")
+        values = {p["ref"]: p.get("value") for p in c["parts"]}
+        ok((values["R1"], values["R2"], values["C1"]) == ("2.2k", "10k", "100n"), f"a 555 at 650 Hz from the shelf: {values}")
+        stock = inventory.stock_of(c["parts"])
+        ok(stock["R1 2.2k"] == "on the shelf" and stock["C1 100nF"] == "on the shelf", "R1 and C1 reported on the shelf")
+        ok(stock["C2 10nF"].startswith("not on the shelf"), f"C2 10n reported missing: {stock['C2 10nF']}")
+        c, _, _ = TEMPLATES["rc_filter"](1000)
+        values = {p["ref"]: p.get("value") for p in c["parts"]}
+        ok(values["C1"] in ("100n", "220n"), f"an RC at 1 kHz takes a capacitor from the shelf: {values}")
+        hit = inventory.listing("555")
+        ok(hit.get("ok") is not False and hit["parts"] and hit["parts"][0]["part"] == "NE555" and not hit["resistors"],
+           "inventory search '555' keeps the timer and drops the resistors")
+        ok("2.2k" in inventory.summary() and "NE555" in inventory.summary(), "the conductor's summary names values and parts")
+        inventory.load = lambda: None
+        ok(inventory.stocked(4700, "R") is None and inventory.stock_of(c["parts"]) is None
+           and inventory.listing()["ok"] is False and inventory.summary() == "", "without an inventory: series values, no stock, the tool says so")
+    finally:
+        inventory.load = real_load
+
+
 if __name__ == "__main__":
     accepted()
     spice()
     reviewed()
     designs()
+    stocked()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'}")
     sys.exit(1 if FAILED else 0)

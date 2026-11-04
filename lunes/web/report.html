@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunes · Informe</title>
+<style>
+:root { color-scheme:dark; --bg:#0d1012; --panel:#14181b; --raised:#1b2024; --line:#272e33; --ink:#e7ebec; --muted:#8e9aa0;
+        --quiet:#5f6b71; --ok:#4cc38a; --warn:#f0b64a; --bad:#f06a63; --accent:#6db3f2;
+        --mono:ui-monospace, "Cascadia Mono", Consolas, monospace; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 "Segoe UI", system-ui, sans-serif; }
+h1, h2, h3, p { margin:0; }
+.top { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--bg); }
+.brand { display:flex; align-items:baseline; gap:10px; flex:none; }
+.brand h1 { font-size:18px; font-weight:650; letter-spacing:.01em; }
+.brand span { color:var(--muted); font-size:13px; }
+.fit { flex:none; border:1px solid var(--line); border-radius:6px; padding:3px 9px; font:600 12px "Segoe UI", system-ui, sans-serif; color:var(--muted);
+       background:none; text-decoration:none; cursor:pointer; }
+.fit:hover { color:var(--ink); }
+.fit:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.lang { margin-left:auto; }
+.list { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; padding:8px 16px; border-bottom:1px solid var(--line); font-size:12.5px; color:var(--muted); }
+.list span { margin-right:6px; }
+.list a { color:var(--muted); text-decoration:none; border:1px solid var(--line); border-radius:5px; padding:2px 8px; font-size:12px; white-space:nowrap; }
+.list a:hover { color:var(--ink); } .list a.now { color:var(--ink); border-color:var(--accent); }
+.list a small { color:var(--quiet); font-family:var(--mono); margin-left:5px; }
+article { max-width:980px; margin:0 auto; padding:16px 20px 70px; }
+article h1 { font-size:22px; font-weight:650; margin:12px 0 8px; }
+article h2 { font-size:16px; font-weight:600; margin:26px 0 8px; padding-top:12px; border-top:1px solid var(--line); }
+article h3 { font-size:14px; font-weight:600; color:var(--muted); margin:16px 0 6px; }
+article h4, article h5, article h6 { font-size:13px; font-weight:600; color:var(--muted); margin:12px 0 4px; }
+article p { margin:8px 0; overflow-wrap:anywhere; }
+article hr { border:0; border-top:1px solid var(--line); margin:22px 0; }
+article a { color:var(--accent); }
+article code { font-family:var(--mono); font-size:12.5px; background:var(--raised); border-radius:3px; padding:0 4px; }
+article pre { margin:10px 0; padding:10px 12px; background:var(--panel); border:1px solid var(--line); border-radius:6px; overflow:auto;
+              font:12.5px/1.45 var(--mono); }
+article pre code { background:none; padding:0; }
+article ul, article ol { margin:6px 0; padding-left:26px; } article li { margin:2px 0; }
+.tablebox { overflow-x:auto; margin:8px 0 12px; }
+article table { border-collapse:collapse; font-size:13px; }
+article th, article td { border:1px solid var(--line); padding:4px 9px; text-align:left; vertical-align:top; }
+article th { color:var(--muted); font-weight:600; background:var(--panel); white-space:nowrap; }
+article td.num { font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
+article td.good { color:var(--ok); font-weight:600; } article td.off { color:var(--bad); font-weight:600; }
+article img { display:block; max-width:100%; height:auto; margin:10px 0; border:1px solid var(--line); border-radius:6px; background:#000; }
+.empty { color:var(--quiet); font-size:13px; text-align:center; padding:50px 20px; }
+@media (max-width:680px) { article { padding:12px 12px 50px; } .top { gap:10px; } }
+</style></head>
+<body>
+<header class="top">
+  <div class="brand"><h1>Lunes</h1><span data-t="subtitle"></span></div>
+  <a class="fit" href="/" data-t="lab"></a>
+  <button class="fit lang" id="lang" type="button" aria-label="Language"></button>
+</header>
+<nav class="list" id="list" hidden></nav>
+<article id="article"><div class="empty" data-t="loading"></div></article>
+
+<script>
+// The report Lunes wrote, as Markdown in runs/reports/, read into HTML here: no library, nothing from outside the PC.
+const TEXT = {
+  es:{subtitle:"Informe del banco", lab:"Laboratorio", reports:"Informes", latest:"Último", loading:"Leyendo el informe…",
+      none:"Todavía no hay ningún informe: pídele a Lunes que lo escriba", missing:"No encuentro ese informe"},
+  en:{subtitle:"Bench report", lab:"Lab", reports:"Reports", latest:"Latest", loading:"Reading the report…",
+      none:"No report yet: ask Lunes to write one", missing:"That report is not here"}
+};
+const $ = id => document.getElementById(id);
+const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+                set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
+let lang = TEXT[store.get("lunes.lang")] ? store.get("lunes.lang") : "es", T = TEXT[lang];
+// ?file=<name> picks an older report; anything that is not a plain file name falls back to the newest
+const asked = new URLSearchParams(location.search).get("file") || "", file = /^[\w.-]+\.md$/.test(asked) ? asked : "latest.md";
+
+const esc = s => s.replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
+// pictures and links in a report are repo-relative (runs/surveys/3.jpg): the server gives them under /runs/
+const outside = p => /^[a-z][a-z0-9+.-]*:\/\//i.test(p);  // a scheme and a host: a link to the web, not a file of ours
+const href = p => outside(p) ? p : "/" + p.replace(/^(\.\/)+/, "").replace(/^\/+/, "");
+function inline(s){
+  const codes = [];
+  s = esc(s).replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, src) => `<img src="${href(src)}" alt="${alt}" loading="lazy">`)
+       .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, h) => `<a href="${href(h)}"${outside(h) ? ' target="_blank" rel="noopener"' : ""}>${t}</a>`)
+       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+       .replace(/(^|[^\w*])\*([^*\n]+?)\*(?![\w*])/g, "$1<em>$2</em>");  // *x* only: _ stays, nets are named LED_A
+  return s.replace(/\u0000(\d+)\u0000/g, (m, i) => `<code>${codes[i]}</code>`);
+}
+const ITEM = /^\s*([-*+]|\d+[.)])\s+(.*)$/, SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const cells = l => { let t = l.trim(); if (t.startsWith("|")) t = t.slice(1); if (t.endsWith("|")) t = t.slice(0, -1); return t.split("|").map(c => c.trim()); };
+const cellClass = c => /^[-+−]?\d[\d.,]*\s*(%|[A-Za-zµΩ]{0,4})$/.test(c) ? "num" : /^(yes|sí|si|ok)$/i.test(c) ? "good" : /^no$/i.test(c) ? "off" : "";
+function markdown(text){
+  const out = [], lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let i = 0, para = [];
+  const flush = () => { if (para.length){ out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  while (i < lines.length){
+    const l = lines[i];
+    if (/^\s*```/.test(l)){ flush(); const code = []; i++; while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]); i++;
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`); continue; }
+    const h = l.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h){ flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)){ flush(); out.push("<hr>"); i++; continue; }
+    if (/^\s*\|/.test(l) && i + 1 < lines.length && SEP.test(lines[i + 1])){
+      flush();
+      const align = cells(lines[i + 1]).map(c => /^:-+:$/.test(c) ? "center" : /^-+:$/.test(c) ? "right" : ""), at = k => align[k] ? ` style="text-align:${align[k]}"` : "";
+      let html = `<div class="tablebox"><table><tr>${cells(l).map((c, k) => `<th${at(k)}>${inline(c)}</th>`).join("")}</tr>`;
+      i += 2;
+      while (i < lines.length && /^\s*\|/.test(lines[i])) html += `<tr>${cells(lines[i++]).map((c, k) => `<td class="${cellClass(c)}"${at(k)}>${inline(c)}</td>`).join("")}</tr>`;
+      out.push(html + "</table></div>"); continue;
+    }
+    const item = l.match(ITEM);
+    if (item){
+      flush(); const ordered = /\d/.test(item[1]), items = [];
+      while (i < lines.length){
+        const m = lines[i].match(ITEM); if (!m || /\d/.test(m[1]) !== ordered) break;
+        items.push(m[2]); i++;
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !ITEM.test(lines[i])) items[items.length - 1] += " " + lines[i++].trim();
+      }
+      const tag = ordered ? "ol" : "ul"; out.push(`<${tag}>${items.map(t => `<li>${inline(t)}</li>`).join("")}</${tag}>`); continue;
+    }
+    if (!l.trim()){ flush(); i++; continue; }
+    para.push(l.trim()); i++;
+  }
+  flush();
+  return out.join("\n");
+}
+
+function translate(){
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-t]").forEach(e => e.textContent = T[e.dataset.t]);
+  $("lang").textContent = lang === "es" ? "EN" : "ES";
+}
+function renderList(list){
+  const box = $("list"), names = list.reports || [];
+  box.replaceChildren(Object.assign(document.createElement("span"), {textContent: T.reports}));
+  const link = (name, text, when) => { const a = document.createElement("a"); a.href = name === "latest.md" ? "/report" : `/report?file=${encodeURIComponent(name)}`;
+    a.textContent = text; if (when){ const s = document.createElement("small"); s.textContent = when; a.append(s); } a.classList.toggle("now", name === file); box.append(a); };
+  if (list.latest) link("latest.md", T.latest);
+  for (const name of names){
+    const m = name.match(/^(.*)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})\.md$/);
+    link(name, m ? m[1] : name.replace(/\.md$/, ""), m ? `${m[4]}/${m[3]} ${m[5]}:${m[6]}` : "");
+  }
+  box.hidden = !list.latest && !names.length;
+}
+async function load(){
+  const art = $("article");
+  try { renderList(await (await fetch("/reports")).json()); } catch (err) {}  // no list: the report itself still shows
+  try {
+    const r = await fetch("/runs/reports/" + encodeURIComponent(file));
+    if (!r.ok) throw new Error(String(r.status));
+    art.innerHTML = markdown(await r.text());
+    const h1 = art.querySelector("h1"); document.title = (h1 ? h1.textContent + " · " : "") + "Lunes";
+  } catch (err) { art.replaceChildren(Object.assign(document.createElement("div"), {className: "empty", textContent: file === "latest.md" ? T.none : T.missing})); }
+}
+$("lang").onclick = () => { lang = lang === "es" ? "en" : "es"; T = TEXT[lang]; store.set("lunes.lang", lang); translate(); load(); };
+translate(); load();
+</script>
+</body></html>

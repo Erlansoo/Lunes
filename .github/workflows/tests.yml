@@ -1,0 +1,30 @@
+# Every test that needs no hardware (tests/run_all.py), on each push: the simulated bench, the circuit simulator
+# with the system's ngspice, the breadboard planner, the chip and supply readers on saved pictures, the web lab.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+      - name: ngspice and PortAudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ngspice libportaudio2
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Arduino AVR core, for the sketches Lunes writes for an Uno or a Nano
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+      - run: pip install -r requirements-ci.txt
+      - run: python tests/run_all.py

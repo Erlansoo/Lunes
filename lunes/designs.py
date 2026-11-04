@@ -8,6 +8,7 @@ on faith.
 """
 import math
 
+from lunes import inventory
 from lunes.circuit import REG_DROPOUT, REG_MAX_A, REG_V, ZENER_V, ZENER_W, value
 
 POT_VALUES = (1e3, 2e3, 5e3, 10e3, 20e3, 50e3, 100e3, 200e3, 500e3, 1e6)  # the tracks sold
@@ -17,8 +18,22 @@ E6 = (1.0, 1.5, 2.2, 3.3, 4.7, 6.8)
 LED_VF = {"red": 1.85, "yellow": 1.95, "green": 2.15, "blue": 3.2, "white": 3.2}  # at about 10 mA, as the models give
 
 
+def capacitors(low_exp, high_exp):
+    """The capacitor values a design may pick: those on the shelf (config/inventory.json) when there are any, else
+    the E6 series over the decades 10^low_exp to 10^high_exp. A design that works with none of the shelf's falls
+    back to the series (see astable_555)."""
+    series = [m * 10 ** exp for exp in range(low_exp, high_exp) for m in E6]
+    stocked = [c for c in inventory.values("C") if 10 ** low_exp <= c < 10 ** high_exp]
+    return stocked, series
+
+
 def nearest(x, series=E12, mode="nearest"):
-    """The value of a standard series nearest to x ("up": the next one up, "down": the next one down)."""
+    """The value to use for an ideal x: one on the workshop's shelf when it lies within 20 % of x
+    (config/inventory.json), else the standard series' nearest ("up": the next one up, "down": the next one down)."""
+    kind = "R" if series is E12 else "C" if series is E6 else None
+    stocked = inventory.stocked(x, kind, mode) if kind else None
+    if stocked is not None:
+        return stocked
     decade = 10 ** math.floor(math.log10(x))
     options = [m * decade * k for k in (0.1, 1, 10) for m in series]
     if mode == "up":
@@ -61,9 +76,9 @@ def astable_555(frequency_hz, duty=0.55, supply_v=5.0, led_color=None):
     and the frequency recomputed with the rounded values."""
     duty = min(max(float(duty), 0.51), 0.95)
     best = None
-    for exp in range(-11, -2):
-        for m in E6:
-            c = m * 10 ** exp
+    stocked, series = capacitors(-11, -2)
+    for candidates in ((stocked, series) if stocked else (series,)):  # the shelf's capacitors first
+        for c in candidates:
             s = 1.44 / (frequency_hz * c)
             r2, r1 = (1 - duty) * s, (2 * duty - 1) * s
             r1 = max(r1, 1e3)
@@ -76,6 +91,9 @@ def astable_555(frequency_hz, duty=0.55, supply_v=5.0, led_color=None):
             score = abs(math.log(f / frequency_hz)) + 0.5 * abs(d - duty) + 0.02 * abs(math.log(r2n / 47e3))
             if best is None or score < best[0]:
                 best = (score, c, r1n, r2n, f, d)
+        # the shelf's parts meet the goals (8 % in frequency, 6 points of duty): no need to look at the series
+        if best is not None and abs(math.log(best[4] / frequency_hz)) <= math.log(1.08) and abs(best[5] - duty) <= 0.06:
+            break
     if best is None:
         raise ValueError(f"no 555 astable with standard parts for {frequency_hz:g} Hz")
     _, c, r1, r2, f, d = best
@@ -153,15 +171,17 @@ def rc_filter(cutoff_hz, kind="lowpass", supply_v=5.0):
     """A first-order RC filter: fc = 1 / (2 pi R C), the capacitor picked so R lands between 1 k and 100 k. A test
     sine at the cutoff on IN (around half the supply) must come out at 70.7 % of its size."""
     best = None
-    for exp in range(-11, -3):
-        for m in E6:
-            c = m * 10 ** exp
+    stocked, series = capacitors(-11, -3)
+    for candidates in ((stocked, series) if stocked else (series,)):  # the shelf's capacitors first
+        for c in candidates:
             r = nearest(1 / (2 * math.pi * cutoff_hz * c))
             if 1e3 <= r <= 100e3:
                 fc = 1 / (2 * math.pi * r * c)
                 score = abs(math.log(fc / cutoff_hz)) + 0.02 * abs(math.log(r / 10e3))
                 if best is None or score < best[0]:
                     best = (score, r, c, fc)
+        if best is not None and abs(math.log(best[3] / cutoff_hz)) <= math.log(1.08):  # the shelf's parts meet the goal
+            break
     if best is None:
         raise ValueError(f"no RC filter with standard parts for {cutoff_hz:g} Hz")
     _, r, c, fc = best

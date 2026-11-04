@@ -4,7 +4,10 @@ http://127.0.0.1:8765
 The microscope, the bench camera, the Kinect and the last picture the brain looked at; the scope's traces and readings;
 where the machine is on its table and whether the Kinect agrees; the circuit, what the engine thinks is wrong with it and
 where to probe next; the Arduino's readings; and the conversation with the tools Lunes used. The page is lunes/web/lab.html
-and what it shows of the bench comes from lunes/lab.py. Nothing leaves the PC; it only listens on 127.0.0.1.
+and what it shows of the bench comes from lunes/lab.py. The report page, lunes/web/report.html at /report, shows the
+Markdown Lunes writes in runs/reports/, with its pictures from under runs/. With the hooks talk.py gives (on_text, on_mic,
+mic_is_on) the page also types a line to Lunes and mutes the microphone. Nothing leaves the PC; it only listens on
+127.0.0.1.
 """
 import json
 import threading
@@ -12,12 +15,17 @@ import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 import cv2
 
 PORT = 8765
 
-PAGE = (Path(__file__).resolve().parent / "web" / "lab.html").read_bytes()
+WEB = Path(__file__).resolve().parent / "web"
+RUNS = WEB.parent.parent / "runs"  # what Lunes writes on the bench (reports, pictures, JSON): the report page reads it
+PAGE = (WEB / "lab.html").read_bytes()  # the tests look at it; the server reads the file again at every request
+FILES = {".md": "text/markdown; charset=utf-8", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+         ".json": "application/json"}  # the kinds of file the page may read under runs/
 
 
 def _jpeg(image, max_side=960, quality=80):
@@ -37,7 +45,11 @@ class Dashboard:
         self.camera, self.bench, self.kinect, self.speaking, self.lab = camera, bench, kinect, speaking, lab
         self.on_tap = None  # on_tap(x, y) for a tap on the microscope's picture, fractions of it
         self.on_scope_live = None  # on_scope_live(on) for the scope's "live" button; returns what happened
+        self.on_text = self.on_mic = self.mic_is_on = None  # talk.py: a line typed for Lunes, the mic's switch, its state
+        self.circuits = self.on_circuit_load = None  # talk.py: the saved circuits (runs/circuits/) and loading one on the bench
+        self.on_layout_edit = None  # talk.py: the breadboard as Erlan edited it by hand; rebuilds and keeps the circuit
         self.mosaic = None  # gives the last mosaic's picture, for the machine's map
+        self.runs = RUNS  # the tests point it at a folder of their own
         self.events = deque(maxlen=500)
         self.count = 0
         self.status, self.busy = "", False
@@ -85,17 +97,82 @@ class Dashboard:
             def log_message(self, *args):  # keep the console for the conversation
                 pass
 
-            def _send(self, body, kind):
-                self.send_response(200)
+            def _send(self, body, kind, status=200):
+                self.send_response(status)
                 self.send_header("Content-Type", kind)
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _json(self, data, status=200):
+                return self._send(json.dumps(data, default=float).encode(), "application/json", status)
+
+            def do_POST(self):
+                try:
+                    self._post()
+                except ConnectionError:
+                    self.close_connection = True
+
+            def _post(self):
+                """What the page sends: a line typed for Lunes, or the microphone's switch; both need talk.py's hooks."""
+                path = self.path.partition("?")[0]
+                try:
+                    size = min(int(self.headers.get("Content-Length") or 0), 1 << 16)
+                    data = json.loads(self.rfile.read(size) or b"{}")
+                    if not isinstance(data, dict):
+                        raise ValueError("not an object")
+                except (ValueError, TypeError) as e:
+                    return self._json({"ok": False, "error": f"bad request: {e}"}, 400)
+                if path == "/say":
+                    text = str(data.get("text", "")).strip()
+                    if not text:
+                        return self._json({"ok": False, "error": "nothing to say"}, 400)
+                    if board.on_text is None:
+                        return self._json({"ok": False, "error": "no conversation to type into"}, 503)
+                    board.on_text(text)
+                    return self._json({"ok": True})
+                if path == "/mic":
+                    if board.on_mic is None:
+                        return self._json({"ok": False, "error": "no voice session"}, 503)
+                    return self._json({"on": bool(board.on_mic(bool(data.get("on"))))})
+                if path == "/layout/edit":
+                    layout = data.get("layout")
+                    if not isinstance(layout, dict):
+                        return self._json({"ok": False, "error": "no layout"}, 400)
+                    if board.on_layout_edit is None:
+                        return self._json({"ok": False, "error": "no bench to edit"}, 503)
+                    return self._json(board.on_layout_edit(layout))
+                if path == "/circuit/load":
+                    file = str(data.get("file", "")).strip()
+                    if not file:
+                        return self._json({"ok": False, "error": "no file"}, 400)
+                    if board.on_circuit_load is None:
+                        return self._json({"ok": False, "error": "no bench to load it on"}, 503)
+                    return self._json(board.on_circuit_load(file))
+                self._nothing()
+
             def do_GET(self):
+                try:
+                    self._get()
+                except ConnectionError:  # the page let go of a picture or a poll it no longer needs: nothing to say
+                    self.close_connection = True
+
+            def _get(self):
                 path, _, query = self.path.partition("?")
-                if path == "/":
-                    return self._send(PAGE, "text/html; charset=utf-8")
+                if path == "/":  # read again each time: a change to the page shows with a reload while Lunes runs
+                    return self._send((WEB / "lab.html").read_bytes(), "text/html; charset=utf-8")
+                if path == "/report":  # ?file=<name> is for the page, which then asks for /runs/reports/<name>
+                    return self._send((WEB / "report.html").read_bytes(), "text/html; charset=utf-8")
+                if path == "/reports":
+                    folder = board.runs / "reports"
+                    names = sorted((p for p in folder.glob("*.md") if p.name != "latest.md"),
+                                   key=lambda p: (p.stat().st_mtime, p.name), reverse=True) if folder.is_dir() else []
+                    body = {"latest": (folder / "latest.md").is_file(), "reports": [p.name for p in names]}
+                    return self._send(json.dumps(body).encode(), "application/json")
+                if path.startswith("/runs/"):
+                    return self._file(path[len("/runs/"):])
+                if path == "/circuits":  # each one's file is readable at /runs/circuits/<file>, its plan in "layout"
+                    return self._json(board.circuits() if board.circuits else [])
                 if path == "/tap":
                     try:
                         q = dict(part.split("=") for part in query.split("&") if "=" in part)
@@ -117,6 +194,7 @@ class Dashboard:
                         body = {"events": events, "next": board.count, "status": board.status, "busy": board.busy,
                                 "speaking": bool(board.speaking()), "seen_version": board.seen_version,
                                 "seen_label": board.seen_label}
+                    body["mic"] = bool(board.mic_is_on()) if board.mic_is_on else None  # None: no voice session
                     if board.lab is not None:
                         try:
                             body["lab"] = board.lab()
@@ -139,6 +217,24 @@ class Dashboard:
                         return self._send(_jpeg(image, 1600, 80), "image/jpeg")
                 if path == "/img/seen.jpg" and board.seen:
                     return self._send(board.seen, "image/jpeg")
+                self._nothing()
+
+            def _file(self, rel):
+                """A file under runs/, read-only: reports, pictures and JSON only, never a path that leaves runs/."""
+                parts = unquote(rel).split("/")
+                root = board.runs.resolve()
+                if any(part in ("", ".", "..") or "\\" in part or ":" in part for part in parts):
+                    return self._nothing()
+                try:
+                    target = root.joinpath(*parts).resolve(strict=True)
+                except OSError:
+                    return self._nothing()
+                if not (target.is_relative_to(root) and target != root and target.is_file()
+                        and target.suffix.lower() in FILES):
+                    return self._nothing()
+                return self._send(target.read_bytes(), FILES[target.suffix.lower()])
+
+            def _nothing(self):
                 self.send_response(404)
                 self.end_headers()
 

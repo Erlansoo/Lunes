@@ -120,7 +120,12 @@ def _breadboard(hume):
     steps = layout["steps"]
     return {"holes": [h for pins in layout["holes"].values() for h in pins.values()], "parts": _parts(hume, layout),
             "wires": [[w["from"], w["to"], w["color"], w["net"]] for w in layout["wires"]], "total": len(steps),
-            "placed": hume.placement is not None, "guide": hume.guide}
+            "placed": hume.placement is not None, "guide": hume.guide,
+            "probe": layout.get("probe", {}),  # a hole on every net: where the page marks the probe and the ground clip
+            "check": (getattr(hume, "build_check", None) or {}).get("holes"),  # check_build: yes / no / unclear per hole
+            # check_build's findings: [{what, holes: {hole: yes|no|unclear}, state, priority 1|2|3|None, advice}]
+            "check_items": (getattr(hume, "build_check", None) or {}).get("items"),
+            "external": layout.get("external", [])}  # the supply's and the board's pins: the hand editor sends them back
 
 
 def _chip(hume):

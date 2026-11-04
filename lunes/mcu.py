@@ -30,6 +30,7 @@ import copy
 import json
 import random
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -290,7 +291,10 @@ def _code_pin(pin, board):
 
 
 def sketch(part, circuit_name="circuit"):
-    """The Arduino sketch for the part's pin program, as text."""
+    """The Arduino sketch for the board, as text: the code written for it (the part's "code", a whole sketch with
+    its own logic, tried first with lunes.dryrun), or else one made from its pin program."""
+    if part.get("code"):
+        return part["code"] if part["code"].endswith("\n") else part["code"] + "\n"
     board = BOARDS[part["kind"]]
     program = part.get("program") or {}
     head, setup, loop, analog, digital = [], [], [], [], []
@@ -357,10 +361,20 @@ def sketch(part, circuit_name="circuit"):
     return "\n".join(lines) + "\n"
 
 
+def cli_exe():
+    """The arduino-cli that comes with the Arduino IDE (Windows), or else one on the PATH (on Linux, where the tests
+    run on GitHub, arduino-cli with the arduino:avr core); None when there is neither."""
+    if CLI.exists():
+        return CLI
+    found = shutil.which("arduino-cli")
+    return Path(found) if found else None
+
+
 def _cli(*args, timeout=300):
-    if not CLI.exists():
-        raise RuntimeError(f"arduino-cli is not at {CLI} (it comes with the Arduino IDE)")
-    r = subprocess.run([str(CLI), *args], capture_output=True, text=True, timeout=timeout)
+    exe = cli_exe()
+    if exe is None:
+        raise RuntimeError(f"arduino-cli is not at {CLI} (it comes with the Arduino IDE) nor on the PATH")
+    r = subprocess.run([str(exe), *args], capture_output=True, text=True, timeout=timeout)
     return r.returncode, (r.stdout + r.stderr).strip()
 
 
@@ -583,6 +597,23 @@ class SimulatedBoard:
         if self.circuit is None or self.fault == f"{self.ref}:not_running":
             return {"ok": True, "port": "simulated", "baud": 115200, "seconds": seconds, "bytes": 0, "lines": [],
                     "note": "nothing printed in that time"}
+        part = next(p for p in self.circuit["parts"] if p["ref"] == self.ref)
+        if part.get("code"):  # its own code: what it prints on the simulated circuit, from the dry run
+            from lunes import dryrun
+            from lunes.circuit import with_fault
+            bench = self.circuit
+            if self.fault:
+                try:
+                    bench = with_fault(self.circuit, self.fault)
+                    next(p for p in bench["parts"] if p["ref"] == self.ref)["code"] = part["code"]
+                except ValueError:
+                    pass
+            run = dryrun.dry_run(bench, self.ref, [{"label": "now", "ms": seconds * 1000}])
+            if not run["ok"]:
+                return {"ok": False, "error": run.get("error") or run.get("errors")}
+            lines = run["cases"][0]["serial"]
+            return {"ok": True, "port": "simulated", "baud": 115200, "seconds": seconds,
+                    "bytes": sum(len(line) + 2 for line in lines), "lines": lines, "text_share": 1.0}
         lines = [json.dumps(r, separators=(",", ":")) for r in self._rows(seconds)]
         return {"ok": True, "port": "simulated", "baud": 115200, "seconds": seconds,
                 "bytes": sum(len(line) + 2 for line in lines), "lines": lines[-60:], "text_share": 1.0}

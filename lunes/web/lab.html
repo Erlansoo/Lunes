@@ -27,8 +27,13 @@ button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .state[data-on="speaking"] { color:var(--accent); border-color:#2d4a63; } .state[data-on="speaking"] i { background:var(--accent); }
 .status { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .clock { flex:none; color:var(--muted); font-size:13px; }
-.lang { flex:none; border:1px solid var(--line); border-radius:6px; padding:3px 9px; font-size:12px; font-weight:600; color:var(--muted); }
-.lang:hover { color:var(--ink); }
+.lang, .fit { flex:none; border:1px solid var(--line); border-radius:6px; padding:3px 9px; font-size:12px; font-weight:600; color:var(--muted); text-decoration:none; }
+.lang:hover, .fit:hover { color:var(--ink); }
+.fit.apply { color:var(--accent); border-color:#2d4a63; }
+.mic { flex:none; display:flex; align-items:center; gap:6px; padding:3px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; font-weight:600; color:var(--ink); }
+.mic svg { flex:none; } .mic .slash { display:none; }
+.mic[data-on="false"] { color:var(--bad); border-color:#5a2a28; background:rgba(240,106,99,.08); } .mic[data-on="false"] .slash { display:block; }
+.mic:disabled { color:var(--quiet); cursor:default; }
 
 .strip { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; padding:7px 16px; border-bottom:1px solid var(--line);
          font-size:12.5px; color:var(--muted); }
@@ -41,10 +46,14 @@ button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .model { white-space:nowrap; } .model.on { color:var(--ink); }
 .model small { color:var(--quiet); font-size:11.5px; margin-left:3px; }
 
-main { display:grid; gap:10px; padding:10px; min-height:0;
-       grid-template-columns:minmax(0,1.6fr) minmax(290px,.86fr) minmax(320px,.94fr);
-       grid-template-rows:minmax(0,1.2fr) minmax(0,1fr);
+/* the panels' shares of the big layout live in these variables, so a border dragged (see "layout" in the script) and a
+   kept layout change them without touching the narrow layouts below, which set their own templates */
+main { display:grid; gap:10px; padding:10px; min-height:0; --c1:1.6fr; --c2:.86fr; --c3:.94fr; --r1:1.2fr; --r2:1fr;
+       grid-template-columns:minmax(0,var(--c1)) minmax(290px,var(--c2)) minmax(320px,var(--c3));
+       grid-template-rows:minmax(0,var(--r1)) minmax(0,var(--r2));
        grid-template-areas:"view machine talk" "scope bench talk"; }
+body[data-resize] { user-select:none; } body[data-resize="col"], body[data-resize="col"] * { cursor:col-resize !important; }
+body[data-resize="row"], body[data-resize="row"] * { cursor:row-resize !important; } body[data-resize="both"], body[data-resize="both"] * { cursor:move !important; }
 .panel { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:8px; min-height:0; min-width:0;
          display:flex; flex-direction:column; overflow:hidden; }
 .panel.floating { position:fixed; inset:4vh 5vw; z-index:40; box-shadow:0 24px 70px rgba(0,0,0,.65); border-color:#3d4a52; }
@@ -64,8 +73,8 @@ main { display:grid; gap:10px; padding:10px; min-height:0;
 .head .side { margin-left:auto; color:var(--muted); font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tag { font-size:11px; font-weight:700; letter-spacing:.03em; color:var(--warn); border:1px solid #5a4a26; border-radius:4px; padding:0 5px; }
 .live { font:inherit; font-size:11.5px; color:var(--muted); background:transparent; border:1px solid var(--line); border-radius:4px; padding:1px 7px; cursor:pointer; }
-.live:hover { color:var(--text); }
-.live.on { color:var(--text); border-color:#b33; }
+.live:hover { color:var(--ink); }
+.live.on { color:var(--ink); border-color:#b33; }
 .live.on::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:#e33; margin-right:5px; animation:blink 1s step-end infinite; }
 @keyframes blink { 50% { opacity:.25; } }
 .body { flex:1; min-height:0; overflow:auto; padding:10px 12px; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
@@ -135,11 +144,47 @@ td.good { color:var(--ok); } td.off { color:var(--bad); }
 .power b { font:600 15px var(--mono); color:#ff6b57; }
 .power.bad { color:var(--bad); font-weight:600; }
 .breadboard svg { display:block; width:100%; height:auto; background:#f2efe6; border-radius:4px; }
+.zoomctl { display:flex; align-items:center; gap:3px; margin-left:6px; }
+.zoomctl button { width:22px; height:20px; border:1px solid var(--line); border-radius:4px; color:var(--muted); font-size:14px; line-height:1; }
+.zoomctl button:hover:not(:disabled) { color:var(--ink); border-color:var(--accent); } .zoomctl button:disabled { color:var(--quiet); cursor:default; }
+.zoomctl span { min-width:46px; text-align:center; font-size:12px; color:var(--muted); }
+.findings { margin-top:6px; display:flex; flex-direction:column; gap:3px; font-size:12.5px; }
+.finding { display:grid; grid-template-columns:auto 1fr; gap:2px 8px; align-items:baseline; padding:4px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); }
+.finding:hover { border-color:var(--accent); } .finding i { width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--quiet); }
+.finding .what { font-weight:600; } .finding .advice { grid-column:2; color:var(--muted); font-size:12px; }
+.finding.p1 i { background:#f06a63; } .finding.p2 i { background:#f08a3c; } .finding.p3 i { background:#f5dc28; }
+svg .fault { fill:none; stroke-width:1.6; pointer-events:none; }
+svg .fault.p1 { stroke:#e8352b; animation:blink .45s step-end infinite; } svg .fault.p2 { stroke:#f08a3c; animation:blink .9s step-end infinite; }
+svg .fault.p3 { stroke:#e3c21a; animation:blink 1.6s step-end infinite; } svg .fault.dim { opacity:.12; animation:none; } svg .fault.hot { stroke-width:2.8; animation:none; }
+.menu { position:fixed; top:12vh; left:calc(50% - 240px); width:480px; max-width:calc(100vw - 20px); max-height:76vh; z-index:45; display:flex; flex-direction:column;
+        background:var(--raised); border:1px solid #3d4a52; border-radius:8px; box-shadow:0 24px 70px rgba(0,0,0,.65); }
+.menu .bar { flex:none; display:flex; align-items:center; gap:10px; padding:7px 12px; border-bottom:1px solid var(--line); cursor:move; user-select:none; font-weight:600; font-size:13px; }
+.menu .bar button { margin-left:auto; width:24px; height:24px; border-radius:5px; border:1px solid var(--line); color:var(--muted); } .menu .bar button:hover { color:var(--ink); border-color:var(--accent); }
+.menu .list { flex:1; min-height:0; overflow:auto; padding:6px; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+.menu .hint { color:var(--muted); font-size:12.5px; padding:4px 6px; } .menu .hint.bad { color:var(--bad); } .menu[hidden] { display:none; }
+@media (max-width:680px) { .menu { top:auto; bottom:0; left:0; width:100%; max-width:none; max-height:75vh; border-radius:10px 10px 0 0; } }
+.edittools { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; padding:6px 12px; border-bottom:1px solid var(--line); font-size:12.5px; color:var(--muted); }
+.edittools .swatch { width:16px; height:16px; border-radius:50%; border:2px solid transparent; padding:0; } .edittools .swatch.on { border-color:var(--ink); }
+.edittools .live { color:var(--ink); } .edittools .live:disabled { color:var(--quiet); cursor:default; } .edittools .side.bad { color:var(--bad); }
+.editresult { flex:none; max-height:28%; overflow:auto; padding:6px 12px; border-bottom:1px solid var(--line); font-size:12.5px; }
+.editresult.bad { color:var(--bad); } .editresult ul { margin:2px 0 4px; padding-left:18px; } .editresult b { color:var(--muted); font-weight:600; }
+.editing svg rect[data-hole] { cursor:pointer; } .editing svg rect[data-hole]:hover, .editing svg rect[data-hole].drop { fill:rgba(60,140,240,.45); }
+.editing svg rect[data-hole].start { fill:rgba(240,180,60,.75); } .editing svg [data-grab] { cursor:grab; } .editing svg path[data-wire] { cursor:pointer; }
+.editing svg .picked { stroke:#ff3b2e !important; stroke-width:2.2 !important; } .editing svg .ghost { pointer-events:none; }
+.project { display:block; width:100%; text-align:left; padding:7px 8px; border-radius:6px; border:1px solid transparent; }
+.project:hover { background:var(--panel); border-color:var(--line); } .project.now { border-color:var(--accent); }
+.project .name { font-weight:600; } .project .name small { font-weight:500; color:var(--accent); margin-left:6px; }
+.project .sub { color:var(--muted); font-size:12px; margin-top:2px; overflow-wrap:anywhere; }
+.project .mini { margin-top:5px; } .project .mini svg { max-height:120px; }
 .stepnow { padding:7px 10px; border-radius:6px; background:#2a1a1a; border:1px solid #6b2f2a; font-size:13px; margin-top:6px; }
 .stepnow b { color:#ff6b57; font-family:var(--mono); }
 .serial { font:12px/1.35 var(--mono); color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; max-height:7em; overflow:auto; }
 
 #log { display:flex; flex-direction:column; gap:7px; }
+.ask { flex:none; display:flex; flex-direction:column; gap:3px; padding:6px 8px; border-top:1px solid var(--line); }
+.ask input { width:100%; font:inherit; color:var(--ink); background:var(--raised); border:1px solid var(--line); border-radius:6px; padding:5px 9px; }
+.ask input::placeholder { color:var(--quiet); } .ask input:focus { outline:none; border-color:var(--accent); } .ask input.bad { border-color:var(--bad); }
+.asknote { color:var(--bad); font-size:12px; padding:0 2px; }
 .msg { max-width:92%; padding:6px 10px; border-radius:8px; overflow-wrap:anywhere; background:var(--raised); }
 .msg.you { align-self:flex-end; background:#1b2f42; }
 .msg.progress { color:var(--muted); background:none; padding:0 2px; }
@@ -170,7 +215,11 @@ body:not(.details) .detail { display:none; }
 <header class="top">
   <div class="brand"><h1>Lunes</h1><span data-t="subtitle"></span></div>
   <div class="activity"><div class="state" id="state" data-on="listening"><i></i><span id="stateText"></span></div>
+    <button class="mic" id="mic" type="button" data-on="none" disabled aria-pressed="false"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="5.6" y="1.2" width="4.8" height="8" rx="2.4" fill="currentColor"/><path d="M3.6 7.4a4.4 4.4 0 0 0 8.8 0M8 11.8v2.4M5.6 14.4h4.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path class="slash" d="M2.4 2.4l11.2 11.2" fill="none" stroke="var(--bg)" stroke-width="3.4" stroke-linecap="round"/><path class="slash" d="M2.4 2.4l11.2 11.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Mic</span></button>
     <div class="status" id="status"></div></div>
+  <button class="fit apply" id="applyLayout" type="button" data-t="applyLayout" hidden></button>
+  <button class="fit" id="resetLayout" type="button" data-t="resetLayout" hidden></button>
+  <a class="fit" id="report" href="/report" target="_blank" rel="noopener" data-t="report"></a>
   <div class="clock num" id="clock"></div>
   <button class="lang" id="lang" aria-label="Language"></button>
 </header>
@@ -178,6 +227,7 @@ body:not(.details) .detail { display:none; }
   <div class="group" id="instruments"></div>
   <div class="group" id="models"></div>
 </div>
+<div class="menu" id="projectsMenu" hidden><div class="bar" id="projectsBar"><span data-t="projects"></span><button type="button" id="projectsClose" aria-label="Cerrar">✕</button></div><div class="list" id="projectsList"></div></div>
 <main>
   <section class="panel" id="view">
     <div class="tabs" role="tablist" id="tabs"></div>
@@ -207,13 +257,16 @@ body:not(.details) .detail { display:none; }
   </section>
 
   <section class="panel" id="bench">
-    <div class="head"><h2 data-t="benchTitle"></h2><span class="side" id="benchInfo"></span></div>
+    <div class="head"><h2 data-t="benchTitle"></h2><span class="zoomctl" id="boardZoom" hidden><button type="button" id="boardOut">−</button><span class="num" id="boardPct">100 %</span><button type="button" id="boardIn">+</button><button type="button" id="boardReset">⟲</button></span><button class="live" id="projects" type="button" data-t="projects"></button><button class="live" id="editBoard" type="button" hidden></button><button class="live" id="errors" type="button" data-t="errors" hidden></button><span class="side" id="benchInfo"></span></div>
+    <div class="edittools" id="editTools" hidden><span data-t="wireColor"></span><span id="editColors"></span><button class="live" id="editDelete" type="button" data-t="del"></button><button class="live" id="editUndo" type="button" data-t="undo"></button><button class="live" id="editSave" type="button" data-t="save"></button><button class="live" id="editCancel" type="button" data-t="cancel"></button><span class="side" id="editNote"></span></div>
+    <div class="editresult" id="editResult" hidden></div>
     <div class="body" id="benchBody"></div>
   </section>
 
   <section class="panel" id="talk">
     <div class="head"><h2 data-t="conversation"></h2><button class="toggle side" id="details"></button></div>
     <div class="body" id="logBox"><div id="log"></div></div>
+    <form class="ask" id="ask" autocomplete="off"><input id="askText" type="text" maxlength="500" enterkeyhint="send"><div class="asknote" id="askNote" hidden></div></form>
   </section>
 </main>
 
@@ -234,7 +287,19 @@ const TEXT = {
       noneTitle:"Sin señal", supply:"Fuente", outOn:"salida encendida", outOff:"salida apagada", notSeen:"sin ver la fuente",
       remembered:"recuerdo", circuitWants:"el circuito pide", limitHigh:"límite alto, mejor", breadboard:"Protoboard", stepOf:"Paso",
       notPlaced:"falta ubicar la protoboard", ctrlZoom:"Ctrl + rueda para acercar; doble clic vuelve", tapHint:"Toca el pin 1 en la foto del microscopio para decírselo a Lunes",
-      chipSeen:"Chip visto", pin1In:"pin 1 en", asPlanned:"como en el plan", notAsPlanned:"NO como en el plan, que lo tiene en", pin1Unknown:"pin 1 sin ver: tócalo en la foto"},
+      chipSeen:"Chip visto", pin1In:"pin 1 en", asPlanned:"como en el plan", notAsPlanned:"NO como en el plan, que lo tiene en", pin1Unknown:"pin 1 sin ver: tócalo en la foto",
+      applyLayout:"Aplicar", resetLayout:"Restablecer", applyTip:"Guardar este reparto de los paneles: la página abre así", resetTip:"Volver al reparto original de los paneles",
+      report:"Informe", probeTip:"punta aquí", clipGnd:"pinza a GND", rail:"riel", row:"fila",
+      askLunes:"Escríbele a Lunes…", askNone:"No hay conversación: Lunes no está corriendo con voz", askFail:"No se pudo mandar",
+      micOn:"Micrófono encendido: clic para silenciarlo", micOff:"Micrófono silenciado: clic para encenderlo", micNone:"Sin sesión de voz: el micrófono no se controla desde aquí",
+      zoomIn:"Acercar", zoomOut:"Alejar", zoomReset:"Volver al 100 %", boardZoomHint:"Ctrl + rueda para acercar o alejar; arrastra para moverte; doble clic vuelve al 100 %",
+      projects:"Proyectos", projectsNone:"No hay circuitos guardados", projectsFail:"No pude leer la lista", loadAsk:"¿Poner este circuito en el banco?",
+      loadFail:"No se pudo cargar", loadNone:"No hay banco donde cargarlo: Lunes no está corriendo", onBench:"en el banco", noPlan:"sin plan", loading:"Leyendo…",
+      editBoard:"Editar", editClose:"Cerrar edición", wireColor:"Cable", del:"Eliminar", undo:"Deshacer", save:"Guardar", cancel:"Cancelar",
+      editHint:"Arrastra la pata de una pieza a otro agujero (un chip entero, por cualquier pata); clic en dos agujeros pone un cable; clic en un cable y Eliminar lo quita",
+      holeTaken:"Ese agujero ya está ocupado", dropOnHole:"Suéltala sobre un agujero", wireFrom:"Cable desde", saving:"Guardando…", saved:"Plan guardado: Lunes lo revisó",
+      editFail:"No se pudo guardar", changes:"Cambios", warnings:"Avisos", problems:"Problemas", discardAsk:"¿Descartar los cambios sin guardar?",
+      errors:"Errores", p1:"falta, y explica lo medido", p2:"falta, sin confirmar", p3:"duda: tapado o poco claro"},
   en:{subtitle:"Electronics lab", scope:"Oscilloscope", machine:"Machine", benchTitle:"Circuit and diagnosis",
       conversation:"Conversation", listening:"Listening", working:"Working", speaking:"Speaking", microscope:"Microscope",
       bench:"Bench", kinect:"Kinect", analysis:"AI analysis", cnc:"CNC", arduino:"Arduino", noScope:"Oscilloscope not connected",
@@ -250,7 +315,19 @@ const TEXT = {
       noneTitle:"No signal", supply:"Supply", outOn:"output on", outOff:"output off", notSeen:"supply not in view",
       remembered:"remembered", circuitWants:"the circuit needs", limitHigh:"limit high, better", breadboard:"Breadboard", stepOf:"Step",
       notPlaced:"breadboard not located yet", ctrlZoom:"Ctrl + wheel to zoom; double-click resets", tapHint:"Tap pin 1 on the microscope's picture to tell Lunes",
-      chipSeen:"Chip seen", pin1In:"pin 1 in", asPlanned:"as planned", notAsPlanned:"NOT as planned, which has it in", pin1Unknown:"pin 1 not seen: tap it on the picture"}
+      chipSeen:"Chip seen", pin1In:"pin 1 in", asPlanned:"as planned", notAsPlanned:"NOT as planned, which has it in", pin1Unknown:"pin 1 not seen: tap it on the picture",
+      applyLayout:"Apply", resetLayout:"Reset", applyTip:"Keep this layout of the panels: the page opens like this", resetTip:"Back to the panels' original layout",
+      report:"Report", probeTip:"probe here", clipGnd:"clip to GND", rail:"rail", row:"row",
+      askLunes:"Type to Lunes…", askNone:"No conversation: Lunes is not running with voice", askFail:"Could not send",
+      micOn:"Microphone on: click to mute it", micOff:"Microphone muted: click to turn it on", micNone:"No voice session: the microphone is not controlled from here",
+      zoomIn:"Zoom in", zoomOut:"Zoom out", zoomReset:"Back to 100 %", boardZoomHint:"Ctrl + wheel to zoom; drag to pan; double-click goes back to 100 %",
+      projects:"Projects", projectsNone:"No saved circuits", projectsFail:"Could not read the list", loadAsk:"Put this circuit on the bench?",
+      loadFail:"Could not load it", loadNone:"No bench to load it on: Lunes is not running", onBench:"on the bench", noPlan:"no plan", loading:"Reading…",
+      editBoard:"Edit", editClose:"Close editing", wireColor:"Wire", del:"Delete", undo:"Undo", save:"Save", cancel:"Cancel",
+      editHint:"Drag a part's lead to another hole (a whole chip by any pin); click two holes to add a wire; click a wire and Delete to remove it",
+      holeTaken:"That hole is already taken", dropOnHole:"Drop it on a hole", wireFrom:"Wire from", saving:"Saving…", saved:"Plan saved: Lunes reviewed it",
+      editFail:"Could not save", changes:"Changes", warnings:"Warnings", problems:"Problems", discardAsk:"Discard the unsaved changes?",
+      errors:"Faults", p1:"missing, and it explains the measurement", p2:"missing, unconfirmed", p3:"a doubt: covered or unclear"}
 };
 // The engine's sentences are in English, as the code is; they read in Spanish on the Spanish page.
 const SPANISH = [
@@ -277,8 +354,9 @@ const say = text => lang === "es" ? SPANISH.reduce((t,[a,b]) => t.split(a).join(
 const $ = id => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
 const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
-                set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
-let lang = store.get("lunes.lang") || "es", T = TEXT[lang] || TEXT.es;
+                set(k,v){ try { localStorage.setItem(k,v); } catch(e){} },
+                remove(k){ try { localStorage.removeItem(k); } catch(e){} } };
+let lang = TEXT[store.get("lunes.lang")] ? store.get("lunes.lang") : "es", T = TEXT[lang];
 let lab = null, next = 0, seenVersion = -1, chosenAt = 0, view = "microscope", live = { speaking:false, busy:false, status:"" };
 
 const VIEWS = [["microscope","/img/microscope.jpg",250], ["bench","/img/bench.jpg",500], ["kinect","/img/kinect.jpg",1200], ["analysis","/img/seen.jpg",0]];
@@ -299,7 +377,10 @@ function translate(){
   document.querySelectorAll("[data-t]").forEach(e => e.textContent = T[e.dataset.t]);
   $("lang").textContent = lang === "es" ? "EN" : "ES";
   $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details;
-  buildTabs(); showState(); if (lab) render(lab);
+  buildTabs(); showState(); layoutButtons(); $("askText").placeholder = T.askLunes; showMic(micState);
+  $("boardIn").title = T.zoomIn; $("boardOut").title = T.zoomOut; $("boardReset").title = T.zoomReset; if (boardBox) boardBox.title = T.boardZoomHint;
+  $("editBoard").textContent = editing ? T.editClose : T.editBoard;
+  if (lab) render(lab);
 }
 function buildTabs(){
   const box = $("tabs"); box.replaceChildren();
@@ -472,12 +553,25 @@ function renderScope(s){
   if (notes.length){ hints.textContent = say(notes[0]); hints.hidden = false; }
 }
 function section(title){ const s = el("div","section"); if (title) s.append(el("h3","",title)); return s; }
-let boardKey = "", boardBox = null;
+let boardKey = "", boardBox = null, findingsBox = null, errorsOn = false;
+function findingsList(faults){  // each finding: its priority as a dot, its name and its advice; hovering one lights only its holes
+  const box = el("div","findings");
+  for (const f of faults){
+    const row = el("div",`finding p${f.priority}`), dot = el("i"); dot.title = T["p" + f.priority] || "";
+    row.append(dot, el("span","what",f.what || ""), el("div","advice",f.advice || ""));
+    row.onmouseenter = () => { for (const m of boardBox.querySelectorAll(".fault")){ const mine = m.dataset.item === String(f.i); m.classList.toggle("dim", !mine); m.classList.toggle("hot", mine); } };
+    row.onmouseleave = () => { for (const m of boardBox.querySelectorAll(".fault")) m.classList.remove("dim", "hot"); };
+    box.append(row);
+  }
+  return box;
+}
 function renderBench(d){
   // the scroll first: taking the breadboard's drawing out to rebuild the panel shortens it, and the browser scrolls
   // it back to the top before the end of this function could read where it was
+  if (editing) return;  // the drawing is Erlan's for now: the state comes back once he saves or cancels
   const body = $("benchBody"), top = body.scrollTop, c = d.circuit, g = d.diagnosis, a = d.arduino, parts = [];
   $("benchInfo").textContent = c ? `${si(c.supply_v,"V")} ${T.supply}` : "";
+  $("boardZoom").hidden = !d.breadboard; $("errors").hidden = true;
   if (!c && !a){ body.replaceChildren(el("div","empty",T.noCircuit)); return; }
   if (c){
     const s = section(); s.append(el("div","name",c.name || ""));
@@ -487,10 +581,18 @@ function renderBench(d){
     parts.push(s);
   }
   if (d.breadboard){
-    const b = d.breadboard, s = section(), now = b.guide || {};
-    const sameBoard = JSON.stringify([b.parts, b.wires, b.holes, b.guide, lang]);
-    if (sameBoard !== boardKey){ boardKey = sameBoard; boardBox = el("div","zoombox"); boardBox.title = T.ctrlZoom; boardBox.append(drawBreadboard(b)); zoomable(boardBox, () => [boardBox.firstChild], "breadboard", true); }
+    // the probe's net: the one the diagnosis asks for, or else the one Lunes is showing (guide_net), so asking "show me
+    // on the virtual board where the probe goes" marks it even without a diagnosis running
+    const b = d.breadboard, s = section(), now = b.guide || {},
+          probeNet = (g && g.next ? g.next.net : null) || ((b.guide || {}).net || null);
+    // check_build's findings with a priority, worst first; the button shows while there are any, and lights them up
+    const faults = (b.check_items || []).map((x, i) => ({...x, i})).filter(x => x.priority).sort((x, y) => x.priority - y.priority);
+    $("errors").hidden = !faults.length; $("errors").classList.toggle("on", errorsOn && faults.length > 0);
+    const sameBoard = JSON.stringify([b.parts, b.wires, b.holes, b.guide, probeNet, c && c.supply_v, b.check, errorsOn && faults, lang]);
+    if (sameBoard !== boardKey){ boardKey = sameBoard; boardBox = el("div","zoombox"); boardBox.append(drawBreadboard(b, probeNet, c ? c.supply_v : null)); boardZoomable(boardBox);
+      findingsBox = errorsOn && faults.length ? findingsList(faults) : null; }
     s.classList.add("breadboard"); s.append(el("h3","",T.breadboard + (b.placed ? "" : ` · ${T.notPlaced}`)), boardBox);
+    if (findingsBox) s.append(findingsBox);
     if (now.says){ const n = el("div","stepnow"); if (now.step && !now.net) n.append(el("b","",`${T.stepOf} ${now.step}/${b.total} `)); n.append(document.createTextNode(now.says)); s.append(n); }
     parts.push(s);
   }
@@ -542,7 +644,8 @@ function renderPower(p){
   if (c && !c.safe){ box.classList.add("bad"); box.append(el("span","",`${T.circuitWants} ${c.want_v} V`)); }
   else if (c && p.amps > 2 * c.limit_a) box.append(el("span","",`${T.limitHigh} ${c.limit_a} A`));
 }
-function drawBreadboard(b){
+const WIRE_COLORS = {rojo:"#d33", negro:"#1c1c1c", azul:"#2d7fd3", verde:"#1f9d6b", naranja:"#e8862a", morado:"#8a4fbf", amarillo:"#d8b400", gris:"#8d8d8d"};
+function drawBreadboard(b, probeNet, supplyV){
   // the board as it lies on the bench with row 1 to the left: column a at the bottom, the rails below it. Every part is
   // drawn from its own data (package, pins, value, colour), so a chip Lunes learnt a minute ago needs no drawing of its own
   const P = 6, W = 63 * P + 12, H = 19 * P, svg = document.createElementNS(NS,"svg");
@@ -550,13 +653,14 @@ function drawBreadboard(b){
   const used = b.holes.concat(b.wires.flatMap(w => [w[0], w[1]])).map(h => +h.slice(1)), far = Math.min(63, Math.max(...used) + 3);
   const near = Math.max(1, Math.min(Math.min(...used) - 2, far - 23));
   svg.setAttribute("viewBox",`${(near - 1) * P} 0 ${(far - near + 1) * P + 12} ${H}`); svg.setAttribute("role","img"); svg.setAttribute("aria-label",T.breadboard);
+  svg.dataset.home = svg.getAttribute("viewBox");  // the window at 100 %: the zoom (boardWindow) moves and scales it
   const at = hole => { const c = hole[0], row = +hole.slice(1), rails = {"-":-3,"+":-4},
     y = c in rails ? rails[c] : "abcde".includes(c) ? "abcde".indexOf(c) : 7 + "fghij".indexOf(c);
     return [6 + (row - .5) * P, H - (y + 4.5) * P]; };
   const add = (tag, a, parent, text) => { const e = document.createElementNS(NS,tag); for (const [k,v] of Object.entries(a)) e.setAttribute(k,v);
     if (text !== undefined) e.textContent = text; (parent || svg).append(e); return e; };
   const label = (x, y, text, fill = "#1c1c1c", size = 3.6, parent) => add("text",{x,y,"text-anchor":"middle","dominant-baseline":"middle","font-size":size,"font-family":"sans-serif","font-weight":600,fill},parent,text);
-  const WIRE = {rojo:"#d33", negro:"#1c1c1c", azul:"#2d7fd3", verde:"#1f9d6b", naranja:"#e8862a", morado:"#8a4fbf", amarillo:"#d8b400", gris:"#8d8d8d"};
+  const WIRE = WIRE_COLORS;
   const BANDS = ["#111","#7a4a21","#d33","#e8862a","#e8cf2a","#2f9e4f","#2d62d3","#7d3fbf","#8d8d8d","#f4f4f4"];
   const ohms = v => { const t = String(v).trim().replace(/[Ωohm ]/g,""), m = t.match(/^(\d*\.?\d+)([kKM]?)(\d*)$/);
     if (!m) return null; const scale = {k:1e3,K:1e3,M:1e6}[m[2]] || 1; return parseFloat(m[3] ? `${m[1]}.${m[3]}` : m[1]) * scale; };
@@ -567,14 +671,18 @@ function drawBreadboard(b){
   const strip = h => "+-".includes(h[0]) ? h[0] : `${h.slice(1)}${"abcde".includes(h[0]) ? "L" : "R"}`, netOf = {};
   for (const p of b.parts || []) for (const q of p.pins || []) if (q.hole) netOf[strip(q.hole)] = q.net;
   for (const [f,t,,net] of b.wires){ netOf[strip(f)] = net; netOf[strip(t)] = net; }
+  // "+18" is the + rail's hole beside row 18, never 18 volts: said as "riel + · fila 18", and with its net and volts when long
+  const words = (hole, long) => { if (!hole || !"+-".includes(hole[0])) return hole; const net = netOf[hole[0]], sign = hole[0] === "+" ? "+" : "−", volts = hole[0] === "+" ? supplyV : 0;
+    const about = long && net ? ` (${net}${volts !== undefined && volts !== null ? `, ${volts} V` : ""})` : "";
+    return long ? `${T.rail} ${sign}${about}, ${T.row} ${hole.slice(1)}` : `${T.rail} ${sign} · ${T.row} ${hole.slice(1)}`; };
   for (let r=1;r<=63;r++) for (const c of "abcdefghij+-") { if ("+-".includes(c) && (r < 3 || r > 61 || r % 6 === 2)) continue; const [x,y] = at(c+r), net = netOf[strip(c+r)];
-    add("rect",{x:x-1.1,y:y-1.1,width:2.2,height:2.2,fill:"transparent","data-tip":`<b>${c}${r}</b>\n${T.strip} ${net || T.free}`}); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#a9a596","pointer-events":"none"}); }
-  for (let r = near; r <= far; r++) if (r === 1 || r % 5 === 0) label(at(`j${r}`)[0], at(`j${r}`)[1] - 4.6, r, "#6f6a5c", 3.4);
+    add("rect",{x:x-1.1,y:y-1.1,width:2.2,height:2.2,fill:"transparent","data-hole":c+r,"data-tip":"+-".includes(c) ? `<b>${words(c+r, true)}</b>${net ? "" : "\n" + T.free}` : `<b>${c}${r}</b>\n${T.strip} ${net || T.free}`}); add("rect",{x:x-.8,y:y-.8,width:1.6,height:1.6,fill:"#a9a596","pointer-events":"none"}); }
+  for (let r = 1; r <= 63; r++) if (r === 1 || r % 5 === 0) label(at(`j${r}`)[0], at(`j${r}`)[1] - 4.6, r, "#6f6a5c", 3.4);  // all of them: zoomed out, the whole board shows
   for (const c of "abcdefghij") label(at(`${c}${near}`)[0] - 3.8, at(`${c}${near}`)[1], c, "#6f6a5c", 2.8);
-  for (const [f,t,color,net] of b.wires){ const [x1,y1] = at(f), [x2,y2] = at(t), long = Math.hypot(x2-x1,y2-y1), bow = Math.min(9, long*.18) / long;
+  for (const [i,[f,t,color,net]] of b.wires.entries()){ const [x1,y1] = at(f), [x2,y2] = at(t), long = Math.hypot(x2-x1,y2-y1), bow = Math.min(9, long*.18) / long;
     const d = `M ${x1} ${y1} Q ${(x1+x2)/2+(y2-y1)*bow} ${(y1+y2)/2-(x2-x1)*bow} ${x2} ${y2}`;
-    add("path",{d,fill:"none",stroke:WIRE[color],"stroke-width":1.1,"stroke-linecap":"round","pointer-events":"none"});
-    add("path",{d,fill:"none",stroke:"transparent","stroke-width":3.4,"data-tip":`<b>${T.wire} ${color}</b>\n${net}: ${f} → ${t}`}); }
+    add("path",{d,fill:"none",stroke:WIRE[color] || "#8d8d8d","stroke-width":1.1,"stroke-linecap":"round","pointer-events":"none"});
+    add("path",{d,fill:"none",stroke:"transparent","stroke-width":3.4,"data-wire":i,"data-tip":`<b>${T.wire} ${color}</b>\n${net ? net + ": " : ""}${words(f)} → ${words(t)}`}); }
   const body = (a, c, draw) => { // a two-legged part between two holes, drawn along the line that joins them
     const [x1,y1] = at(a), [x2,y2] = at(c), mx = (x1+x2)/2, my = (y1+y2)/2, g = add("g",{transform:`translate(${mx} ${my}) rotate(${Math.atan2(y2-y1,x2-x1)*180/Math.PI})`});
     add("line",{x1,y1,x2,y2,stroke:"#8d8d8d","stroke-width":.7}); svg.append(g); draw(g); return [mx,my,x1===x2]; };
@@ -583,12 +691,12 @@ function drawBreadboard(b){
     if (p.value !== undefined && p.value !== null) said.push(`${T.value}: ${p.value}${p.kind === "R" ? " Ω" : p.kind === "C" ? "F" : ""}`);
     if (p.kind === "R" && bands(p.value).length) said.push(`${T.bands}: ${bands(p.value).map(n => T.bandNames[n] || "?").join(", ")}`);
     if (p.color) said.push(p.color);
-    if (p.pins) said.push(`${T.pins}:\n` + p.pins.map(q => `  ${q.pin} → ${q.hole} (${q.net})`).join("\n"));
+    if (p.pins) said.push(`${T.pins}:\n` + p.pins.map(q => `  ${q.pin} → ${words(q.hole)} (${q.net})`).join("\n"));
     const tip = said.join("\n"), mark = g => { g.setAttribute("data-tip", tip); };
     if (p.chip){
       const half = p.chip.pins / 2, first = +p.chip.first.slice(1), [x0] = at(`e${first}`), [x1] = at(`e${first + half - 1}`), [,yb] = at(`e${first}`), [,yt] = at(`f${first}`);
       const g = add("g",{}); mark(g);
-      for (let i = 0; i < half; i++){ const [x] = at(`e${first + i}`); for (const y of [yb, yt]) add("rect",{x:x-1,y:y-1.4,width:2,height:2.8,fill:"#b8b8b8"},g); }
+      for (let i = 0; i < half; i++){ const [x] = at(`e${first + i}`); for (const y of [yb, yt]) add("rect",{x:x-1,y:y-1.4,width:2,height:2.8,fill:"#b8b8b8","data-lead":`${p.ref}|chip`},g); }
       add("rect",{x:x0-2.6,y:yt+.2,width:x1-x0+5.2,height:yb-yt-.4,rx:.8,fill:"#26272b"},g);
       add("circle",{cx:x0-2.6,cy:(yb+yt)/2,r:2.2,fill:"#d9d4c5"},g);                      // the notch, to the left
       add("circle",{cx:x0+.4,cy:yb-2.6,r:.9,fill:"#e8e8e8"},g);                           // the dot at pin 1
@@ -601,7 +709,7 @@ function drawBreadboard(b){
       if (p.kind === "POT"){ add("rect",{x:Math.min(...xs)-3,y:cy-5.5,width:Math.max(...xs)-Math.min(...xs)+6,height:9,rx:1,fill:"#2f5fb3"},g); add("circle",{cx,cy:cy-1,r:2.8,fill:"#f0f0f0"},g); add("line",{x1:cx-1.8,x2:cx+1.8,y1:cy-1,y2:cy-1,stroke:"#333","stroke-width":.6},g); }
       else if (p.package === "TO-220" || p.kind === "REG" || ["IRLZ44N","IRF540","IRF9540"].includes(p.label)){ add("rect",{x:Math.min(...xs)-3,y:cy-7,width:Math.max(...xs)-Math.min(...xs)+6,height:2.4,fill:"#c4c4c4"},g); add("rect",{x:Math.min(...xs)-3,y:cy-4.6,width:Math.max(...xs)-Math.min(...xs)+6,height:6,fill:"#26272b"},g); }
       else add("path",{d:`M ${Math.min(...xs)-2.4} ${cy+1.5} a ${(Math.max(...xs)-Math.min(...xs))/2+2.4} 6 0 0 1 ${Math.max(...xs)-Math.min(...xs)+4.8} 0 z`,fill:"#26272b"},g);
-      for (const q of pts) add("circle",{cx:q[0],cy:q[1],r:1,fill:"#b8b8b8"},g);
+      for (const [pin,h] of Object.entries(p.holes)){ const [cx,cy] = at(h); add("circle",{cx,cy,r:1,fill:"#b8b8b8","data-lead":`${p.ref}|${pin}`},g); }
       label(cx, cy - (p.kind === "POT" ? 8 : 9), `${p.ref} ${p.kind === "POT" ? p.value : p.label}`, "#1c1c1c", 3.2, g);
       continue;
     }
@@ -617,11 +725,28 @@ function drawBreadboard(b){
         else add("circle",{cx:0,cy:0,r:2.6,fill:p.kind === "LDR" ? "#b9652f" : "#1f7a7a"},g);
       });
       label(mx + (upright ? 6 : 0), my - (upright ? 0 : 4.6), p.ref, "#1c1c1c", 3);
-      for (const h of holes){ const [cx,cy] = at(h); add("circle",{cx,cy,r:.9,fill:"#777"}); }
+      for (const [pin,h] of Object.entries(p.holes)){ const [cx,cy] = at(h); add("circle",{cx,cy,r:.9,fill:"#777","data-lead":`${p.ref}|${pin}`}); }
     }
   }
   const g = b.guide || {};
   for (const h of g.holes || []){ const [cx,cy] = at(h); add("circle",{cx,cy,r:h === g.at ? 3.2 : 2.4,fill:"none",stroke:"#e0261c","stroke-width":1.2}); }
+  // the next measurement: the probe on the net the diagnosis asks for and the ground clip on GND, each on its hole
+  const probeMark = (hole, color, text) => { if (!hole) return; const [cx,cy] = at(hole), left = (near - 1) * P, right = left + (far - near + 1) * P + 12;
+    add("circle",{cx,cy,r:3.9,fill:"none",stroke:"#f2efe6","stroke-width":2.8,"pointer-events":"none"}); add("circle",{cx,cy,r:3.9,fill:"none",stroke:color,"stroke-width":1.3,"data-tip":`<b>${text}</b>\n${words(hole, true)}`});
+    const t = label(Math.min(Math.max(cx, left + 22), right - 22), cy > 12 ? cy - 6.4 : cy + 7.4, text, color, 3.4);
+    t.setAttribute("paint-order","stroke"); t.setAttribute("stroke","#f2efe6"); t.setAttribute("stroke-width",1.4); t.setAttribute("stroke-linejoin","round"); };
+  if (probeNet && b.probe){ probeMark(b.probe[probeNet], "#c47a00", `${T.probeTip} · ${probeNet}`); if (probeNet !== "GND") probeMark(b.probe.GND, "#1c1c1c", T.clipGnd); }
+  // check_build: what the vision model saw in each planned hole of the real board, a check or a cross on it
+  for (const [hole, state] of Object.entries(b.check || {})){
+    let xy; try { xy = at(hole); } catch (e) { continue; }
+    const [cx, cy] = xy, color = state === "yes" ? "#1f9d55" : state === "no" ? "#d22" : "#c99700";
+    add("circle",{cx,cy,r:2.9,fill:"none",stroke:color,"stroke-width":1.4,"data-tip":`<b>${hole}</b>\n${state === "yes" ? "✓" : state === "no" ? "✗" : "?"}`});
+    const t = label(cx + 3.2, cy - 2.6, state === "yes" ? "✓" : state === "no" ? "✗" : "?", color, 3.6); t.setAttribute("pointer-events","none");
+  }
+  // check_build's findings, when Erlan asks for them: every hole of a finding blinks in its priority's colour and pace
+  if (errorsOn) (b.check_items || []).forEach((item, i) => { if (!item.priority) return;
+    for (const hole of Object.keys(item.holes || {})){ let xy; try { xy = at(hole); } catch (e) { continue; }
+      add("circle",{cx:xy[0],cy:xy[1],r:3.7,class:`fault p${item.priority}`,"data-item":i}); } });
   return svg;
 }
 function renderChip(c){
@@ -645,8 +770,9 @@ $("big").addEventListener("click", e => {
   const x = (e.clientX - r.left - ox) / w, y = (e.clientY - r.top - oy) / h;
   if (x < 0 || x > 1 || y < 0 || y > 1) return;
   fetch(`/tap?x=${x.toFixed(4)}&y=${y.toFixed(4)}`).catch(() => {});
-  const svg = $("overlay"), c = document.createElementNS(NS,"circle");
-  c.setAttribute("cx", r.width * 0 + ox + x * w); c.setAttribute("cy", oy + y * h); c.setAttribute("r", 9); c.setAttribute("fill","none"); c.setAttribute("stroke","#ff3b2e"); c.setAttribute("stroke-width","2"); svg.append(c);
+  // the mark goes in the overlay's own units: the picture and the overlay share the zoom, so the rect read above is scaled
+  const svg = $("overlay"), c = document.createElementNS(NS,"circle"), k = zooms.view ? zooms.view.k : 1;
+  c.setAttribute("cx", (ox + x * w) / k); c.setAttribute("cy", (oy + y * h) / k); c.setAttribute("r", 9 / k); c.setAttribute("fill","none"); c.setAttribute("stroke","#ff3b2e"); c.setAttribute("stroke-width", 2 / k); svg.append(c);
 });
 
 function addEvent(e){
@@ -656,31 +782,76 @@ function addEvent(e){
   else if (e.kind === "progress"){ n = el("div","msg progress",e.text); }
   else if (e.kind === "tool" || e.kind === "job"){ n = el("div","step",e.text); }
   else n = el("div","detail",`${e.at} ${e.text}`);
-  log.append(n); if (atEnd) box.scrollTop = box.scrollHeight;
+  log.append(n); while (log.children.length > 500) log.firstChild.remove();  // as many as the server keeps: a long day stays light
+  if (atEnd) box.scrollTop = box.scrollHeight;
 }
 async function poll(){
+  let wait = 700;
   try {
     const r = await (await fetch("/events?since=" + next)).json();
-    r.events.forEach(addEvent); next = r.next;
-    live = { speaking:r.speaking, busy:r.busy, status:r.status }; showState();
-    if (r.seen_version !== seenVersion){
-      const fresh = seenVersion >= 0 && r.seen_version > 0; seenVersion = r.seen_version;
-      $("badge").textContent = r.seen_label || ""; $("badge").hidden = view !== "analysis" || !r.seen_label;
-      if (fresh && Date.now() - chosenAt > 30000){ view = "analysis"; select(); } else if (view === "analysis") pump();
-      thumbs();
+    if (r.next < next){ next = 0; wait = 0; }  // Lunes was restarted and counts from zero again: read it from its start
+    else {
+      r.events.forEach(addEvent); next = r.next;
+      live = { speaking:r.speaking, busy:r.busy, status:r.status }; showState();
+      if (!micBusy) showMic(r.mic);
+      if (r.seen_version !== seenVersion){
+        const fresh = seenVersion >= 0 && r.seen_version > 0; seenVersion = r.seen_version;
+        $("badge").textContent = r.seen_label || ""; $("badge").hidden = view !== "analysis" || !r.seen_label;
+        if (fresh && Date.now() - chosenAt > 30000){ view = "analysis"; select(); } else if (view === "analysis") pump();
+        thumbs();
+      }
+      if (r.lab){ lab = r.lab; render(lab); }
     }
-    if (r.lab){ lab = r.lab; render(lab); }
-  } catch (err) {}
-  setTimeout(poll, 700);
+  } catch (err) {}  // the server is away or restarting: the next poll tries again
+  setTimeout(poll, wait);
 }
 $("lang").onclick = () => { lang = lang === "es" ? "en" : "es"; T = TEXT[lang]; store.set("lunes.lang",lang); translate(); };
 $("mapView").onclick = () => { mapClose = !mapClose; if (window.lastLab) renderMachine(window.lastLab.machine); };
 $("scopeLive").onclick = async () => { const on = !$("scopeLive").classList.contains("on"); $("scopeLive").disabled = true;
   try { const r = await (await fetch("/scope_live?on=" + (on ? 1 : 0))).json(); if (r.ok && window.lastLab){ window.lastLab.scope.live = r.live; renderScope(window.lastLab.scope); } }
+  catch (err) {}  // the server is away: the button comes back and the next poll says how the scope stands
   finally { $("scopeLive").disabled = false; } };
 $("details").onclick = () => { document.body.classList.toggle("details"); $("details").textContent = document.body.classList.contains("details") ? T.hideDetails : T.details; };
+// typing to Lunes: the line goes to the same queue as the console's; it shows in the log when the server echoes it
+const askNote = text => { const n = $("askNote"); n.textContent = text || ""; n.hidden = !text; $("askText").classList.toggle("bad", !!text); };
+$("ask").onsubmit = async e => {
+  e.preventDefault();
+  const box = $("askText"), text = box.value.trim();
+  if (!text) return;
+  box.disabled = true;
+  try { const r = await fetch("/say", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({text})});
+    if (r.ok){ box.value = ""; askNote(""); } else askNote(r.status === 503 ? T.askNone : T.askFail); }
+  catch (err) { askNote(T.askFail); }
+  finally { box.disabled = false; box.focus(); }
+};
+$("askText").oninput = () => askNote("");
+// the microphone: on, muted, or null when there is no voice session (the button is then disabled)
+let micState = null, micBusy = false;
+function showMic(on){
+  const b = $("mic"), none = on === null || on === undefined;
+  micState = none ? null : !!on;
+  b.disabled = none; b.dataset.on = none ? "none" : String(!!on); b.setAttribute("aria-pressed", String(!!on));
+  b.title = none ? T.micNone : on ? T.micOn : T.micOff;
+}
+let micClickedAt = 0;
+$("mic").onclick = async () => {
+  const b = $("mic"), was = micState;
+  // a double click is one wish, not two: on 3 Nov one turned the microphone on and off in the same second and
+  // Lunes stopped hearing with the button seeming to work
+  if (was === null || micBusy || Date.now() - micClickedAt < 800) return;
+  micClickedAt = Date.now();
+  micBusy = true; b.disabled = true;
+  try { const r = await fetch("/mic", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({on: !was})});
+    showMic(r.ok ? (await r.json()).on : was); }
+  catch (err) { showMic(was); }
+  finally { micBusy = false; }
+};
 setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString("en-GB", {hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}); }, 1000);
-window.addEventListener("resize", () => { if (lab){ drawOverlay(); drawTrace(lab.scope); } });
+// the overlay and the trace are drawn at the size of their boxes: again whenever a box changes size, on a window resize,
+// a border dragged, a panel floated or a narrow layout
+const redraw = () => { if (lab){ drawOverlay(); drawTrace(lab.scope); } };
+window.addEventListener("resize", redraw);
+if (window.ResizeObserver){ const watcher = new ResizeObserver(() => requestAnimationFrame(redraw)); watcher.observe($("stage")); watcher.observe($("trace").parentElement); }
 // any panel floats big over the page and goes back to its place; the picture inside zooms with the wheel, and a drag moves it
 let floating = null;
 function float(panel){
@@ -690,11 +861,17 @@ function float(panel){
   if (floating) floating.classList.add("floating");
   $("veil").hidden = !floating;
   document.querySelectorAll(".grow").forEach(b => { const on = b.parentElement === floating; b.textContent = on ? "✕" : "⤢"; b.title = on ? T.shrink : T.grow; b.setAttribute("aria-label", b.title); });
-  requestAnimationFrame(() => { if (lab){ drawOverlay(); drawTrace(lab.scope); } });
+  $("editBoard").hidden = floating !== $("bench") || !boardBox;
+  if (editing && floating !== $("bench")) editStop(true);
+  requestAnimationFrame(redraw);
 }
 document.querySelectorAll(".panel").forEach(panel => { const b = el("button","grow"); b.onclick = () => float(panel); panel.append(b); });
 $("veil").onclick = () => float(floating);
-addEventListener("keydown", e => { if (e.key === "Escape" && floating) float(floating); });
+addEventListener("keydown", e => {
+  if (editing && (e.key === "Delete" || e.key === "Backspace") && editing.picked !== null && document.activeElement.tagName !== "INPUT"){ editDelete(); return; }
+  if (e.key !== "Escape") return;
+  if (!$("projectsMenu").hidden) showProjects(false); else if (editing && (editing.start || editing.picked !== null)){ editing.start = null; editing.picked = null; editNote(""); editDraw(); } else if (floating) float(floating);
+});
 const zooms = {};
 function zoomable(box, targets, key, ctrl){
   // ctrl: the box lies in a panel that scrolls, so the plain wheel scrolls it and Ctrl + wheel zooms
@@ -717,10 +894,277 @@ function zoomable(box, targets, key, ctrl){
 zoomable($("stage"), () => [$("big"), $("overlay")], "view");
 zoomable($("map").parentElement, () => [$("map")], "map");
 zoomable($("trace").parentElement, () => [$("trace")], "scope");
+// the breadboard's zoom: the SVG's viewBox is a window on the board, from 25 % (the whole board, small) to 400 %. Ctrl +
+// wheel zooms around the pointer, + / − / ⟲ in the panel's header, a drag pans while the window is smaller than the
+// board, and the floating panel shows the same window bigger. Everything drawn, marks and tooltips included, is in board
+// units, so hit areas follow. The scale is kept in localStorage; the drawing is rebuilt at every step and keeps its window.
+const BOARD = {w:63 * 6 + 12, h:19 * 6, min:.25, max:4};
+const boardView = { k:(k => k >= BOARD.min && k <= BOARD.max ? k : 1)(parseFloat(store.get("lunes.boardZoom"))), cx:null, cy:null };
+const boardSvg = () => boardBox && boardBox.firstChild;
+const vb = svg => svg.getAttribute("viewBox").split(" ").map(Number);
+const fit = svg => { // where the window lies on the screen: the SVG keeps its aspect, so a floating panel may letterbox it
+  const r = svg.getBoundingClientRect(), [x, y, w, h] = vb(svg), s = Math.min(r.width / w, r.height / h);
+  return {x, y, w, h, s, left:r.left + (r.width - w * s) / 2, top:r.top + (r.height - h * s) / 2}; };
+function boardWindow(svg){
+  const [hx, hy, hw, hh] = svg.dataset.home.split(" ").map(Number), w = hw / boardView.k, h = hh / boardView.k;
+  if (boardView.cx === null){ boardView.cx = hx + hw / 2; boardView.cy = hy + hh / 2; }
+  const held = (c, size, full) => size >= full ? full / 2 : Math.min(full - size / 2, Math.max(size / 2, c));  // on the board, or centred when wider
+  boardView.cx = held(boardView.cx, w, BOARD.w); boardView.cy = held(boardView.cy, h, BOARD.h);
+  svg.setAttribute("viewBox", `${boardView.cx - w / 2} ${boardView.cy - h / 2} ${w} ${h}`);
+  svg.parentElement.classList.toggle("zoomed", w < BOARD.w || h < BOARD.h);
+  $("boardPct").textContent = Math.round(boardView.k * 100) + " %";
+  $("boardOut").disabled = boardView.k <= BOARD.min; $("boardIn").disabled = boardView.k >= BOARD.max;
+}
+function boardZoom(k, at){  // at: the point of the window to keep still, as fractions; the centre when not given
+  const svg = boardSvg(); if (!svg) return;
+  const [, , hw, hh] = svg.dataset.home.split(" ").map(Number), [x, y, w, h] = vb(svg), [fx, fy] = at || [.5, .5];
+  boardView.k = Math.min(BOARD.max, Math.max(BOARD.min, k));
+  const w2 = hw / boardView.k, h2 = hh / boardView.k;
+  boardView.cx = x + fx * w + w2 * (.5 - fx); boardView.cy = y + fy * h + h2 * (.5 - fy);
+  store.set("lunes.boardZoom", String(boardView.k)); boardWindow(svg);
+}
+function boardHome(){ const svg = boardSvg(); if (!svg) return; boardView.k = 1; boardView.cx = boardView.cy = null; store.set("lunes.boardZoom", "1"); boardWindow(svg); }
+function boardZoomable(box){
+  let drag = null;
+  box.title = T.boardZoomHint;
+  box.addEventListener("wheel", e => { if (!e.ctrlKey) return; e.preventDefault(); const f = fit(box.firstChild);
+    boardZoom(boardView.k * (e.deltaY < 0 ? 1.25 : .8), [(e.clientX - f.left) / (f.w * f.s), (e.clientY - f.top) / (f.h * f.s)]); }, {passive:false});
+  box.addEventListener("pointerdown", e => { if (editing){ editDown(e, box); return; } if (e.button === 0 && box.classList.contains("zoomed")){ drag = [e.clientX, e.clientY, boardView.cx, boardView.cy]; box.setPointerCapture(e.pointerId); } });
+  box.addEventListener("pointermove", e => { if (editing){ editMoveEv(e, box); return; } if (!drag) return; const f = fit(box.firstChild);
+    boardView.cx = drag[2] - (e.clientX - drag[0]) / f.s; boardView.cy = drag[3] - (e.clientY - drag[1]) / f.s; boardWindow(box.firstChild); });
+  const drop = e => { if (editing) editUp(e, box); drag = null; }; box.addEventListener("pointerup", drop); box.addEventListener("pointercancel", drop);
+  box.addEventListener("dblclick", () => { if (!editing) boardHome(); });
+  boardWindow(box.firstChild);
+}
+$("boardIn").onclick = () => boardZoom(boardView.k * 1.25); $("boardOut").onclick = () => boardZoom(boardView.k / 1.25); $("boardReset").onclick = boardHome;
+// saved circuits: the list Lunes keeps in runs/circuits/, each with its plan drawn small, and the one Erlan picks for the bench
+const when = iso => { const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); return m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : String(iso || ""); };
+function savedBoard(saved){  // a saved file's circuit and raw plan (breadboard.plan's shape), as drawBreadboard draws them
+  const c = saved.circuit || {}, l = saved.layout; if (!l) return null;
+  const outside = new Set((l.external || []).map(x => x.ref)), parts = [];
+  for (const p of c.parts || []){
+    const holes = (l.holes || {})[p.ref]; if (!holes || p.kind === "V" || outside.has(p.ref)) continue;
+    const named = Array.isArray(p.pins) ? {"1": p.pins[0], "2": p.pins[1]} : (p.pins || {});
+    const part = {ref:p.ref, kind:p.kind, value:p.value, color:p.color, label:p.model || p.kind, package:p.package, holes, pins:Object.entries(named).map(([pin, net]) => ({pin, net, hole:holes[pin] || "?"}))};
+    if ((l.chips || {})[p.ref]) part.chip = l.chips[p.ref];
+    parts.push(part);
+  }
+  return {holes:Object.values(l.holes || {}).flatMap(h => Object.values(h)), parts, wires:(l.wires || []).map(w => [w.from, w.to, w.color, w.net]), guide:{}, probe:l.probe || {}};
+}
+async function showProjects(open){
+  const menu = $("projectsMenu"), box = $("projectsList"); menu.hidden = !open; if (!open) return;
+  if (matchMedia("(max-width:680px)").matches){ menu.style.left = menu.style.top = ""; }  // a sheet at the bottom there, never dragged
+  box.replaceChildren(el("div","hint",T.loading));
+  let list;
+  try { list = await (await fetch("/circuits")).json(); } catch (err) { box.replaceChildren(el("div","hint bad",T.projectsFail)); return; }
+  if (!list.length){ box.replaceChildren(el("div","hint",T.projectsNone)); return; }
+  box.replaceChildren();
+  for (const item of list){
+    const b = el("button","project" + (item.current ? " now" : "")); b.type = "button";
+    const name = el("div","name",item.name || item.file); if (item.current) name.append(el("small","",T.onBench)); b.append(name);
+    b.append(el("div","sub",[when(item.saved_at), (item.parts || []).join(" · "), item.plan ? "" : T.noPlan].filter(Boolean).join(" · ")));
+    if (item.plan){ const mini = el("div","mini breadboard"); b.append(mini);
+      fetch("/runs/circuits/" + encodeURIComponent(item.file)).then(r => r.json()).then(saved => { const d = savedBoard(saved); if (d) mini.append(drawBreadboard(d, null, (saved.circuit || {}).supply_v)); }).catch(() => {}); }
+    b.onclick = () => loadProject(item);
+    box.append(b);
+  }
+}
+async function loadProject(item){
+  if (!confirm(`${T.loadAsk}\n${item.name || item.file}`)) return;
+  const menu = $("projectsList"), note = el("div","hint",T.loading); menu.prepend(note);
+  try {
+    const r = await fetch("/circuit/load", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({file:item.file})});
+    const out = await r.json().catch(() => ({}));
+    if (r.ok && out.ok){ boardView.cx = boardView.cy = null; showProjects(false); }  // the next poll brings the bench as it is now
+    else { note.className = "hint bad"; note.textContent = r.status === 503 ? T.loadNone : `${T.loadFail}: ${out.error || r.status}`; }
+  } catch (err) { note.className = "hint bad"; note.textContent = T.loadFail; }
+}
+$("projects").onclick = () => showProjects($("projectsMenu").hidden);
+$("errors").onclick = () => { errorsOn = !errorsOn; if (lab) renderBench(lab); };
+$("projectsClose").onclick = () => showProjects(false);
+(() => { // the window goes where its bar is dragged, within the screen
+  const win = $("projectsMenu"), bar = $("projectsBar"); let drag = null;
+  bar.addEventListener("pointerdown", e => { if (e.button !== 0 || e.target.tagName === "BUTTON" || matchMedia("(max-width:680px)").matches) return;
+    const r = win.getBoundingClientRect(); drag = [e.clientX - r.left, e.clientY - r.top]; bar.setPointerCapture(e.pointerId); e.preventDefault(); });
+  bar.addEventListener("pointermove", e => { if (!drag) return; const r = win.getBoundingClientRect();
+    win.style.left = `${Math.min(Math.max(0, e.clientX - drag[0]), innerWidth - r.width)}px`; win.style.top = `${Math.min(Math.max(0, e.clientY - drag[1]), innerHeight - 40)}px`; });
+  const drop = () => { drag = null; }; bar.addEventListener("pointerup", drop); bar.addEventListener("pointercancel", drop);
+})();
+// the hand editor, in the floating view: a lead dragged to another hole (a chip whole, by any pin), a wire added between two
+// holes or removed, each change undone, and the plan sent to Lunes (POST /layout/edit), which rebuilds the circuit from the
+// holes and wires, simulates it and keeps it as this project's plan. One hole holds one thing: a lead or a wire's end.
+let editing = null, hand = null;
+const holeWords = hole => !hole || !"+-".includes(hole[0]) ? hole : `${T.rail} ${hole[0] === "+" ? "+" : "−"} · ${T.row} ${hole.slice(1)}`;
+const editNote = (text, bad) => { const n = $("editNote"); n.textContent = text || ""; n.classList.toggle("bad", !!bad); n.title = text || ""; };
+const usedHoles = () => new Set([...editing.parts.flatMap(p => Object.values(p.holes)), ...editing.external.map(x => x.hole), ...editing.wires.flatMap(w => [w[0], w[1]])]);
+const editSnap = () => editing.undo.push(JSON.stringify({parts:editing.parts, wires:editing.wires}));
+function editBoard(b, supplyV){
+  editing = {parts:b.parts.map(p => ({...p, holes:{...p.holes}, pins:(p.pins || []).map(q => ({...q}))})), wires:b.wires.map(w => [...w]), external:(b.external || []).map(x => ({...x})),
+             supplyV, undo:[], start:null, picked:null, color:(b.wires.find(w => WIRE_COLORS[w[2]]) || ["","","rojo"])[2]};
+  $("bench").classList.add("editing"); $("editTools").hidden = false; $("editResult").hidden = true; $("editBoard").textContent = T.editClose;
+  const colors = $("editColors"); colors.replaceChildren();
+  for (const [name, hex] of Object.entries(WIRE_COLORS)){ const s = el("button","swatch" + (name === editing.color ? " on" : "")); s.type = "button"; s.style.background = hex; s.title = name;
+    s.onclick = () => { editing.color = name; colors.querySelectorAll(".swatch").forEach(x => x.classList.toggle("on", x === s)); }; colors.append(s); }
+  editNote(T.editHint); editDraw();
+}
+const editBoardOf = () => ({holes:[...editing.parts.flatMap(p => Object.values(p.holes)), ...editing.external.map(x => x.hole)], parts:editing.parts, wires:editing.wires, guide:{}, probe:{}, external:editing.external});
+function editDraw(){
+  boardBox.replaceChildren(drawBreadboard(editBoardOf(), null, editing.supplyV)); boardWindow(boardBox.firstChild);
+  const svg = boardBox.firstChild;
+  if (editing.picked !== null){ const w = svg.querySelector(`path[data-wire="${editing.picked}"]`); if (w) w.previousElementSibling.classList.add("picked"); }
+  if (editing.start){ const h = svg.querySelector(`rect[data-hole="${editing.start}"]`); if (h) h.classList.add("start"); }
+  for (const lead of svg.querySelectorAll("[data-lead]")){  // a handle to grab over every lead's marker
+    const box = lead.getBBox(), h = document.createElementNS(NS,"circle");
+    for (const [k,v] of Object.entries({cx:box.x + box.width / 2, cy:box.y + box.height / 2, r:2.4, fill:"rgba(60,140,240,.22)", stroke:"#2d7fd3", "stroke-width":.5, "data-grab":lead.dataset.lead})) h.setAttribute(k, v);
+    svg.append(h);
+  }
+  $("editUndo").disabled = !editing.undo.length; $("editDelete").disabled = editing.picked === null;
+}
+function editMove(ref, pin, hole){  // a lead, or a whole chip, to another hole; refused when a hole is already taken
+  const part = editing.parts.find(p => p.ref === ref); if (!part) return false;
+  const exempt = pin === "chip" ? new Set(Object.values(part.holes)) : new Set(), taken = usedHoles(), next = {...part.holes};  // a chip may shift over its own holes
+  if (pin === "chip"){
+    const count = part.chip.pins, half = count / 2, top = +hole.slice(1);
+    if (!(top >= 1 && top + half - 1 <= 63)){ editNote(`${T.holeTaken}: ${holeWords(hole)}`, true); return false; }
+    for (const k of Object.keys(part.holes)){ const n = +k; next[k] = n <= half ? `e${top + n - 1}` : `f${top + count - n}`; }
+  } else next[pin] = hole;
+  const clash = Object.entries(next).filter(([k, h]) => h !== part.holes[k]).map(([, h]) => h).find(h => taken.has(h) && !exempt.has(h));
+  if (clash){ editNote(`${T.holeTaken}: ${holeWords(clash)}`, true); return false; }
+  editSnap();
+  const moved = {}; for (const k of Object.keys(next)) if (next[k] !== part.holes[k]) moved[part.holes[k]] = next[k];
+  part.holes = next; if (pin === "chip") part.chip = {...part.chip, first:`e${+hole.slice(1)}`};
+  for (const q of part.pins || []) if (moved[q.hole]) q.hole = moved[q.hole];
+  editNote(""); editDraw(); return true;
+}
+function editWire(a, b){
+  if (usedHoles().has(b)){ editNote(`${T.holeTaken}: ${holeWords(b)}`, true); return; }
+  editSnap(); editing.wires.push([a, b, editing.color, ""]); editing.start = null; editNote(""); editDraw();
+}
+function editDelete(){ if (!editing || editing.picked === null) return; editSnap(); editing.wires.splice(editing.picked, 1); editing.picked = null; editNote(""); editDraw(); }
+function editUndo(){ if (!editing || !editing.undo.length) return; const s = JSON.parse(editing.undo.pop()); editing.parts = s.parts; editing.wires = s.wires; editing.start = null; editing.picked = null; editNote(""); editDraw(); }
+function holeAt(svg, clientX, clientY){  // the hole under the pointer, snapped to the grid: a lead's marker or a handle may cover it
+  const f = fit(svg), bx = f.x + (clientX - f.left) / f.s, by = f.y + (clientY - f.top) / f.s, P = 6, H = 19 * P;
+  const row = Math.round((bx - 6) / P + .5), yi = Math.round((H - by) / P - 4.5);
+  const c = yi === -4 ? "+" : yi === -3 ? "-" : yi >= 0 && yi <= 4 ? "abcde"[yi] : yi >= 7 && yi <= 11 ? "fghij"[yi - 7] : null;
+  if (!c || row < 1 || row > 63 || Math.hypot(bx - (6 + (row - .5) * P), by - (H - (yi + 4.5) * P)) > P * .55) return null;
+  return svg.querySelector(`rect[data-hole="${c}${row}"]`) ? `${c}${row}` : null;
+}
+function editDown(e, box){
+  if (e.button !== 0) return;
+  const grab = e.target.closest && e.target.closest("[data-grab]");
+  hand = {grab:grab ? grab.dataset.grab : null, target:e.target, x0:e.clientX, y0:e.clientY, moved:false, over:null, ghost:null};
+  if (grab){ try { box.setPointerCapture(e.pointerId); } catch (err) {} const ghost = grab.cloneNode(); ghost.removeAttribute("data-grab"); ghost.classList.add("ghost"); ghost.setAttribute("fill","rgba(60,140,240,.6)"); grab.parentElement.append(ghost); hand.ghost = ghost; e.preventDefault(); }
+}
+function editMoveEv(e, box){
+  if (!hand || !hand.grab) return;
+  hand.moved = hand.moved || Math.abs(e.clientX - hand.x0) + Math.abs(e.clientY - hand.y0) > 3;
+  const f = fit(box.firstChild); hand.ghost.setAttribute("cx", f.x + (e.clientX - f.left) / f.s); hand.ghost.setAttribute("cy", f.y + (e.clientY - f.top) / f.s);
+  const name = holeAt(box.firstChild, e.clientX, e.clientY), hole = name ? box.firstChild.querySelector(`rect[data-hole="${name}"]`) : null;
+  if (hand.over && hand.over !== hole) hand.over.classList.remove("drop");
+  hand.over = hole; if (hole) hole.classList.add("drop");
+}
+function editUp(e, box){
+  if (!hand) return;
+  const h = hand; hand = null;
+  if (h.grab){
+    if (h.ghost) h.ghost.remove(); if (h.over) h.over.classList.remove("drop");
+    if (h.moved && h.over){ const [ref, pin] = h.grab.split("|"); editMove(ref, pin, h.over.dataset.hole); } else if (h.moved) editNote(T.dropOnHole, true);
+    return;
+  }
+  const wire = h.target.closest && h.target.closest("[data-wire]"), name = wire ? null : holeAt(box.firstChild, e.clientX, e.clientY);
+  if (name){
+    if (!editing.start){ if (usedHoles().has(name)){ editNote(`${T.holeTaken}: ${holeWords(name)}`, true); return; } editing.start = name; editing.picked = null; editNote(`${T.wireFrom} ${holeWords(name)}`); editDraw(); }
+    else if (editing.start === name){ editing.start = null; editNote(""); editDraw(); }
+    else editWire(editing.start, name);
+  } else if (wire){ editing.picked = +wire.dataset.wire; editing.start = null; editNote(""); editDraw(); }
+}
+function editShow(out, status){
+  const box = $("editResult"); box.hidden = false; box.className = "editresult" + (out.ok ? "" : " bad"); box.replaceChildren();
+  const list = (title, items) => { if (!items || !items.length) return; box.append(el("b","",title + ":")); const u = el("ul"); for (const t of items) u.append(el("li","",say(String(t)))); box.append(u); };
+  if (!out.ok) box.append(el("div","",say(out.error || `${T.editFail} (${status})`)));
+  list(T.changes, out.changes); list(T.warnings, out.warnings); list(T.problems, [...(out.problems || []), ...(out.wiring_errors || [])]);
+  if (out.ok && out.nets && Object.keys(out.nets).length) box.append(el("div","sub",Object.entries(out.nets).map(([n,v]) => `${n} ${v === null || v === undefined ? "—" : Number(v).toFixed(2) + " V"}`).join(" · ")));
+}
+async function editSave(){
+  const plan = {holes:{}, wires:editing.wires.map(([from, to, color]) => ({from, to, color})), external:editing.external};
+  for (const p of editing.parts) plan.holes[p.ref] = {...p.holes};
+  for (const x of editing.external) (plan.holes[x.ref] = plan.holes[x.ref] || {})[x.pin] = x.hole;
+  $("editSave").disabled = true; editNote(T.saving);
+  try {
+    const r = await fetch("/layout/edit", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({layout:plan})});
+    const out = await r.json().catch(() => ({}));
+    editShow(out, r.status);
+    if (r.ok && out.ok){ editStop(false); }  // the next poll draws the plan as Lunes kept it
+    else editNote(r.status === 503 ? T.loadNone : T.editFail, true);
+  } catch (err) { editNote(T.editFail, true); }
+  finally { $("editSave").disabled = false; }
+}
+function editStop(restore){  // restore: the plan as it came (Cancelar); either way the state draws the board again
+  editing = null; hand = null; $("bench").classList.remove("editing"); $("editTools").hidden = true; $("editBoard").textContent = T.editBoard;
+  if (restore) $("editResult").hidden = true;
+  boardKey = ""; if (lab) renderBench(lab);
+}
+const editLeave = () => { if (editing && editing.undo.length && !confirm(T.discardAsk)) return; editStop(true); };
+$("editBoard").onclick = () => { if (editing) editLeave(); else if (boardBox && lab && lab.breadboard) editBoard(lab.breadboard, lab.circuit ? lab.circuit.supply_v : null); };
+$("editCancel").onclick = editLeave; $("editSave").onclick = editSave; $("editUndo").onclick = editUndo; $("editDelete").onclick = editDelete;
 addEventListener("mousemove", e => { const t = e.target.closest && e.target.closest("[data-tip]"), tip = $("tip");
   if (!t){ tip.hidden = true; return; }
   tip.innerHTML = t.getAttribute("data-tip"); tip.hidden = false;
   tip.style.left = `${Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8)}px`; tip.style.top = `${Math.min(e.clientY + 14, innerHeight - tip.offsetHeight - 8)}px`; });
+// layout: the gaps between panels are handles. Over one the cursor says so; a drag moves that border and the panels follow
+// live. The big layout's three columns and two rows are fr shares in the --c1..--r2 variables of main, so the narrow
+// layouts, which set their own templates, are untouched. "Aplicar" keeps the shares in localStorage (one person, one PC)
+// and the page opens with them; "Restablecer" goes back to the page's own.
+const LAYOUT_DEFAULT = {cols:[1.6,.86,.94], rows:[1.2,1]}, LAYOUT_MIN = {cols:[240,290,320], rows:[160,160]}, grid = document.querySelector("main");
+const shares = l => { const n = v => { const s = v.reduce((a,b) => a+b, 0); return v.map(x => Math.round(x / s * v.length * 1e4) / 1e4); }; return {cols:n(l.cols), rows:n(l.rows)}; };
+const sameLayout = (a,b) => [...a.cols, ...a.rows].every((v,i) => Math.abs(v - [...b.cols, ...b.rows][i]) < 0.002);
+const validLayout = l => !!l && [l.cols, l.rows].every((v,i) => Array.isArray(v) && v.length === [3,2][i] && v.every(x => typeof x === "number" && isFinite(x) && x > 0));
+let layout = shares(LAYOUT_DEFAULT), savedLayout = layout, resizing = null;
+function applyLayout(l){
+  layout = shares(l);
+  layout.cols.forEach((v,i) => grid.style.setProperty(`--c${i+1}`, v + "fr")); layout.rows.forEach((v,i) => grid.style.setProperty(`--r${i+1}`, v + "fr"));
+  layoutButtons();
+}
+function layoutButtons(){
+  const apply = $("applyLayout"), reset = $("resetLayout");
+  apply.hidden = sameLayout(layout, savedLayout); reset.hidden = sameLayout(layout, shares(LAYOUT_DEFAULT));
+  apply.title = T.applyTip; reset.title = T.resetTip;
+}
+function border(e){
+  // the border under the pointer, in the big layout only: a column gap, the row gap or their crossing
+  if (e.target !== grid) return null;
+  const at = id => $(id).getBoundingClientRect(), view = at("view"), machine = at("machine"), talk = at("talk"), scope = at("scope");
+  if (talk.top >= view.bottom) return null;  // the panels are stacked: nothing to drag
+  const col = e.clientX > view.right && e.clientX < machine.left ? 0 : e.clientX > machine.right && e.clientX < talk.left ? 1 : -1;
+  const row = e.clientY > view.bottom && e.clientY < scope.top && e.clientX < machine.right;
+  return col < 0 && !row ? null : {col, row};
+}
+grid.addEventListener("pointermove", e => {
+  if (resizing){
+    const l = {cols:[...resizing.cols], rows:[...resizing.rows]}, dx = e.clientX - resizing.x, dy = e.clientY - resizing.y;
+    if (resizing.col >= 0){ const i = resizing.col, d = Math.max(LAYOUT_MIN.cols[i] - l.cols[i], Math.min(l.cols[i+1] - LAYOUT_MIN.cols[i+1], dx)); l.cols[i] += d; l.cols[i+1] -= d; }
+    if (resizing.row){ const d = Math.max(LAYOUT_MIN.rows[0] - l.rows[0], Math.min(l.rows[1] - LAYOUT_MIN.rows[1], dy)); l.rows[0] += d; l.rows[1] -= d; }
+    if (dx || dy) applyLayout(l);  // the pixels as shares: the grid gives the tracks these very sizes
+    return;
+  }
+  const b = border(e);
+  grid.style.cursor = !b ? "" : b.col >= 0 && b.row ? "move" : b.col >= 0 ? "col-resize" : "row-resize";
+});
+grid.addEventListener("pointerleave", () => { if (!resizing) grid.style.cursor = ""; });
+grid.addEventListener("pointerdown", e => {
+  const b = border(e);
+  if (!b || e.button !== 0) return;
+  e.preventDefault();
+  const at = id => $(id).getBoundingClientRect();
+  resizing = {...b, x:e.clientX, y:e.clientY, cols:[at("view").width, at("machine").width, at("talk").width], rows:[at("view").height, at("scope").height]};
+  document.body.dataset.resize = b.col >= 0 && b.row ? "both" : b.col >= 0 ? "col" : "row";
+  grid.setPointerCapture(e.pointerId);
+});
+const released = () => { if (!resizing) return; resizing = null; delete document.body.dataset.resize; grid.style.cursor = ""; };
+grid.addEventListener("pointerup", released); grid.addEventListener("pointercancel", released);
+$("applyLayout").onclick = () => { savedLayout = layout; store.set("lunes.layout", JSON.stringify(layout)); layoutButtons(); };
+$("resetLayout").onclick = () => { savedLayout = shares(LAYOUT_DEFAULT); store.remove("lunes.layout"); applyLayout(LAYOUT_DEFAULT); };
+try { const kept = JSON.parse(store.get("lunes.layout")); if (validLayout(kept)){ savedLayout = shares(kept); applyLayout(kept); } } catch (err) {}  // nothing kept, or not ours
 float(null);
 translate(); poll(); thumbs(); setInterval(thumbs, 2000);
 </script>

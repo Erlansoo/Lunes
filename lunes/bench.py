@@ -50,21 +50,26 @@ def ring_in_picture(color, near=None, reach=350):
     k = 960 / color.shape[1]
     small = cv2.resize(color, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else color
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-    white = (small.min(axis=2) > RING["bright"] - 30) & (gray > RING["bright"])
-    n, labels, stats, centres = cv2.connectedComponentsWithStats(white.astype(np.uint8))
     best = None
-    for i in range(1, n):
-        x, y, w, h, area = stats[i]
-        if not (RING["min_area"] <= area <= RING["max_area"] and w <= RING["max_w"] and h <= RING["max_h"]):
-            continue
-        cx, cy = centres[i]
-        if near is not None and math.hypot(cx / k - near[0], cy / k - near[1]) > reach:
-            continue
-        above = gray[max(0, y - int(1.5 * h) - 4):max(1, y - 2), max(0, int(cx) - w // 4):int(cx) + w // 4]
-        darkness = float(above.mean()) if above.size else 255.0
-        mean = small[labels == i].mean(axis=0)
-        if darkness < 90 and np.ptp(mean) < RING["tint"] and (best is None or area > best[0]):
-            best = (area, cx, cy, i)
+    # In daylight the webcam shortens its exposure and the lit ring comes out at 230-236, not saturated: then the
+    # usual threshold breaks it into specks. A second pass 20 lower keeps the same shape, tint and dark-tube checks.
+    for bright in (RING["bright"], RING["bright"] - 20):
+        white = (small.min(axis=2) > bright - 30) & (gray > bright)
+        n, labels, stats, centres = cv2.connectedComponentsWithStats(white.astype(np.uint8))
+        for i in range(1, n):
+            x, y, w, h, area = stats[i]
+            if not (RING["min_area"] <= area <= RING["max_area"] and w <= RING["max_w"] and h <= RING["max_h"]):
+                continue
+            cx, cy = centres[i]
+            if near is not None and math.hypot(cx / k - near[0], cy / k - near[1]) > reach:
+                continue
+            above = gray[max(0, y - int(1.5 * h) - 4):max(1, y - 2), max(0, int(cx) - w // 4):int(cx) + w // 4]
+            darkness = float(above.mean()) if above.size else 255.0
+            mean = small[labels == i].mean(axis=0)
+            if darkness < 90 and np.ptp(mean) < RING["tint"] and (best is None or area > best[0]):
+                best = (area, cx, cy, i)
+        if best is not None:
+            break
     if best is None:
         return None
     _, cx, cy, i = best

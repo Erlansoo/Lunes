@@ -11,6 +11,7 @@ The first run simulates every fault dictionary (a minute or two); later runs rea
 """
 import random
 import sys
+import tempfile
 import time
 import types
 from pathlib import Path
@@ -18,13 +19,15 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lunes import mcu  # noqa: E402
+from lunes import mcu, report  # noqa: E402
 from lunes.circuit import check, with_fault  # noqa: E402
 from lunes.designs import TEMPLATES, verify  # noqa: E402
 from lunes.diagnosis import Diagnosis  # noqa: E402
 from lunes.hantek import SimulatedScope  # noqa: E402
 from lunes.hume import Hume  # noqa: E402
 from lunes.simulator import SELFTEST_555, expected, fault_dictionary, periodic_signal, waveform  # noqa: E402
+
+report.REPORTS = Path(tempfile.mkdtemp(prefix="lunes-reports-"))  # a verdict writes a report: not among the bench's
 
 BLINKER = {"name": "555 astable at 1 kHz with an LED", "supply_v": 5, "parts": SELFTEST_555["parts"] + [
     {"ref": "R3", "kind": "R", "value": "330", "pins": ["OUT", "LED"]},
@@ -44,8 +47,10 @@ def templates():
                          ("arduino_read_divider", {"vin": 12}), ("arduino_blink", {"board": "BLUEPILL", "pin": "PC13"})]:
         circuit, spec, _ = TEMPLATES[name](**params)
         ok(not check(circuit) and all(g["ok"] for g in verify(expected(circuit), spec)), f"{name} {params} meets its goals")
-        if mcu.CLI.exists():
+        if mcu.cli_exe():
             board = next(p for p in circuit["parts"] if p["kind"] in mcu.BOARDS)
+            if board["kind"] == "BLUEPILL" and not mcu.CLI.exists():
+                continue  # its stm32duino core comes with the IDE on the bench PC; GitHub has only arduino:avr
             ok(mcu.compile_sketch(board, circuit["name"])["ok"], f"{name} {params} sketch compiles")
 
 
@@ -162,6 +167,33 @@ def diagnosis_555():
     ok(wrong == 0 and right >= 20, f"555: {right} found, {unsure} undecided, {wrong} wrong")
 
 
+def reported():
+    """The report of a check: parts with the shelf, simulation, measurements, the comparison with its criterion,
+    the diagnosis; written as Markdown by the report tool and by itself at a verdict."""
+    print("The report of a check, as Markdown")
+    from lunes.report import ROOT, compare
+    ok(str(report.REPORTS) != str(ROOT / "runs" / "reports"), "the tests' reports go to a temporary folder, not the bench's")
+    machine = types.SimpleNamespace(s=types.SimpleNamespace(port="COM8"), config={})
+    hume = Hume(machine, None, mcu=mcu.SimulatedBoard(None))
+    hume.run_tool("circuit_design", {"template": "astable_555", "params": {"frequency_hz": 650, "led_color": "red"}})
+    hume.run_tool("diagnose_start", {})
+    rate, v = waveform(hume.circuit, "VCC", hume.expected["simulated_s"])
+    hume.scope = SimulatedScope({"CH1": periodic_signal(rate, v), "CH2": lambda t: np.zeros_like(t)})
+    hume.run_tool("diagnose_measure", {"net": "VCC"})
+    hume.run_tool("diagnose_measure", {"net": "OUT", "source": "multimeter", "mean_v": 1.9})
+    written, _ = hume.run_tool("report", {})
+    ok(written.get("ok") and (ROOT / written["path"]).exists() and (ROOT / written["latest"]).exists(),
+       f"report written: {written.get('path')}")
+    text = (ROOT / written["path"]).read_text(encoding="utf-8")
+    for section in ("Parts", "Simulation (ngspice)", "Measured on the bench", "Simulation against the bench", "Diagnosis"):
+        ok(f"## {section}" in text, f"section {section}")
+    ok("| VCC | scope |" in text and "| OUT | multimeter |" in text, "the scope's and the multimeter's readings, each named")
+    ok("Criterion:" in text and "on the shelf" in text, "the criterion and the shelf are stated")
+    rows = compare({"frequency_hz": 646, "duty": 0.55, "mean_v": 2.0}, {"frequency_hz": 690, "duty": 0.5, "mean_v": 2.5})
+    ok([r[-1] for r in rows] == [True, True, False], f"8 % in frequency and 5 points of duty agree, 0.5 V does not: {[(r[0], r[-1]) for r in rows]}")
+    ok(hume.run_tool("report", {})[0]["ok"], "a second report writes a new file")
+
+
 if __name__ == "__main__":
     t0 = time.time()
     probe_elsewhere()
@@ -169,5 +201,6 @@ if __name__ == "__main__":
     new_parts()
     arduino_diagnosis()
     diagnosis_555()
+    reported()
     print(f"\n{'all passed' if not FAILED else f'{len(FAILED)} FAILED'} in {time.time() - t0:.0f} s")
     sys.exit(1 if FAILED else 0)

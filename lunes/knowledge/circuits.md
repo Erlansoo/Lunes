@@ -16,6 +16,10 @@ is for judgement, not for arithmetic.
   thing.
 - Simulation is not the bench. Part tolerances (5 % resistors, 10 to 20 % capacitors) shift frequencies by 10 % or
   more, so measure on the bench and compare.
+- Design with what is on the shelf. circuit_design rounds to the inventory's values when one is within 20 % of the
+  ideal and lists, part by part, what is on the shelf and what is not (stock). Tell Erlan what he lacks and the
+  nearest value he has; he decides between using it and buying the right one. For a chip or a board, inventory
+  says what is at hand and whether Lunes can simulate it.
 
 ## 555
 - Astable: f = 1.44 / ((R1 + 2 R2) C). Duty = (R1 + R2) / (R1 + 2 R2), always above 50 %. For about 50 %, keep R1
@@ -134,6 +138,14 @@ is for judgement, not for arithmetic.
   straddles the channel.
 - The rails along the edges are often split in the middle on long boards: bridge them, or half the board has no
   supply.
+- Checking Erlan's build against the plan: compare nodes, not hole names. A lead or a wire end in another hole of
+  the same strip of five (same column letter group and row) or anywhere along the same rail is the same connection:
+  not a mistake. Say "OK" with the observation ("R1 is in c7, the plan said c5, same strip"). holes_connected
+  decides it; never call a hole wrong by eye. Only a lead in another strip, another rail, or the wrong side of the
+  channel changes the circuit.
+- The plan Erlan builds from is the one to check against. Once he started building, do not design the circuit
+  again nor lay it out again (a new plan would make his correct build look wrong); after a restart the circuit and
+  its plan come back from disk, and if it is unclear which circuit is on the board, circuit_list and let him pick.
 - Common mistakes:
   - two leads in the same column (the part does nothing);
   - a lead one column off;
@@ -181,3 +193,19 @@ is for judgement, not for arithmetic.
 - An output pin never drives a motor, relay or LED strip directly: use a transistor (see transistor).
 - Inputs left floating read noise: use INPUT_PULLUP, or a resistor to GND or VCC.
 - An STM32 runs at 3.3 V and many of its pins are not 5 V tolerant: a divider or a level shifter for 5 V signals.
+
+## firmware
+- Write the behaviour first in words: inputs, states, outputs, what happens on each change. Then the code.
+- On the AVR an int is 16 bits (up to 32767): times and counts that grow go in unsigned long. Time with millis():
+  `if (millis() - last >= period)` survives the 49-day rollover; `millis() > last + period` does not.
+- Never block: delay() and while-loops waiting for a pin freeze every other input. Keep loop() short and let a
+  state machine (an enum and a switch) remember where it is.
+- INPUT_PULLUP reads HIGH when nothing pulls the pin: a switch to GND or an open-collector output (LM393) reads LOW
+  when active. Name the logic in the code so the inversion is said once.
+- A mechanical switch bounces for a few ms: accept a new level only after it has been stable 20 to 50 ms.
+- An analogue threshold read near its edge flickers: two thresholds (hysteresis) or a few readings averaged.
+- Print state changes, not every loop: a line per event, at 115200 baud, with F("...") around fixed text on the AVR.
+- An output decided in several places fights itself: decide every output once per loop, from the state.
+- Globals touched in an interrupt are volatile, and copied with interrupts off when they are wider than a byte.
+- Before flashing, try it in the dry run on every situation and the edges between them, and come back to the start:
+  what the code remembers (a latched alarm, a counter) only shows on the way back.

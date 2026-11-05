@@ -8,6 +8,14 @@ tells you exactly where to probe, reads your instruments, compares every measure
 circuit, picks the next most informative measurement, and finds the faulty component. The hands are yours; the
 reasoning and the eyes are Lunes's.
 
+**Why it matters beyond my bench.** I live in Cochabamba, Bolivia, where electronics labs are scarce, equipment is old
+and there is rarely someone to ask. Lunes is built from cheap or second-hand parts (a home-built CNC, a 70-dollar USB
+microscope, a 2010 Kinect), speaks Spanish, and keeps working without internet on open weights (Muse Glimmer on one
+consumer GPU). A student builds a circuit and the machine looks at it, points at the pin and measures it: learning
+electronics by controlled physical debugging instead of guessing. And every session leaves a record of what was planned,
+simulated, seen and measured on a real board. That is grounded data from the physical world that future AI models can
+learn from, to understand real circuits and not only text about them.
+
 Built solo for the **Meta Global AI Developer Hackathon 2026** (Indie track, *Push the Frontier*).
 
 > Status: submitted on Nov 4, 2026, the hackathon's last day. Demo video: https://www.youtube.com/watch?v=K_N2lbv65S8
